@@ -57,8 +57,47 @@ fn replan_hydration_restores_exact_originals_without_reopening_receipts_or_allow
         .checkpoint
         .work
         .begin_analysis(ResearchQuestionId::FIRST, packet)?;
+    let windows = research.windows()?;
+    research.checkpoint.pending_need = Some(a3_application::ReplanEvidenceNeed::new(
+        a3_application::ResearchEvidenceNeed::new(
+            ResearchQuestionId::FIRST,
+            vec!["return".to_owned()],
+        )?,
+        windows
+            .iter()
+            .map(|w| a3_domain::ResearchResultSource {
+                source_id: w.source_id,
+                revision: w.revision.clone(),
+                range: w.range,
+            })
+            .collect(),
+    )?);
     let checkpoint = research.checkpoint.clone();
     research.pages.clear();
+    let mut unbound = research.clone();
+    unbound.checkpoint.pending_need = Some(a3_application::ReplanEvidenceNeed::new(
+        a3_application::ResearchEvidenceNeed::new(
+            ResearchQuestionId::FIRST,
+            vec!["invented_target".to_owned()],
+        )?,
+        checkpoint
+            .pending_need
+            .as_ref()
+            .ok_or("need")?
+            .originals()
+            .to_vec(),
+    )?);
+    assert!(
+        futures::executor::block_on(hydrate_replan_originals(
+            &WorkspaceAgentSourceReader,
+            &project,
+            &mut unbound,
+            vec![page.evidence()],
+            &Active,
+        ))
+        .is_err()
+    );
+    assert!(unbound.pages.is_empty());
     futures::executor::block_on(hydrate_replan_originals(
         &WorkspaceAgentSourceReader,
         &project,
@@ -70,6 +109,9 @@ fn replan_hydration_restores_exact_originals_without_reopening_receipts_or_allow
     assert_eq!(research.packet(), packet);
     assert_eq!(research.checkpoint, checkpoint);
     assert_eq!(research.checkpoint.reads(), 1);
+    assert!(research.validates_pending_need());
+    assert!(research.render().contains("return"));
+    assert!(!research.render().contains("return 'ä'"));
     assert!(
         !research.should_analyze(),
         "hydration cannot reanalyze the same acknowledged packet"

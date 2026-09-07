@@ -748,9 +748,7 @@ async fn analyze_replan<C: AgentControllerControl + ModelOperationControl>(
             }));
         }
         let failure = match crate::replan_analysis::admit(&completion.raw, research) {
-            Ok(work) => {
-                let mut checkpoint = research.checkpoint.clone();
-                checkpoint.work = work;
+            Ok(checkpoint) => {
                 return Ok(AgentTurnOutcome::Researched(Box::new(AgentResearchTurn {
                     checkpoint,
                     charge,
@@ -2443,7 +2441,7 @@ mod tests {
     }
 
     #[test]
-    fn replan_v5_analysis_is_charged_source_bound_atomic_and_non_executable()
+    fn replan_v7_analysis_is_charged_source_bound_atomic_and_non_executable()
     -> Result<(), Box<dyn Error>> {
         use a3_domain::{
             AgentFileStartLine, ContentHash, FileRevision, RepositoryPath, ResearchResultKind,
@@ -2452,20 +2450,22 @@ mod tests {
         for (valid, null_result, corrected, question) in [
             (true, false, false, false),
             (true, true, false, false),
+            (false, true, false, false),
+            (false, true, true, false),
             (false, false, false, false),
             (false, false, true, false),
             (false, false, false, true),
             (false, false, true, true),
         ] {
-            let document = serde_json::json!({"schema_version":5,
-                "decision":{"kind":"progress","note":{"goal":"Cause","finding_kind":"hypothesis","finding":"Current evidence","finding_source_refs":[],"gap":"Check serializer","next_step":"Resolve cause"}},
-                "work":{"questions":[],"results":if null_result { serde_json::json!([]) } else { serde_json::json!([{"question_id":1,"kind":"interpretation","text":"The serializer drops the title; preserve it and verify a round trip.","evidence":[{"anchor_ref":if valid {"E1"} else {"E8"}}]}]) }}});
+            let document = serde_json::json!({"schema_version":7,"response": if null_result {
+                serde_json::json!({"kind":"evidenceNeed","question_id":1,"targets":[if valid {"title"} else {"unbound_target"}]})
+            } else {
+                serde_json::json!({"kind":"interpretation","result":{"question_id":1,"text":"The serializer drops the title; preserve it and verify a round trip.","evidence":[{"anchor_ref":if valid {"E1"} else {"E8"}}]}})
+            }});
             let raw = if question {
                 let mut asked = document.clone();
-                asked["decision"]["kind"] = serde_json::json!("question");
-                asked["decision"]["message"] =
-                    serde_json::json!("Please confirm the private serializer choice");
-                asked["work"]["results"] = serde_json::json!([]);
+                asked["response"] = serde_json::json!({"kind":"question",
+                    "message":"Please confirm the private serializer choice"});
                 // A valid shared Ask/Plan question must still be rejected by Replan,
                 // even when a provider ignores the narrowed phase schema.
                 assert!(
@@ -2484,6 +2484,8 @@ mod tests {
             };
             let failure = if question {
                 "WrongDecision"
+            } else if null_result {
+                "UnboundEvidenceNeed"
             } else {
                 "Admission(UndeliveredQuote)"
             };
@@ -2491,7 +2493,10 @@ mod tests {
                 vec![provider_response(&raw)?]
             } else {
                 let repair = if corrected {
-                    document.to_string().replace("E8", "E1")
+                    document
+                        .to_string()
+                        .replace("E8", "E1")
+                        .replace("unbound_target", "title")
                 } else {
                     raw.clone()
                 };
@@ -2575,6 +2580,7 @@ mod tests {
             );
             match outcome {
                 AgentTurnOutcome::Researched(result) if valid || corrected => {
+                    assert_eq!(result.checkpoint.pending_need.is_some(), null_result);
                     assert_eq!(result.checkpoint.work.ready_to_finish(), !null_result);
                     assert_eq!(
                         result.checkpoint.work.questions()[0].attempts(),

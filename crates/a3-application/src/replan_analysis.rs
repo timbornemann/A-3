@@ -3,14 +3,14 @@ use crate::{
     AskResearchDecision, AskResearchDecisionDecodeError, DecodeAskResearchDecision,
     ReplanResearchContext, ResearchOutputPhase, ResearchWorkAdmissionError,
 };
-use a3_domain::{ResearchQuestionId, ResearchResultKind, ResearchWorkState};
+use a3_domain::{ResearchQuestionId, ResearchResultKind, ResearchResultSource};
 
 /// Closed rejection classes; never carries source bytes, model text or provider details.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplanAnalysisFailure {
     /// The independently strict research decoder rejected structure or a bounded value.
     Decode(AskResearchDecisionDecodeError),
-    /// Replan analysis only accepts the supplied progress decision, not an action or question.
+    /// Replan analysis only accepts the supplied interpretation or need, not an action or question.
     WrongDecision,
     /// A non-interpretation cannot stand in for repository investigation.
     WrongResultKind,
@@ -18,6 +18,8 @@ pub enum ReplanAnalysisFailure {
     OriginalWindows,
     /// The packet cannot start a new analysis of the current obligation.
     PacketState,
+    /// Navigation targets are not present in the supplied objective or original packet.
+    UnboundEvidenceNeed,
     /// Original evidence or the durable work contract rejected the complete update.
     Admission(ResearchWorkAdmissionError),
 }
@@ -46,7 +48,7 @@ impl ReplanAnalysisFailure {
                 "Return a complete JSON object without prose or fences."
             }
             Self::Decode(AskResearchDecisionDecodeError::UnknownOrMissingField) => {
-                "Include every required field, including the V5 note; remove extra fields."
+                "Include every required V7 response field; remove extra fields."
             }
             Self::Decode(AskResearchDecisionDecodeError::MissingSources) => {
                 "Observations require supplied source references; hypotheses are not facts."
@@ -54,6 +56,9 @@ impl ReplanAnalysisFailure {
             Self::Decode(_) => "Check the supplied field types, version, enums and bounds.",
             Self::WrongDecision => "No action, question, plan or final answer is admitted here.",
             Self::WrongResultKind => "Only an interpretation can explain the current code.",
+            Self::UnboundEvidenceNeed => {
+                "Use only literal targets present in the objective or delivered originals."
+            }
             Self::OriginalWindows | Self::PacketState => {
                 "Do not invent originals or claim that an already analyzed packet is new."
             }
@@ -70,7 +75,7 @@ impl ReplanAnalysisFailure {
             Self::Admission(_) => "An unsupported result cannot resolve the obligation.",
         };
         format!(
-            "Replan analysis rejected: {self:?}. {hint} Return the supplied V5 Analyze schema, progress decision, Q1 only, no new questions or actions. Use current E anchors for an interpretation, or empty results for missing evidence. This is the single repair."
+            "Replan analysis rejected: {self:?}. {hint} Return the supplied V7 Analyze schema, Q1 only, no new questions or actions. Use current E anchors for an interpretation, or evidenceNeed with bounded literal targets. This is the single repair."
         )
     }
 }
@@ -78,11 +83,16 @@ impl ReplanAnalysisFailure {
 pub(crate) fn admit(
     raw: &str,
     research: &ReplanResearchContext,
-) -> Result<ResearchWorkState, ReplanAnalysisFailure> {
+) -> Result<crate::ReplanResearchCheckpoint, ReplanAnalysisFailure> {
     let shape: serde_json::Value = serde_json::from_str(raw).map_err(|_| {
         ReplanAnalysisFailure::Decode(AskResearchDecisionDecodeError::MalformedJson)
     })?;
-    if shape["decision"]["kind"] != "progress" {
+    if shape["schema_version"] != 7
+        || !matches!(
+            shape["response"]["kind"].as_str(),
+            Some("interpretation" | "evidenceNeed")
+        )
+    {
         return Err(ReplanAnalysisFailure::WrongDecision);
     }
     let decision = DecodeAskResearchDecision
@@ -104,12 +114,42 @@ pub(crate) fn admit(
     let windows = research
         .windows()
         .map_err(|_| ReplanAnalysisFailure::OriginalWindows)?;
-    let mut previous = research.checkpoint.work.clone();
+    if !research.should_analyze() {
+        return Err(ReplanAnalysisFailure::PacketState);
+    }
+    let mut checkpoint = research.checkpoint.clone();
+    let mut previous = checkpoint.work.clone();
     previous
         .begin_analysis(ResearchQuestionId::FIRST, research.packet())
         .map_err(|_| ReplanAnalysisFailure::PacketState)?;
-    crate::admit_research_work(previous.objective(), Some(&previous), update, &windows)
-        .map_err(ReplanAnalysisFailure::Admission)
+    if let Some(need) = note.evidence_need {
+        if !update.questions.is_empty() || !update.results.is_empty() {
+            return Err(ReplanAnalysisFailure::WrongDecision);
+        }
+        let need = crate::ReplanEvidenceNeed::new(
+            *need,
+            windows
+                .iter()
+                .map(|w| ResearchResultSource {
+                    source_id: w.source_id,
+                    revision: w.revision.clone(),
+                    range: w.range,
+                })
+                .collect(),
+        )
+        .map_err(ReplanAnalysisFailure::Decode)?;
+        if !need.validates_originals(previous.objective(), &research.pages) {
+            return Err(ReplanAnalysisFailure::UnboundEvidenceNeed);
+        }
+        checkpoint.work = previous;
+        checkpoint.pending_need = Some(need);
+    } else {
+        checkpoint.work =
+            crate::admit_research_work(previous.objective(), Some(&previous), update, &windows)
+                .map_err(ReplanAnalysisFailure::Admission)?;
+        checkpoint.pending_need = None;
+    }
+    Ok(checkpoint)
 }
 
 #[cfg(test)]
@@ -145,9 +185,8 @@ mod tests {
     }
 
     fn document() -> serde_json::Value {
-        json!({"schema_version":5,
-            "decision":{"kind":"progress","note":{"goal":"Check return","finding_kind":"hypothesis","finding":"Current evidence","finding_source_refs":[],"gap":"Verify behavior","next_step":"Resolve cause"}},
-            "work":{"questions":[],"results":[{"question_id":1,"kind":"interpretation","text":"The function returns zero; verify the required return.","evidence":[{"anchor_ref":"E1"}]}]}})
+        json!({"schema_version":7, "response":{"kind":"interpretation","result":{
+            "question_id":1,"text":"The function returns zero; verify the required return.","evidence":[{"anchor_ref":"E1"}]}}})
     }
 
     #[test]
@@ -155,12 +194,12 @@ mod tests {
         let research = context()?;
         let before = research.clone();
         let mut missing = document();
-        missing["decision"]
+        missing["response"]["result"]
             .as_object_mut()
             .ok_or("decision")?
-            .remove("note");
+            .remove("text");
         let mut invented = document();
-        invented["work"]["results"][0]["evidence"][0]["anchor_ref"] = json!("E8");
+        invented["response"]["result"]["evidence"][0]["anchor_ref"] = json!("E8");
         let mut extra = document();
         extra["private_user_data"] = json!("never echo this");
         let cases = [
@@ -210,15 +249,107 @@ mod tests {
             );
         }
         let accepted = admit(&document().to_string(), &research)?;
-        assert!(accepted.ready_to_finish());
+        assert!(accepted.work.ready_to_finish());
         assert_eq!(
-            accepted.questions()[0].result().ok_or("result")?.kind(),
+            accepted.work.questions()[0]
+                .result()
+                .ok_or("result")?
+                .kind(),
             ResearchResultKind::Interpretation
         );
         assert_eq!(research, before);
-        let mut no_evidence = document();
-        no_evidence["work"]["results"] = json!([]);
-        assert!(!admit(&no_evidence.to_string(), &research)?.ready_to_finish());
+        let no_evidence = json!({"schema_version":7,"response":{"kind":"evidenceNeed","question_id":1,"targets":["return"]}});
+        let needed = admit(&no_evidence.to_string(), &research)?;
+        assert!(!needed.work.ready_to_finish());
+        assert!(needed.pending_need.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn replan_need_survives_reads_and_only_a_new_original_packet_can_resolve_it() -> TestResult {
+        let mut research = context()?;
+        let body = "return helper_b()\n";
+        research.pages[0] = crate::AgentSourcePage::new(
+            research.pages[0].revision().clone(),
+            SourceRange::new(
+                0,
+                body.len(),
+                SourcePosition::new(0, 0),
+                SourcePosition::new(1, 0),
+            )?,
+            AgentFileStartLine::new(1)?,
+            body.to_owned(),
+            None,
+            false,
+        )?;
+        let need = json!({"schema_version":7,"response":{"kind":"evidenceNeed","question_id":1,"targets":["helper_b"]}});
+        for invalid in [
+            json!({"schema_version":7,"response":{"kind":"evidenceNeed","question_id":1,"targets":["invented_target"]}}),
+            json!({"schema_version":7,"response":{"kind":"evidenceNeed","question_id":2,"targets":["helper_b"]}}),
+            json!({"schema_version":7,"response":{"kind":"evidenceNeed","question_id":1,"targets":["helper_b","helper_b"]}}),
+            json!({"schema_version":7,"response":{"kind":"evidenceNeed","question_id":1,"targets":["helper_b"],"result":{}}}),
+            json!({"schema_version":5,"decision":{"kind":"progress"},"work":{"questions":[],"results":[]}}),
+        ] {
+            assert!(admit(&invalid.to_string(), &research).is_err());
+        }
+        research.checkpoint = admit(&need.to_string(), &research)?;
+        let saved = research.checkpoint.clone();
+        assert!(!research.should_analyze());
+        assert!(!research.checkpoint.work.ready_to_finish());
+        assert!(research.render().contains("helper_b"));
+        assert!(!research.render().contains("return helper_b()"));
+        assert_eq!(
+            admit(&need.to_string(), &research),
+            Err(ReplanAnalysisFailure::PacketState)
+        );
+        for query in ["helper_b", "caller", "definition", "tests"] {
+            let action = a3_domain::AgentAction::Search(a3_domain::AgentSearchAction::new(
+                a3_domain::AgentSearchQuery::try_from_string(query.to_owned())?,
+                a3_domain::AgentSearchLimit::new(5)?,
+            ));
+            assert!(research.checkpoint.permits(&action));
+            research.checkpoint.record_read(&action, true)?;
+            assert_eq!(research.checkpoint.pending_need, saved.pending_need);
+            assert!(!research.should_analyze());
+        }
+        assert_eq!(research.checkpoint.reads(), 4);
+        let mut missing = research.clone();
+        missing.pages.clear();
+        assert!(!missing.validates_pending_need());
+        assert!(!missing.render().contains("helper_b"));
+        let mut falsified = research.clone();
+        falsified.checkpoint.pending_need = Some(crate::ReplanEvidenceNeed::new(
+            crate::ResearchEvidenceNeed::new(
+                ResearchQuestionId::FIRST,
+                vec!["invented_target".to_owned()],
+            )?,
+            saved
+                .pending_need
+                .as_ref()
+                .ok_or("need")?
+                .originals()
+                .to_vec(),
+        )?);
+        assert!(!falsified.validates_pending_need());
+        research.pages.push(crate::AgentSourcePage::new(
+            FileRevision::new(
+                RepositoryPath::try_from_bytes(b"helper.py".to_vec())?,
+                ContentHash::from_bytes([9; 32]),
+            ),
+            SourceRange::new(0, 9, SourcePosition::new(0, 0), SourcePosition::new(1, 0))?,
+            AgentFileStartLine::new(1)?,
+            "return 0\n".to_owned(),
+            None,
+            false,
+        )?);
+        assert!(research.should_analyze());
+        let mut answer = document();
+        answer["response"]["result"]["evidence"][0]["anchor_ref"] = json!("E2");
+        research.checkpoint = admit(&answer.to_string(), &research)?;
+        assert!(research.checkpoint.work.ready_to_finish());
+        assert!(research.checkpoint.pending_need.is_none());
+        assert_eq!(research.checkpoint.reads(), 4);
+        assert_eq!(research.checkpoint.work.questions()[0].attempts().len(), 2);
         Ok(())
     }
 
@@ -231,6 +362,7 @@ mod tests {
             ReplanAnalysisFailure::WrongResultKind,
             ReplanAnalysisFailure::OriginalWindows,
             ReplanAnalysisFailure::PacketState,
+            ReplanAnalysisFailure::UnboundEvidenceNeed,
         ];
         failures.extend(
             [

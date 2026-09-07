@@ -108,7 +108,7 @@ fn replan_localization_is_in_the_counted_anchor_digest_and_restricted_schema()
 }
 
 #[test]
-fn replan_shared_analysis_packs_actual_originals_and_v5_without_mutation_schema()
+fn replan_shared_analysis_packs_actual_originals_and_v7_without_mutation_schema()
 -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     let calls = Mutex::new(Vec::new());
@@ -157,11 +157,12 @@ fn replan_shared_analysis_packs_actual_originals_and_v5_without_mutation_schema(
         .structured_output()
         .ok_or("schema")?
         .value();
-    let decision = schema["properties"]["decision"]
-        .as_object()
-        .ok_or("decision")?;
-    assert_eq!(decision.len(), 1);
-    assert_eq!(decision["$ref"], "#/$defs/progress");
+    let responses = schema["properties"]["response"]["oneOf"]
+        .as_array()
+        .ok_or("responses")?;
+    assert_eq!(responses.len(), 2);
+    assert_eq!(responses[0]["$ref"], "#/$defs/result");
+    assert_eq!(responses[1]["$ref"], "#/$defs/evidenceNeed");
     assert!(schema["$defs"].get("questionDecision").is_none());
     assert_eq!(
         compiled
@@ -169,7 +170,7 @@ fn replan_shared_analysis_packs_actual_originals_and_v5_without_mutation_schema(
             .structured_output()
             .ok_or("schema")?
             .value()["properties"]["schema_version"]["const"],
-        5
+        7
     );
     let messages = compiled.request().messages();
     assert!(
@@ -200,6 +201,60 @@ fn replan_shared_analysis_packs_actual_originals_and_v5_without_mutation_schema(
         compiled.digest(),
         block_on(compiler.compile(&input, &RecordingControl::default()))?.digest()
     );
+    let mut research = input.replan_research().ok_or("research")?.clone();
+    let packet = research.packet();
+    let originals = research
+        .windows()?
+        .iter()
+        .map(|w| a3_domain::ResearchResultSource {
+            source_id: w.source_id,
+            revision: w.revision.clone(),
+            range: w.range,
+        })
+        .collect();
+    research
+        .checkpoint
+        .work
+        .begin_analysis(a3_domain::ResearchQuestionId::FIRST, packet)?;
+    research.checkpoint.pending_need = Some(a3_application::ReplanEvidenceNeed::new(
+        a3_application::ResearchEvidenceNeed::new(
+            a3_domain::ResearchQuestionId::FIRST,
+            vec!["return".to_owned()],
+        )?,
+        originals,
+    )?);
+    let pending = input.clone().with_replan_research(research.clone())?;
+    let next = block_on(compiler.compile(&pending, &RecordingControl::default()))?;
+    assert_eq!(
+        next.request().structured_output().ok_or("schema")?.value()["properties"]["schema_version"]
+            ["const"],
+        5
+    );
+    assert!(next.request().messages().iter().any(|m| {
+        m.content().contains("Pending Q1 evidence need") && m.content().contains("return")
+    }));
+    assert!(
+        !next
+            .request()
+            .messages()
+            .iter()
+            .any(|m| m.content().contains("return 0\n"))
+    );
+    let actual = next.request().messages().iter().try_fold(0u32, |n, m| {
+        pending
+            .model_profile()
+            .settings()
+            .token_counting()
+            .count_text(m.content())
+            .map(|c| n + c.get())
+    })?;
+    assert_eq!(actual, next.budget_usage().prompt_total());
+    assert_eq!(
+        next.digest(),
+        block_on(compiler.compile(&pending, &RecordingControl::default()))?.digest()
+    );
+    research.pages.clear();
+    assert!(input.with_replan_research(research).is_err());
     Ok(())
 }
 

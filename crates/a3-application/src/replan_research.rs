@@ -15,6 +15,8 @@ pub struct ReplanResearchCheckpoint {
     pub snapshot_id: SnapshotId,
     /// Same invariant-bearing aggregate used by Ask and Plan.
     pub work: ResearchWorkState,
+    /// Unresolved navigation hint; never a result, tool argument or permission.
+    pub pending_need: Option<crate::ReplanEvidenceNeed>,
 }
 
 /// Content-free reason a proposed localization read cannot become a new tool attempt.
@@ -57,6 +59,7 @@ impl ReplanResearchCheckpoint {
             step_id,
             snapshot_id,
             work,
+            pending_need: None,
         })
     }
 
@@ -189,39 +192,25 @@ impl ReplanResearchContext {
     /// Canonical exact-window receipt, independent of turn or presentation IDs.
     #[must_use]
     pub fn packet(&self) -> ContentHash {
-        let mut keys = self
-            .pages
-            .iter()
-            .map(|p| (p.revision(), p.range()))
-            .collect::<Vec<_>>();
-        keys.sort_by(|a, b| {
-            a.0.path()
-                .cmp(b.0.path())
-                .then(
-                    a.0.content_hash()
-                        .as_bytes()
-                        .cmp(b.0.content_hash().as_bytes()),
-                )
-                .then(a.1.start_byte().cmp(&b.1.start_byte()))
-                .then(a.1.end_byte().cmp(&b.1.end_byte()))
-        });
-        keys.dedup();
-        let mut hash = blake3::Hasher::new_derive_key("a3.replan-original-packet.v1");
-        for (revision, range) in keys {
-            hash.update(revision.path().as_bytes());
-            hash.update(revision.content_hash().as_bytes());
-            hash.update(&range.start_byte().to_le_bytes());
-            hash.update(&range.end_byte().to_le_bytes());
-        }
-        ContentHash::from_bytes(*hash.finalize().as_bytes())
+        original_packet(self.pages.iter().map(|p| (p.revision(), p.range())))
     }
 
-    /// Only a novel nonempty original packet starts a V5 analysis, not another read decision.
+    /// A restored hint is unusable until its exact original packet has been revalidated.
+    #[must_use]
+    pub fn validates_pending_need(&self) -> bool {
+        self.checkpoint.pending_need.as_ref().is_none_or(|need| {
+            need.validates_work(&self.checkpoint.work)
+                && need.validates_originals(self.checkpoint.work.objective(), &self.pages)
+        })
+    }
+
+    /// Only a novel nonempty original packet starts analysis, not another read decision.
     #[must_use]
     pub fn should_analyze(&self) -> bool {
         !self.checkpoint.work.ready_to_finish()
             && !self.pages.is_empty()
             && self.pages.len() <= 8
+            && self.validates_pending_need()
             && self
                 .checkpoint
                 .work
@@ -273,6 +262,15 @@ impl ReplanResearchContext {
                 text.push('\n');
             }
         }
+        if let Some(need) = &self.checkpoint.pending_need
+            && self.validates_pending_need()
+        {
+            text.push_str("Pending Q1 evidence need (navigation candidates only; not facts, actions or approval):\n");
+            for target in need.need().targets() {
+                text.push_str(target);
+                text.push('\n');
+            }
+        }
         if self.should_analyze() {
             for (i, p) in self.pages.iter().enumerate() {
                 text.push_str(&format!(
@@ -288,6 +286,32 @@ impl ReplanResearchContext {
         }
         text
     }
+}
+
+pub(crate) fn original_packet<'a>(
+    originals: impl Iterator<Item = (&'a a3_domain::FileRevision, a3_domain::SourceRange)>,
+) -> ContentHash {
+    let mut keys = originals.collect::<Vec<_>>();
+    keys.sort_by(|a, b| {
+        a.0.path()
+            .cmp(b.0.path())
+            .then(
+                a.0.content_hash()
+                    .as_bytes()
+                    .cmp(b.0.content_hash().as_bytes()),
+            )
+            .then(a.1.start_byte().cmp(&b.1.start_byte()))
+            .then(a.1.end_byte().cmp(&b.1.end_byte()))
+    });
+    keys.dedup();
+    let mut hash = blake3::Hasher::new_derive_key("a3.replan-original-packet.v1");
+    for (revision, range) in keys {
+        hash.update(revision.path().as_bytes());
+        hash.update(revision.content_hash().as_bytes());
+        hash.update(&range.start_byte().to_le_bytes());
+        hash.update(&range.end_byte().to_le_bytes());
+    }
+    ContentHash::from_bytes(*hash.finalize().as_bytes())
 }
 
 #[cfg(test)]

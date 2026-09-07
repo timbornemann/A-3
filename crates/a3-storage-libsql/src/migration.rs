@@ -3283,6 +3283,11 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
         name: "run_owned_replan_research",
         sql: include_str!("migrations/knowledge_v37.sql"),
     },
+    Migration {
+        version: 38,
+        name: "replan_evidence_need",
+        sql: include_str!("migrations/knowledge_v38.sql"),
+    },
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -3315,7 +3320,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(37);
+    pub const CURRENT: Self = Self::new(38);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -3948,6 +3953,7 @@ mod tests {
         (knowledge_upgrades_from_v34, 34),
         (knowledge_upgrades_from_v35, 35),
         (knowledge_upgrades_from_v36, 36),
+        (knowledge_upgrades_from_v37, 37),
     );
 
     #[test]
@@ -6712,6 +6718,140 @@ mod tests {
                         0
                     );
                 }
+            }
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn knowledge_v38_preserves_a_v37_checkpoint_without_inventing_a_need()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            // Minimal referenced parents isolate the real V37/V38 SQL, with FKs enabled.
+            connection.execute_batch("PRAGMA foreign_keys=ON;
+                CREATE TABLE run_events(run_id BLOB,event_sequence INTEGER,PRIMARY KEY(run_id,event_sequence));
+                CREATE TABLE snapshots(snapshot_id BLOB PRIMARY KEY);
+                CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,name TEXT,checksum BLOB);").await?;
+            connection
+                .execute_batch(KNOWLEDGE_MIGRATIONS[36].sql)
+                .await?;
+            let id = vec![1u8; 32];
+            connection
+                .execute("INSERT INTO run_events VALUES (?1,1)", params![id.clone()])
+                .await?;
+            connection
+                .execute("INSERT INTO snapshots VALUES (?1)", params![id.clone()])
+                .await?;
+            let checkpoint = a3_application::ReplanResearchCheckpoint::new(
+                a3_domain::TaskStepId::from_bytes([1; 32]),
+                a3_domain::SnapshotId::from_bytes([1; 32]),
+                &a3_domain::TaskReplanReason::try_from_string("Locate helper".to_owned())?,
+                "preserve value",
+            )?;
+            let payload =
+                crate::agent_ask_research_repository::work_state::encode(&checkpoint.work)
+                    .map_err(|_| "legacy payload")?;
+            connection
+                .execute(
+                    "INSERT INTO agent_replan_research_checkpoints VALUES (?1,1,?1,?1,?2)",
+                    params![id, payload.clone()],
+                )
+                .await?;
+            super::apply_migration(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[37],
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            assert_eq!(
+                query_string(
+                    &connection,
+                    "SELECT payload FROM agent_replan_research_checkpoints"
+                )
+                .await?,
+                payload
+            );
+            assert_eq!(query_i64(&connection,"SELECT COUNT(*) FROM agent_replan_research_checkpoints WHERE pending_need IS NULL").await?,1);
+            assert!(
+                connection
+                    .execute(
+                        "UPDATE agent_replan_research_checkpoints SET pending_need='{}'",
+                        ()
+                    )
+                    .await
+                    .is_err()
+            );
+            assert!(
+                connection
+                    .execute("DELETE FROM agent_replan_research_checkpoints", ())
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM pragma_foreign_key_check").await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn knowledge_v38_need_column_and_history_migrate_or_roll_back_together()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            for fail_after_alter in [false, true] {
+                let database = libsql::Builder::new_local(":memory:").build().await?;
+                let connection = database.connect()?;
+                let repository = [141; 32];
+                let worktree = [142; 32];
+                super::apply_knowledge_bootstrap(&connection, &repository, &worktree).await?;
+                migrate(
+                    &connection,
+                    &KNOWLEDGE_MIGRATIONS[..37],
+                    37,
+                    super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+                )
+                .await?;
+                let mut migrations = KNOWLEDGE_MIGRATIONS.to_vec();
+                if fail_after_alter {
+                    migrations[37] = Migration {
+                        version: 38,
+                        name: "replan_evidence_need",
+                        sql: "ALTER TABLE agent_replan_research_checkpoints ADD COLUMN pending_need TEXT; INSERT INTO missing_table VALUES (1);",
+                    };
+                }
+                let result = migrate(
+                    &connection,
+                    &migrations,
+                    38,
+                    super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+                )
+                .await;
+                if fail_after_alter {
+                    assert!(matches!(
+                        result,
+                        Err(MigrationError::Apply { version: 38, .. })
+                    ));
+                } else {
+                    result?;
+                }
+                let version = if fail_after_alter { 37 } else { 38 };
+                assert_eq!(
+                    query_i64(&connection, "PRAGMA user_version").await?,
+                    version
+                );
+                assert_eq!(
+                    query_i64(&connection, "SELECT COUNT(*) FROM schema_migrations").await?,
+                    version
+                );
+                assert_eq!(query_i64(&connection, "SELECT COUNT(*) FROM pragma_table_info('agent_replan_research_checkpoints') WHERE name='pending_need'").await?, i64::from(!fail_after_alter));
+                assert_eq!(query_i64(&connection, "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND tbl_name IN ('agent_replan_originals','agent_replan_research_checkpoints')").await?, 4);
+                assert_eq!(
+                    query_i64(&connection, "SELECT COUNT(*) FROM pragma_foreign_key_check").await?,
+                    0
+                );
             }
             Ok::<(), Box<dyn std::error::Error>>(())
         })

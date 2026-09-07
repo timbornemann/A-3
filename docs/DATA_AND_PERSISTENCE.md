@@ -1,5 +1,19 @@
 # Daten und Persistenz
 
+## Ergänzung: Knowledge V38
+
+Die bestehende immutable Tabelle `agent_replan_research_checkpoints` ergänzt eine
+nullable `pending_need`-Spalte (maximal 65.536 UTF-8-Bytes, Adapterformat V1).
+Sie enthält nur Q1, begrenzte lexikalische Navigationsziele und die genauen
+Originalreferenzen des analysierten Pakets. Der Paketversuch bleibt im bisherigen
+ResearchWorkState. Altbestand behält unveränderte Payloads und `NULL`; es wird
+keine historische Beleglücke erfunden. Quellenmarker, Run/Schritt/Snapshot und
+Journal werden gemeinsam validiert und atomar geschrieben. Direkte Updates und
+Deletes bleiben gesperrt. Vor erneuter Kontextaufnahme werden Literale und
+Originalbereiche durch die rehydrierten, hashgeprüften Safe-Reader-Seiten erneut
+gebunden. Ein Bedarf ist kein Ergebnis und keine ausführbare Aktion.
+Siehe [ADR-0092](adrs/0092-dauerhafter-replan-belegbedarf.md).
+
 ## Ergänzung: Knowledge V37
 
 `agent_replan_research_checkpoints` speichert den gemeinsamen `ResearchWorkState` unter

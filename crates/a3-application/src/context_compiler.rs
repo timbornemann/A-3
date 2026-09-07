@@ -412,7 +412,10 @@ impl AgentContextCompileInput {
         mut self,
         research: crate::ReplanResearchContext,
     ) -> Result<Self, AgentContextCompileInputError> {
-        if research.checkpoint.step_id != self.current_step_id || research.pages.len() > 8 {
+        if research.checkpoint.step_id != self.current_step_id
+            || research.pages.len() > 8
+            || !research.validates_pending_need()
+        {
             return Err(AgentContextCompileInputError::CurrentStepUnavailable);
         }
         self.replan_research = Some(research);

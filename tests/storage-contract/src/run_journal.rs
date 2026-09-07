@@ -503,6 +503,182 @@ where
     ));
     assert!(legacy_restored.permits(&alternative));
     crate::release_contract_store(later_open);
+    // A navigation need has an actual analyzed packet, not merely a model's target string.
+    for case in 0..4 {
+        let valid = case == 3;
+        let revision = match case {
+            0 => FileRevision::new(
+                evidence.location().revision().path().clone(),
+                ContentHash::from_bytes([181; 32]),
+            ),
+            1 => unmarked_evidence.location().revision().clone(),
+            _ => evidence.location().revision().clone(),
+        };
+        let need = a3_application::ReplanEvidenceNeed::new(
+            a3_application::ResearchEvidenceNeed::new(
+                a3_domain::ResearchQuestionId::FIRST,
+                vec!["serializer".to_owned()],
+            )?,
+            vec![a3_domain::ResearchResultSource {
+                source_id: a3_domain::AskResearchSourceId::from_bytes([182; 32]),
+                revision,
+                range: evidence.location().range().ok_or("span")?,
+            }],
+        )?;
+        let mut next = checkpoint.clone();
+        if case != 2 {
+            next.work
+                .begin_analysis(a3_domain::ResearchQuestionId::FIRST, need.packet())?;
+        }
+        next.pending_need = Some(need);
+        let mut candidate = current.clone();
+        let event = candidate.record_turn(
+            RunEventId::from_bytes([189; 32]),
+            RunEventPayload::empty(),
+            snapshot_id,
+            AgentRunTimestamp::from_unix_millis(2_010)?,
+            AgentTurnCharge::new(
+                ModelTokenCount::new(100),
+                ModelTokenCount::new(30),
+                None,
+                AgentTurnRepairUsage::None,
+            ),
+        )?;
+        let result = reopened
+            .append_replan_research(
+                &first,
+                current.last_event_sequence(),
+                &candidate,
+                &event,
+                &next,
+            )
+            .await;
+        if valid {
+            result?;
+            current = candidate;
+            checkpoint = next;
+            let again = factory.open(&app_data_root).await?;
+            assert_eq!(
+                again
+                    .load_replan_research(&first, run_id, checkpoint.step_id)
+                    .await?,
+                Some(checkpoint.clone())
+            );
+            assert_eq!(checkpoint.reads(), 2);
+            assert!(!checkpoint.work.ready_to_finish());
+            crate::release_contract_store(again);
+        } else {
+            assert!(result.is_err());
+            assert_eq!(
+                reopened.load_agent_run(&first, run_id).await?,
+                Some(current.clone())
+            );
+            assert_eq!(
+                reopened
+                    .load_replan_research(&first, run_id, checkpoint.step_id)
+                    .await?,
+                Some(checkpoint.clone())
+            );
+        }
+    }
+    // Dropping or rewriting the need for an already acknowledged packet rolls back the event.
+    for remove in [true, false] {
+        let mut next = checkpoint.clone();
+        next.record_read(&alternative, true)?;
+        next.pending_need = if remove {
+            None
+        } else {
+            Some(a3_application::ReplanEvidenceNeed::new(
+                a3_application::ResearchEvidenceNeed::new(
+                    a3_domain::ResearchQuestionId::FIRST,
+                    vec!["value".to_owned()],
+                )?,
+                checkpoint
+                    .pending_need
+                    .as_ref()
+                    .ok_or("need")?
+                    .originals()
+                    .to_vec(),
+            )?)
+        };
+        let mut candidate = current.clone();
+        let event = candidate.record_turn(
+            RunEventId::from_bytes([190; 32]),
+            RunEventPayload::empty(),
+            snapshot_id,
+            AgentRunTimestamp::from_unix_millis(2_010)?,
+            AgentTurnCharge::new(
+                ModelTokenCount::new(100),
+                ModelTokenCount::new(30),
+                None,
+                AgentTurnRepairUsage::None,
+            ),
+        )?;
+        assert!(
+            reopened
+                .append_replan_research(
+                    &first,
+                    current.last_event_sequence(),
+                    &candidate,
+                    &event,
+                    &next
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            reopened.load_agent_run(&first, run_id).await?,
+            Some(current.clone())
+        );
+        assert_eq!(
+            reopened
+                .load_replan_research(&first, run_id, checkpoint.step_id)
+                .await?,
+            Some(checkpoint.clone())
+        );
+    }
+    // A subsequent real read append retains the same need and original analysis receipt.
+    let expected = current.last_event_sequence();
+    let tool_id = ToolRunId::from_bytes([191; 32]);
+    reopened
+        .begin_agent_tool_attempt(
+            &first,
+            run_id,
+            snapshot_id,
+            tool_id,
+            AgentRunTimestamp::from_unix_millis(2_010)?,
+        )
+        .await?;
+    let need_before_read = checkpoint.pending_need.clone();
+    checkpoint.record_read(&alternative, true)?;
+    let read = AgentReadResult::new(
+        tool_id,
+        ContextToolResultStatus::Succeeded,
+        ContextToolResultPreview::try_from_string("bounded navigation".to_owned())?,
+        ContextToolResultDigest::from_bytes([192; 32]),
+        false,
+        snapshot_id,
+        AgentToolEvidenceSet::new(snapshot_id, Vec::new())?,
+        18,
+    )?
+    .record(
+        &mut current,
+        RunEventId::from_bytes([193; 32]),
+        AgentRunTimestamp::from_unix_millis(2_010)?,
+    )?
+    .with_replan(checkpoint.clone());
+    reopened
+        .append_agent_read(&first, expected, &current, &read)
+        .await?;
+    let again = factory.open(&app_data_root).await?;
+    let retained = again
+        .load_replan_research(&first, run_id, checkpoint.step_id)
+        .await?
+        .ok_or("retained need")?;
+    assert_eq!(retained, checkpoint);
+    assert_eq!(retained.pending_need, need_before_read);
+    assert_eq!(retained.reads(), 3);
+    crate::release_contract_store(again);
     // Unsupported evidence must roll back both the charged event and checkpoint. A valid
     // original span then commits both; none of this verifies the implementation step.
     for case in 0..3 {
@@ -512,6 +688,7 @@ where
             a3_domain::ResearchQuestionId::FIRST,
             ContentHash::from_bytes([180; 32]),
         )?;
+        next.pending_need = None;
         let revision = if valid {
             evidence.location().revision().clone()
         } else if case == 1 {

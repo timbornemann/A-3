@@ -1,5 +1,94 @@
 # Plan 10: Verifikationsprotokoll
 
+## 2026-09-07: Dauerhafter Replan-Belegbedarf (ADR-0092)
+
+Ausgangspunkt `15242b0`. Neue Replan-Analysen verwenden die eingeschränkte V7-Union
+Interpretation/EvidenceNeed. Der bisher verlorene Bedarf wird als Navigation an
+Originalpaket, Q1 und Analysequittung gebunden, im bestehenden Checkpoint (Knowledge
+V38) gespeichert und nach Safe-Reader-Hydration erneut geprüft. Kein neuer Index,
+keine Modellnotiz als Fakt, kein zusätzlicher Repair und kein erneuertes Lesebudget.
+
+Nachweise: 16 gezielte Application-Replan-Tests; reale Context-/Gemini-HTTP-Verträge;
+strikter Need-Codec; Storage-Vertrag mit falschem Hash, unmarkiertem Suchspan,
+fehlendem Analyseversuch, verbotener Bedarfsumschreibung, Rollback des Journals,
+Reopen und weiterem echten Read. Die reale UTF-8-Safe-Reader-Probe prüft erhaltene
+Zähler, identische Pakete, ungebundene Literale und bearbeitete Dateien. V38 erhält
+V37-Payloads ohne Backfill, Update-/Delete-Guards sowie atomaren Migrationsrollback.
+Die zunächst fehlende V37-Zeile der vollständigen Upgrade-Testmatrix wurde ergänzt;
+deren Vollständigkeitsprüfung bleibt unverändert streng.
+
+Bestanden: `cargo fmt --all -- --check`,
+`cargo clippy --workspace --all-targets --all-features --offline --locked --jobs 2 -- -D warnings`,
+`cargo test --workspace --all-features --offline --locked --jobs 2 -- --test-threads=1`
+(einschließlich `connection_lifecycle`) und `pnpm check:links`.
+Cargo lief pro Prozess mit `CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0` und
+`CARGO_PROFILE_TEST_DEBUG=0`. Keine persistenten Profiländerungen. Der Linkcheck
+meldet weiterhin die vorhandene Node-Abweichung 25.6.1 statt 24.14.0; sein Check
+besteht. Kein Frontend-Code wurde verändert.
+Logs: `target/reports/replan-need-{workspace,workspace-final,clippy}.log`.
+Der erste Workspace-Log enthält den beschriebenen roten Matrix-Vollständigkeitstest,
+der finale Log ist grün (SHA256
+`14d7b138c645a6a5b5ea9bf83dcd89e976ab3483e43d846d14e0078d54d9672c`).
+
+Eingefrorener Desktop-Teststand:
+`target/reports/replan-need-20260907/agent-tests.exe`, SHA256
+`ad0b4dae4bc472deb464a50124c2d877f86488fe7304038e5d9f778248b09220`.
+Alle folgenden Coding-Lives verwenden denselben unveränderten öffentlichen
+Ein-Schritt-Fixture und unabhängigen Test. Dies ist kein Plan→Agent-Handoff-Test.
+Die Modelle liefen nacheinander; Zeiten sind Testgesamtdauern, kein isolierter
+Geschwindigkeitsvergleich. Geschützte Fixture-Dateien blieben überall unverändert.
+
+| Modell | Dauer (s) | Tatsächliches Ergebnis |
+| --- | ---: | --- |
+| gpt-5.6-luna | 16,99 | Done/Sequenz 25, ein Patch und ein Prozess, Test 0, aktiver Schritt verifiziert, unabhängig grün, Settings unverändert |
+| gemma-4-26b-a4b-it / Google | 11,14 | Unavailable ohne Repair, Failed/16, keine Mutation |
+| ornith-1.5:9b | 21,43 | Failed/12, ein Test mit Exit 1, kein Patch, aktiver Schritt Blocked |
+| qwen38-8k:latest | 56,78 | RepeatedReplanRead im Einzelrepair, Failed/21, ein Test mit Exit 1, kein Patch |
+| gpt-oss:20b | 18,67 | Capability bestanden, InvalidResponse ohne Repair, Failed/6, keine Mutation |
+| granite4.2:8b | 27,16 | V7-Replan-Analyse: Decode(InvalidValue) nach Einzelrepair, Failed/23, zwei Tests mit Exit 1, kein Patch |
+
+Coding-Log-SHA256 (Dateien im selben eingefrorenen Verzeichnis):
+
+- `luna-coding.log`: `d756cf207e333ea6bfcd6120459acbf1445360125a6494b12149aa6dadf6fc3f`
+- `google-coding.log`: `0ee032919ce7eef4dc88930c2d9c2a2d941872789f59fa214aa1d93d1bbabcf7`
+- `ornith-coding.log`: `9fe44baddcfcb7b1075c90866b4ef3bc49726e890513a9a891ee5f84aed99ab0`
+- `qwen-coding.log`: `dc86333415a0cbedaac37492c4c263ad8daf7354119a26846b011717939ff7ba`
+- `gpt-oss-coding.log`: `2cdf9df0f81c3cc828d04b233140bfc113bc8038ddc5440de0210a016811d8b6`
+- `granite-coding.log`: `3a548c8e3815a85e11c71547c2452a122765748dfe4981bd2a8544fb6eaeb89a`
+
+Lunas vollständige Ask-/Plan-Matrix (vier Familien × drei Formulierungen, eine
+Wiederholung) endet 12/12, WorkReady 12/12, Nutzerhalte und adaptive Reads jeweils 0.
+Rubrik V3 besteht 11/12; Audit 1:2 fehlt der konkrete `write`-Aufruf. Unabhängig
+davon behaupten Audit 1:1 und 1:2 eine Speicherung durch `save_tasks`, obwohl die
+Fixture nur ein Tupel zurückgibt. In 1:2 steht außerdem die Konstruktor-Pfadauflösung
+innerhalb der als zeitlich bezeichneten späteren Callback-Kette. Das ist keine
+vollständige inhaltliche Abnahme. Bericht:
+`target/research-eval/eval-1788806418304.jsonl`, SHA256
+`d73978e98533866b6254ab1c45e8f94e733c12f715bcad204e6f38c40aa5eeb9`.
+Die Matrix endet wegen des Rubrikfehlers korrekt mit Fehlerstatus. Ask/Plan wurden
+in diesem Schnitt nicht auf eine neue Grammatik umgestellt.
+
+Orniths vollständige identische Matrix endet ebenfalls 12/12 und WorkReady 12/12,
+ohne Nutzerhalte oder adaptive Reads. Rubrik V3 besteht 10/12; Audit 1:0 und 1:1
+lassen `write` aus. 1:1 und 1:2 behaupten fälschlich Persistenz; 1:2 bezeichnet
+zusätzlich den Task-Titel als Dateinamenbezug und enthält erfundene E-/Zeilenangaben
+(etwa `output.write` auf Zeile 25 einer tatsächlich 20-zeiligen Datei). Diese
+freien Angaben sind nicht die vom Core verifizierten Quellenanker. Ein bestandener
+Begriffstest in 1:2 ist deshalb ausdrücklich kein semantischer Erfolg. Plan 3:0
+repariert einen zu großen Entwurf (4.558 Textbytes) und Plan 3:2 eine abgeschnittene
+Antwort innerhalb des vorhandenen Einzelrepairs; beide liefern anschließend Pläne
+ohne Nutzerhalt. Bericht `target/research-eval/eval-1788806630075.jsonl`, SHA256
+`6e1439cddecf4ef5ba4e03084f193486c67f862f9ec0278a843c84e4d5e07576`.
+Auch diese Matrix endet wegen der Rubrikfehler korrekt mit Fehlerstatus.
+
+Offen bleiben insbesondere die Originalversorgung im normalen Agentkontext,
+vorzeitige Blockierungen ohne Korrekturversuch, lokale Read-Wiederholungen sowie
+der genaue V7-Wertfehler von Granite. Googles `Unavailable` bedeutet im aktuellen
+Adapter einen transienten HTTP-/Transportfehler, nicht einen nachgewiesenen
+Schemafehler: HTTP 400 wird dort separat als `Rejected` klassifiziert. Der genaue
+Live-Status ist bislang nicht belegt. Die Änderung beseitigt den konkreten Verlust
+des Belegbedarfs, nicht sämtliche Modell- und Inhaltsfehler.
+
 Stand: 2026-09-06. Implementierung gegenüber `31e9db7`.
 Die abschließenden 60er-Wiederholungsläufe sind ausgewertet; die inhaltliche lokale
 Praxisabnahme bleibt wegen der unten dokumentierten Gegenbeispiele offen.

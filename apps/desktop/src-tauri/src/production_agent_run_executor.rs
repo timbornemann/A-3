@@ -1197,6 +1197,17 @@ async fn hydrate_replan_originals(
             pages.push(page);
         }
     }
+    if research
+        .checkpoint
+        .pending_need
+        .as_ref()
+        .is_some_and(|need| {
+            !need.validates_work(&research.checkpoint.work)
+                || !need.validates_originals(research.checkpoint.work.objective(), &pages)
+        })
+    {
+        return Err(AgentRunExecutionFailure::AnchorsChanged);
+    }
     research.pages = pages;
     Ok(())
 }
@@ -1207,6 +1218,9 @@ async fn validate_replan_originals(
     control: &a3_application::JobContext,
 ) -> Result<(), AgentRunExecutionFailure> {
     use a3_application::AgentSourceReader;
+    if !research.validates_pending_need() {
+        return Err(AgentRunExecutionFailure::AnchorsChanged);
+    }
     let mut revisions = research
         .pages
         .iter()

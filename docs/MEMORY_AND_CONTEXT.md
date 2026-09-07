@@ -4,7 +4,9 @@
 
 [ADR-0048](adrs/0048-rungebundene-replan-recherche.md) bindet die Replan-Recherche an
 Run, Schritt, Snapshot und Journal. Originale Safe-Reader-Seiten gelangen flüchtig und
-mit gezählten Kontextkosten in dieselbe V5-Zulassung wie Ask/Plan. Ein Read allein
+mit gezählten Kontextkosten in die gemeinsame Originalzulassung. Neue Replan-Analysen
+verwenden nach [ADR-0092](adrs/0092-dauerhafter-replan-belegbedarf.md) V7 mit genau
+Interpretation oder typisiertem Belegbedarf für Q1. Ein Read allein
 beendet die Recherche nicht. Ergebnisse bleiben Interpretationen, keine Schrittverifikation.
 Read-Zähler und Analysequittungen bleiben beim Wiederanlauf erhalten; Modellturns werden
 auch bei einem fehlgeschlagenen anschließenden Tool-Read abgerechnet.
@@ -14,6 +16,12 @@ fehlgeschlagener Repair bleibt Teil desselben Turns und autorisiert keine Aktion
 Metadatenmarkierungen tatsächlich gelesener Originalseiten erlauben begrenzte Cachehydration
 nach Neustart. Hash und exakter Bereich müssen erneut passen; Hydration erneuert keinen
 Read-Zähler und keine Analysequittung. Suchspans besitzen diese Befugnis nicht.
+Ein offener Bedarf behält begrenzte literale Navigationsziele und sein ursprüngliches
+Analysepaket dauerhaft. Folgende Leseturns sehen ihn auch ohne erneutes Einblenden
+derselben Originalbytes. Aufnahme und Wiederanlauf prüfen Versuch, Datei-/Hash-/
+Bereichsreferenzen und literales Vorkommen erneut. Neue Reads erhalten den Bedarf;
+eine zugelassene Interpretation löst ihn ab. Bedarf ist weder Fakt noch Toolargument
+oder Freigabe und kann Q1 nicht abschließen.
 
 [ADR-0049](adrs/0049-core-planpflichten-und-statusnotizen.md) initialisiert neue Plan-/Agent-
 Vorbereitung deterministisch mit Bestand, Änderungsentwurf und Testentwurf. Vorhandene neue
@@ -365,8 +373,10 @@ Schema ohne modellgenerierten Statusblock. Das ausführbare Aktionsschema bleibt
 gegenüber V4 exakt gleich. Bekannte ID-Konstanten sowie das vollständige tatsächliche
 Schema und Systemframing werden weiterhin vor Retrieval gezählt und im Digest
 gebunden. Ziel, aktueller Schritt und Verifikationszustand bleiben Pflichtkontext;
-reale Fortschrittsereignisse bleiben Core-eigen. Historische V3/V4-Schemas und die
-gesonderten Replan-Verträge werden nicht umgeschrieben.
+reale Fortschrittsereignisse bleiben Core-eigen. Historische V3/V4-Schemas bleiben
+unverändert; neue Replan-Reads verwenden ebenfalls statusfreies V5 nach
+[ADR-0091](adrs/0091-statusfreie-replan-lokalisierung.md). Die davon getrennte
+Replan-Analyse verwendet den oben beschriebenen eingeschränkten V7-Vertrag.
 
 `ContextCompilerPolicyVersion::V5` behält den vollständigen kompakten L0-Repository-Anchor aus V2
 vor allen optionalen gerankten L1-/L2-Einträgen. Package- und Entrypointmengen erscheinen in L0 als
@@ -747,7 +757,7 @@ folgenreiche Nutzerfrage oder Legacy-Planfelder. Ergebnis und Bedarf sind disjun
 leere Ergebnislisten und ein neutraler Fortschrittsarm existieren nicht. Strikte
 Feld-/Wert-/Phasenprüfung normalisiert in dieselben bestehenden Work-Typen vor der
 unveränderten Originalzulassung. Historische V3–V6-Decoder und gespeicherte Zustände bleiben;
-der mutierende Replan behält seinen gesonderten V5-Vertrag.
+die getrennte Replan-Analyse verwendet V7 ohne Nutzerfrage nach ADR-0092.
 Nach [ADR-0076](adrs/0076-entscheidungstyp-vor-ergebnisdaten-im-v7-vertrag.md)
 steht der gemeinsame Entscheidungstyp vor den Varianten-Daten: Interpretation
 und Entwurf tragen `response.kind` und darunter `response.result` mit

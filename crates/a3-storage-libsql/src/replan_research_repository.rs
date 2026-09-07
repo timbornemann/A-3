@@ -3,6 +3,8 @@ use super::*;
 use crate::agent_ask_research_repository::work_state;
 use a3_application::ReplanResearchCheckpoint;
 use a3_domain::TaskStepId;
+#[path = "replan_need_codec.rs"]
+mod need_codec;
 
 pub(crate) async fn originals(
     connection: &Connection,
@@ -72,18 +74,32 @@ async fn load_owned(
     run_id: AgentRunId,
     step: TaskStepId,
 ) -> Result<Option<ReplanResearchCheckpoint>, RunJournalRepositoryError> {
-    let mut rows = connection.query("SELECT snapshot_id, payload FROM agent_replan_research_checkpoints WHERE run_id=?1 AND step_id=?2 ORDER BY event_sequence DESC LIMIT 1",
+    let mut rows = connection.query("SELECT snapshot_id, payload, pending_need FROM agent_replan_research_checkpoints WHERE run_id=?1 AND step_id=?2 ORDER BY event_sequence DESC LIMIT 1",
         params![id_bytes(run_id), step.as_bytes().to_vec()]).await.map_err(RunJournalRepositoryError::Read)?;
     rows.next()
         .await
         .map_err(RunJournalRepositoryError::Read)?
         .map(|row| {
-            Ok(ReplanResearchCheckpoint {
+            let checkpoint = ReplanResearchCheckpoint {
                 step_id: step,
                 snapshot_id: SnapshotId::from_bytes(read_id(&row, 0)?),
                 work: work_state::decode(&read_text(&row, 1)?)
                     .map_err(|_| RunJournalRepositoryError::InvalidStoredData)?,
-            })
+                pending_need: row
+                    .get::<Option<String>>(2)
+                    .map_err(RunJournalRepositoryError::Read)?
+                    .map(|text| need_codec::decode(&text))
+                    .transpose()
+                    .map_err(|_| RunJournalRepositoryError::InvalidStoredData)?,
+            };
+            if checkpoint
+                .pending_need
+                .as_ref()
+                .is_some_and(|n| !n.validates_work(&checkpoint.work))
+            {
+                return Err(RunJournalRepositoryError::InvalidStoredData);
+            }
+            Ok(checkpoint)
         })
         .transpose()
 }
@@ -98,6 +114,10 @@ pub(super) async fn insert(
     if checkpoint.snapshot_id != run.current_snapshot_id()
         || event.snapshot_id() != checkpoint.snapshot_id
         || checkpoint.reads() > 4
+        || checkpoint
+            .pending_need
+            .as_ref()
+            .is_some_and(|n| !n.validates_work(&checkpoint.work))
     {
         return Err(RunJournalRepositoryError::InvalidInput);
     }
@@ -126,7 +146,17 @@ pub(super) async fn insert(
                 .map(|q| q.definition())
                 .eq(checkpoint.work.questions().iter().map(|q| q.definition()))
             || checkpoint.work.revision() <= prior.work.revision()
-            || checkpoint.reads() < prior.reads())
+            || checkpoint.reads() < prior.reads()
+            || (prior.pending_need.is_some()
+                && checkpoint.pending_need.is_none()
+                && !checkpoint.work.ready_to_finish())
+            || (prior.pending_need != checkpoint.pending_need
+                && checkpoint.pending_need.as_ref().is_some_and(|n| {
+                    prior
+                        .work
+                        .question(a3_domain::ResearchQuestionId::FIRST)
+                        .is_some_and(|q| q.attempts().contains(&n.packet()))
+                })))
     {
         return Err(RunJournalRepositoryError::InvalidInput);
     }
@@ -136,6 +166,7 @@ pub(super) async fn insert(
         .iter()
         .filter_map(|q| q.result())
         .flat_map(|r| r.sources())
+        .chain(checkpoint.pending_need.iter().flat_map(|n| n.originals()))
     {
         let mut rows = transaction.query("SELECT 1 FROM tool_evidence e JOIN tool_runs t ON t.tool_run_id=e.tool_run_id
             JOIN agent_replan_originals o ON o.run_id=t.run_id AND o.event_sequence=t.event_sequence AND o.evidence_id=e.evidence_id
@@ -156,8 +187,14 @@ pub(super) async fn insert(
     }
     let payload = work_state::encode(&checkpoint.work)
         .map_err(|_| RunJournalRepositoryError::InvalidInput)?;
-    transaction.execute("INSERT INTO agent_replan_research_checkpoints (run_id,event_sequence,step_id,snapshot_id,payload) VALUES (?1,?2,?3,?4,?5)",
-        params![id_bytes(run.id()), sequence_to_i64(event.sequence())?, checkpoint.step_id.as_bytes().to_vec(), id_bytes(checkpoint.snapshot_id), payload])
+    let pending_need = checkpoint
+        .pending_need
+        .as_ref()
+        .map(need_codec::encode)
+        .transpose()
+        .map_err(|_| RunJournalRepositoryError::InvalidInput)?;
+    transaction.execute("INSERT INTO agent_replan_research_checkpoints (run_id,event_sequence,step_id,snapshot_id,payload,pending_need) VALUES (?1,?2,?3,?4,?5,?6)",
+        params![id_bytes(run.id()), sequence_to_i64(event.sequence())?, checkpoint.step_id.as_bytes().to_vec(), id_bytes(checkpoint.snapshot_id), payload, pending_need])
         .await.map_err(classify_unexpected_constraint)?;
     Ok(())
 }

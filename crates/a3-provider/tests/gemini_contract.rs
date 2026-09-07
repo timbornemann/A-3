@@ -363,9 +363,7 @@ async fn replan_phase_schemas_reach_the_provider_with_only_admitted_decisions()
             json!({"schema_version":5,"action":{"kind":"search","query":"increment","limit":5}})
                 .to_string()
         } else {
-            json!({"schema_version":5,"decision":{"kind":"progress","note":{
-                "goal":"Inspect fixture","finding_kind":"hypothesis","finding":"Need original code","finding_source_refs":[],"gap":"Originals missing","next_step":"Inspect"}},
-                "work":{"questions":[],"results":[]}}).to_string()
+            json!({"schema_version":7,"response":{"kind":"evidenceNeed","question_id":1,"targets":["increment"]}}).to_string()
         };
         let expected = response.clone();
         // The stub and adapter are jointly owned and bounded, including pre-connect failure.
@@ -425,13 +423,13 @@ async fn replan_phase_schemas_reach_the_provider_with_only_admitted_decisions()
             ));
         } else {
             assert_eq!(
-                schema["properties"]["decision"],
-                json!({"$ref":"#/$defs/progress"})
+                schema["properties"]["response"],
+                json!({"anyOf":[{"$ref":"#/$defs/result"},{"$ref":"#/$defs/evidenceNeed"}]})
             );
             assert!(schema["$defs"].get("questionDecision").is_none());
             assert_eq!(
-                schema["$defs"]["progress"]["properties"]["kind"]["enum"],
-                json!(["progress"])
+                schema["$defs"]["evidenceNeed"]["properties"]["kind"]["enum"],
+                json!(["evidenceNeed"])
             );
         }
         assert_eq!(

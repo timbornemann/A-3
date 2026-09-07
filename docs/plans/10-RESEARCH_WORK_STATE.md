@@ -62,10 +62,22 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
       ([ADR-0091](../adrs/0091-statusfreie-replan-lokalisierung.md)).
       Schema-/Turn-/Context-/Providerverträge und vollständige lokale Gates bestehen.
       Alle sechs Coding-Lives geprüft; Luna besteht, lokale Abläufe bleiben offen.
-- [ ] Den beim Replan-Analyze derzeit verworfenen Belegbedarf durch einen
+- [x] Den beim Replan-Analyze derzeit verworfenen Belegbedarf durch einen
       begrenzten typisierten, originalgebundenen und dauerhaft rekonstruierbaren
-      Navigationsbedarf ersetzen. Eigene Persistenzentscheidung und Wiederanlauf-
+      Navigationsbedarf ersetzen. Grundlage:
+      [ADR-0092](../adrs/0092-dauerhafter-replan-belegbedarf.md).
+      Eigene Persistenzentscheidung und Wiederanlauf-
       /Freshness-/Rollback-Nachweise vor Umstellung; keine freie Statusprosa als Fakt.
+      V38, strikte V7-Zulassung, tatsächlicher weiterer Read, Reopen und alle lokalen
+      Gates sind geprüft. Sechs Coding-Lives und vollständige Luna-/Ornith-Matrizen
+      sind ausgewertet; die getrennte inhaltliche und lokale Coding-Abnahme bleibt offen.
+
+- [ ] Die verbleibenden Grenzen aus dem ADR-0092-Nachtest gezielt auflösen:
+      tatsächliche Originalversorgung im normalen Agentkontext und vorzeitige
+      Blockierung ohne Patch untersuchen; Granites V7-Wertfehler vor weiteren
+      Schemaänderungen genau klassifizieren. Audit-Aussagen über nicht gelieferte
+      Callee-Effekte sowie erfundene Inline-Zeilenangaben gesondert gegen Originale
+      prüfen. Keine falsche Vollständigkeit aus Quellenanker oder Begriffrubrik ableiten.
 
 - [x] Nicht regulär beendete Agentantworten behalten ihren geschlossenen Provider-
       Beendigungsgrund (`OutputLimit` oder `Other`) statt der bisherigen Sammelmeldung.
