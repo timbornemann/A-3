@@ -36,6 +36,7 @@ impl ModelProvider for Observed {
             {
                 Some("A^3 ActionChoice V1") => "choice",
                 Some("A^3 ActionArguments V1") => "arguments",
+                Some("A^3 AfterChange V1") => "after_change",
                 Some("A^3 AgentAction V5") => "action",
                 _ => "research",
             };

@@ -329,8 +329,9 @@ fn agent_approved_live_coding_fixture() -> Result<(), Box<dyn Error>> {
 async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
     let generation = match std::env::var("A3_LIVE_AGENT_GENERATION").as_deref() {
         Ok("staged") => AgentActionGeneration::SelectThenFill,
+        Ok("guided") => AgentActionGeneration::ReviewThenSelect,
         Ok("baseline") | Err(std::env::VarError::NotPresent) => AgentActionGeneration::SingleAction,
-        _ => return Err("A3_LIVE_AGENT_GENERATION must be baseline or staged".into()),
+        _ => return Err("A3_LIVE_AGENT_GENERATION must be baseline, staged or guided".into()),
     };
     println!("A3_LIVE_CODING generation={generation:?}");
     let catalog_path = super::optional_env("A3_LIVE_AGENT_CATALOG")?

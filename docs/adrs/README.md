@@ -119,6 +119,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0092](0092-dauerhafter-replan-belegbedarf.md) | Dauerhafter typisierter Replan-Belegbedarf |
 | [0093](0093-originalquellen-im-agentenkontext.md) | Begrenzte Originalquellen im normalen Agentenkontext |
 | [0094](0094-zweistufige-agentaktionen-im-kontrollierten-vergleich.md) | Zweistufige Agentaktionen im kontrollierten Vergleich |
+| [0095](0095-gefuehrte-nachentscheidung-nach-angewendeten-aenderungen.md) | Geführte Nachentscheidung nach angewendeten Änderungen |
 
 ## Neue ADRs
 

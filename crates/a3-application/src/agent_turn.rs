@@ -20,6 +20,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
+mod after_change;
 mod staged;
 mod staged_contract;
 
@@ -31,11 +32,15 @@ pub enum AgentActionGeneration {
     SingleAction,
     /// Controlled comparison: choose an operation, then fill only its arguments.
     SelectThenFill,
+    /// Controlled comparison: guide the next work decision after an actual patch receipt.
+    ReviewThenSelect,
 }
 
-/// Closed failures of the opt-in two-stage exchange; contains no model/source text.
+/// Closed failures of an opt-in staged exchange; contains no model/source text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StagedActionFailure {
+    /// Invalid post-change work decision after the shared repair was consumed.
+    InvalidAfterChange,
     /// Invalid choice after the shared repair was consumed.
     InvalidChoice,
     /// Invalid arguments after the shared repair was consumed.
@@ -297,7 +302,8 @@ impl AgentTurnOutcome {
                     },
                     AgentTurnRejectionReason::InvalidAfterRepair
                     | AgentTurnRejectionReason::Staged(
-                        StagedActionFailure::InvalidChoice
+                        StagedActionFailure::InvalidAfterChange
+                        | StagedActionFailure::InvalidChoice
                         | StagedActionFailure::InvalidArguments
                         | StagedActionFailure::InvalidAction(_)
                         | StagedActionFailure::Contract,
@@ -475,7 +481,7 @@ impl<'a> ExecuteAgentTurn<'a> {
         let request = compiled.into_request();
         let (decoded, prompt_tokens, output_tokens, repair, observed_model_output_bytes) = if self
             .generation
-            == AgentActionGeneration::SelectThenFill
+            != AgentActionGeneration::SingleAction
             && input.replan_localization().is_none()
             && input.replan_research().is_none()
         {

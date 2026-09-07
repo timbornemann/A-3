@@ -40,6 +40,19 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Die quittungsgebundene Nachentscheidung aus
+      [ADR-0095](../adrs/0095-gefuehrte-nachentscheidung-nach-angewendeten-aenderungen.md)
+      als dritte Vergleichsvariante implementieren: geplante Prüfung, weitere
+      Änderung oder fehlende Evidence getrennt führen; gemeinsame Grenzen,
+      echte Verifikation und Mehrdateiarbeit erhalten. Grenztests, realen Harness
+      und gegenbalancierte Modellnachweise auswerten, bevor eine Produktübernahme
+      erwogen wird.
+      28 gezielte Turntests, echter Ein-/Zwei-Datei-Harness, vollständige lokale
+      Gates und 24 Liveversuche sind ausgewertet. Granite und Ornith erreichen
+      guided jeweils 2/2 Done gegenüber staged 0/2; Luna und Qwen bleiben in
+      beiden Varianten bei 2/2. Keine allgemeine Produktfreigabe: Vorrecherche,
+      Providerfehler, breitere Orakel und volle Planübergaben bleiben offen.
+
 - [x] Zweistufige Aktionswahl und enge Argumenterzeugung nach
       [ADR-0094](../adrs/0094-zweistufige-agentaktionen-im-kontrollierten-vergleich.md)
       im echten Harness implementieren, Grenzregressionen und gegenbalancierte

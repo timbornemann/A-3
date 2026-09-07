@@ -1,5 +1,160 @@
 # Plan 10: Verifikationsprotokoll
 
+## 2026-09-07: Geführte Nachentscheidung nach Patch (ADR-0095)
+
+Ausgangspunkt `ade289f`. Die dritte Vergleichsvariante `guided` ergänzt nach einer
+aktuellen gebundenen Patchquittung und bei vorhandener operationaler Prüfung die
+geschlossene Entscheidung `verify`, `continue_change` oder `need_evidence`.
+Sie ist kein automatischer Test nach jedem Teilpatch und keine Selbstverifikation.
+Bei `verify` erzeugt der Core allein den vorhandenen Run-Auftrag, der unabhängig
+decodiert und anschließend durch denselben Mutationscontroller geprüft wird.
+Ask/Plan/Replan und der Produktstandard bleiben unverändert.
+
+28 gezielte Agent-Turn-Tests bestehen einschließlich der fünf neuen Regressionen:
+bekannter Prüfauftrag ohne Argumentinferenz, aktuelle Patch-/Schrittvoraussetzungen,
+getrennte Read-/Change-Wege mit gemeinsamem Einzelrepair, Kontextwechsel nach der
+Nachentscheidung sowie Cancellation/OutputLimit vor einem möglichen Prüfauftrag.
+Clippy über alle Workspace-Targets/-Features mit `-D warnings` besteht initial.
+
+Der reale zusätzliche Coding-Harness besteht für Ein-Datei- und Zwei-Dateiänderung:
+Patch/Approval, Index, dauerhafte Quittung, echte Context Compilation, eine
+Modellentscheidung, tatsächlicher Python-Testprozess, Evidence und Acceptance.
+Die Patchinhalte stammen in diesem Offlinevertrag weiterhin vom Testtreiber;
+das Stubmodell liefert nur `verify`. Das ist kein Live-Nachweis einer selbständig
+erarbeiteten Mehrdateiänderung. Die bestehende kleine Live-Fixture prüft nur
+`increment(41) == 42`; breitere Orakel und volle Planübergaben bleiben offen.
+
+Der abgeschlossene Livevergleich isoliert die neue Nachentscheidung: bisheriges
+`staged` gegen `guided`, pro Modell A → B → B → A auf demselben eingefrorenen Build,
+unveränderten Profilen und Freigaben. Modellreihenfolge: Granite, Luna, Qwen,
+Ornith, GPT-OSS, Google. Lokale Modelle liefen strikt nacheinander; während der
+Messungen liefen keine Builds. Die abschließenden lokalen Gates bestehen.
+
+Geprüft wurden `cargo fmt --all -- --check`,
+`cargo test -p a3-application --lib agent_turn::tests --offline --locked --jobs 2`,
+`cargo test -p a3-agent-harness-tests --test coding_tasks guided:: --offline --locked --jobs 2 -- --test-threads=1`,
+`cargo clippy --workspace --all-targets --all-features --offline --locked --jobs 2 -- -D warnings`
+und `cargo test --workspace --all-features --offline --locked --jobs 2 -- --test-threads=1`.
+Der unveränderte bisherige E9-Golden-Vertrag und die Storage-Verbindungsregression
+bestehen auch in der Gesamtsuite. Pro Prozess gelten `CARGO_INCREMENTAL=0`,
+`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`. Keine Frontendänderung.
+`pnpm check:links` und `git diff --check` bestehen; die bekannte Node-Abweichung
+25.6.1 statt 24.14.0 bleibt als Warnung sichtbar. Alle Rust-Prüfungen betreffen
+denselben Quellstand wie das eingefrorene Livebinary. Gateartefakte:
+
+- `target/reports/guided-agent-clippy-initial.log`, SHA-256
+  `a6e9e88134519f61c9a1707ce219d762a5b3c9b1fc433c47b2ab4ac437980b52`.
+- `target/reports/guided-agent-workspace-final.log`, SHA-256
+  `52f3c847afa31be9b9bfed97a7213190183e0730ebd296de7435b49e31f034e4`.
+
+### Ergebnisse und Grenzen
+
+| Modell | Staged: Done | Guided: Done | Befund |
+| --- | ---: | ---: | --- |
+| granite4.2:8b | 0/2 | 2/2 | Beide Gegenläufe NoContentChange nach Patch; guided jeweils Patch + echte Prüfung ohne Repair |
+| gpt-5.6-luna | 2/2 | 2/2 | Ein guided-Lauf fordert zunächst einen weiteren Read an; keine allgemeine Tokenersparnis |
+| qwen38-8k:latest | 2/2 | 2/2 | Guided jeweils drei statt vier Modellaufrufe, keine Repairs |
+| ornith-1.5:9b | 0/2 | 2/2 | Gegenlauf 1: 42 Reads bis Zeitgrenze ohne Patch; Gegenlauf 2: ein Read, Patch, NoContentChange |
+| gpt-oss:20b | 0/2 | 0/2 | Probe bestanden, jeweils InvalidResponse vor Patch; Nachentscheidung nie erreicht |
+| gemma-4-26b-a4b-it | 0/1 Coding-Start | kein Coding-Start | Drei Versuche vor Coding nicht verfügbar; keine gepaarte Aussage zur Strategie möglich |
+
+Beide erfolgreichen Ornith-Läufe führen nach dem Patch genau einen
+AfterChange-Aufruf und danach die echte Prüfung aus. Davor benötigen sie
+18 beziehungsweise null Reads. Die Nachentscheidung ist vor dem ersten Patch
+noch inaktiv; diese Schwankung beweist ausdrücklich keine verbesserte
+Vorrecherche. Im ersten Gegenlauf cancelt die vorhandene 120-Sekunden-Grenze des
+Testversuchs einen laufenden Read nach 42 ausgeführten Reads; es gibt null
+Mutationsquittungen und keine physische Änderung. Dieser Lauf ist **kein**
+erneuter NoContentChange-Fall. Der zweite Gegenlauf belegt dagegen diese genaue
+Fehlerklasse. Auch hier beweist NoContentChange nur die Übereinstimmung von
+vorgeschlagenem Inhaltshash und vorgeschlagenem Basishash, nicht deren Aktualität.
+
+Lunas zusätzlicher Read durchläuft den zugelassenen `need_evidence`-Zweig und
+kehrt danach zur Nachentscheidung zurück. Über beide Versuche verbraucht guided
+10795 gegenüber 9604 Prompttokens: weniger Aufrufe sind nicht universell belegt.
+Qwen benötigt dagegen zusammen 13306 gegenüber 17850 Prompttokens, rund 25 %
+weniger in diesem Fixture. Die Laufzeiten umfassen Probe, Modellladung und
+Vorbereitung und sind keine allgemeine Geschwindigkeitsgarantie.
+
+Googles erster Staged-Lauf führt zwei rote Testprozesse ohne Patch aus, liest
+im Replan und endet bei dessen Analyse mit Unavailable. Die anderen drei
+Versuche erreichen bereits die Modellvorbereitung nicht. Die Meldung belegt
+keinen HTTP-Status, kein Rate-Limit und keine konkrete Schemaursache. Ebenso
+beweist GPT-OSS' InvalidResponse weder pauschales Modellalter noch eine fehlende
+Structured-Output-Fähigkeit; die vorgelagerte Probe besteht.
+
+Alle 21 Versuche mit Coding-Start bewahren die geschützten Dateien. Alle zwölf
+erfolgreichen Versuche bestätigen zusätzlich unveränderte native Einstellungen,
+aktuelle Step-Verifikation und den unabhängigen gesperrten Fixturetest. Das bleibt
+ein Ein-Eingabe-Test und kein vollständiger Plan→Agent-Handoff. Die Variante wird
+wegen der reproduzierten Verbesserungen bei Granite und Ornith weiterverfolgt,
+aber noch nicht als Produktstandard aktiviert. Produktive Evidenzfrontier,
+Providerdiagnose, breitere Orakel und echte Mehrdatei-/Planübergaben bleiben offen.
+
+| Lauf | Aufrufe | Gebuchte Prompt-/Outputtokens | Sekunden |
+| --- | ---: | ---: | ---: |
+| Granite A1 | 5 | 12846 / 582 | 18,10 |
+| Granite B1 | 3 | 7569 / 181 | 11,94 |
+| Granite B2 | 3 | 7595 / 181 | 11,71 |
+| Granite A2 | 5 | 12875 / 528 | 15,64 |
+| Luna A1 | 4 | 4818 / 164 | 11,75 |
+| Luna B1 | 6 | 7164 / 215 | 12,40 |
+| Luna B2 | 3 | 3631 / 135 | 8,81 |
+| Luna A2 | 4 | 4786 / 153 | 11,00 |
+| Qwen A1 | 4 | 8949 / 239 | 30,25 |
+| Qwen B1 | 3 | 6664 / 263 | 22,38 |
+| Qwen B2 | 3 | 6642 / 218 | 21,35 |
+| Qwen A2 | 4 | 8901 / 289 | 24,85 |
+| Ornith A1 | 86 | 326673 / 6589 | 127,94 |
+| Ornith B1 | 39 | 143669 / 1157 | 66,15 |
+| Ornith B2 | 3 | 9576 / 172 | 14,59 |
+| Ornith A2 | 7 | 22715 / 564 | 22,68 |
+| GPT-OSS A1 | 1 | 6932 / 4096 | 18,18 |
+| GPT-OSS B1 | 1 | 6932 / 4096 | 11,90 |
+| GPT-OSS B2 | 1 | 6932 / 4096 | 11,94 |
+| GPT-OSS A2 | 1 | 6932 / 4096 | 11,93 |
+| Google A1 | 6 | 22986 / 4181 | 8,73 |
+| Google B1 | 0 | nicht verfügbar | 0,43 |
+| Google B2 | 0 | nicht verfügbar | 0,41 |
+| Google A2 | 0 | nicht verfügbar | 0,43 |
+
+Aufrufe zählen den Controller einschließlich Replan/Repair, nicht die Probe.
+Bei abgebrochenen Providerantworten enthalten die gebuchten Tokens die
+konservative Reserve, nicht behauptete tatsächliche Providerabrechnung.
+
+### Reproduzierbare Artefakte
+
+Alle Logs liegen unter `target/reports/guided-agent-20260907/`.
+Gemeinsames `agent-tests.exe`, SHA-256
+`89dd6dc1b161284b3fc1908bdaf883b64505c21ad293b14c08acc99ef3829b7a`.
+
+| Log | SHA-256 |
+| --- | --- |
+| granite-staged-1.log | `0089a3281c9b0e1a9c752426bcebf5255c5bb7b1729d27388158d63c1e8d0a08` |
+| granite-guided-1.log | `70f3368726b5c082a5c7145ab5eb5ab9db4c0aa7d0dc28b02e1d0ff99fb32f9c` |
+| granite-guided-2.log | `6311f523a353f81e7f45807025d7b70802cd577ca387647b24497ad8df104824` |
+| granite-staged-2.log | `d704bdb82534e92c2cd816994aa42d266fd7623dfb4089089577d83ca7aa3ce1` |
+| luna-staged-1.log | `1c5d36cad3ba34c15678bde3ff1c298f29f28c0757307ea4296c2313947da2fb` |
+| luna-guided-1.log | `72480775fbf64956138294d7db5a0a1e5874cec392e28a74fc8573adb2903784` |
+| luna-guided-2.log | `39bdcd60a019aaf5f320f85e0c80731c8d6e0c3b5c5224354df3427f9c10b75f` |
+| luna-staged-2.log | `982e4a107eadc1d911511facaeec720b9efbb78b81a2a246861cad53c8579e2f` |
+| qwen-staged-1.log | `5a3efca9a0af9b9b5eaf58a3617ed3a58534eb9925797e6a2f089e85e3eca2a3` |
+| qwen-guided-1.log | `a4021d991aadddfb9f615cf20e37bfea027a0ffbb6de3812749e17d1c5d51aa0` |
+| qwen-guided-2.log | `926d81935ec324e2c01c80c0ea482efcf7e98c4c7803d4db864774f5f809ba07` |
+| qwen-staged-2.log | `a7240b2fdf0246e16e1947b3bee00017b95b5cb765fdc1c49b413e1586fb8b76` |
+| ornith-staged-1.log | `34e204da3bf4d3f8921b5f276df0017197df29415df57233bfd51de7dbbd7392` |
+| ornith-guided-1.log | `d47bd32e666ef5e3d1ad5ce800f23afee5762e052a9851ecff965535327dd710` |
+| ornith-guided-2.log | `da4910e67ff08c6f23325b18a44bde52b5d5d1268cef209ea8f81a324212bed4` |
+| ornith-staged-2.log | `fe0cf69dca3f7bd8296876ee336a3ad9e61f32d6316e312200a0f93de73dda7f` |
+| gptoss-staged-1.log | `17b8b2c5e6382fc54574c1f0c64a7205f1834e4a0ac6ddb80588ac1d63b9da5a` |
+| gptoss-guided-1.log | `ad5e9f956044877781fb249a89f27abc57296b4b79a95d920a40031fc389e0a3` |
+| gptoss-guided-2.log | `9d0a83d8aafb6e4fa8b76091d1f866d6997ae36d33b8852d0c4937a06bb20a16` |
+| gptoss-staged-2.log | `21149dcf659c642080a781f8d323d86ba936383ce0d8e0f3fd75d73add80f751` |
+| google-staged-1.log | `8bc9fb50911b8a77d5b9a6a26dad2660fc4a9b56b666a07091a3c3e9da7da18f` |
+| google-guided-1.log | `b67abe792986f54869dd320c691613b4bd15721f2be7db868e55e5dae021b3bb` |
+| google-guided-2.log | `6714b263e97875055708c74d8e4ec00264c73e4a811867de58852065a877dffb` |
+| google-staged-2.log | `da515d3dcc6161a649e010800b3577b96d167af65520e1c7539bbaa27282514c` |
+
 ## 2026-09-07: Auswahl und Argumente getrennt im echten Harness (ADR-0094)
 
 Ausgangspunkt `62b8fb3`. Der neue Application-Vergleichspfad führt zuerst

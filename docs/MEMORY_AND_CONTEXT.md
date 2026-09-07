@@ -2,6 +2,19 @@
 
 ## Kontrollierter Vergleich: Auswahl vor Argumenten
 
+[ADR-0095](adrs/0095-gefuehrte-nachentscheidung-nach-angewendeten-aenderungen.md)
+ergänzt testseitig `A3_LIVE_AGENT_GENERATION=guided`. Nur eine aktuelle gebundene
+Patchquittung und ein laufender operationaler Schritt aktivieren `AfterChange V1`.
+Das Modell wählt `verify`, `continue_change` oder `need_evidence`, ohne eine
+Erfolgsaussage zu liefern. Bei `verify` ergänzt der Core allein die vorhandene
+Step-/Command-ID und prüft die vollständige Run-Aktion unabhängig; eine weitere
+Argumentinferenz entfällt. Die beiden anderen Wege begrenzen die anschließende
+Aktionswahl auf Änderungen/Replan/Blocker beziehungsweise Search/Inspect.
+Höchstens drei reguläre Aufrufe plus ein gemeinsam genutzter Repair teilen sich
+dieselbe Frist und die bestehenden Budgets. Eine solche Runquittung wird dabei
+nicht unbelegt zur Änderungsquittung des aktuellen Schritts. Keine automatische
+Verifikation jedes Teilpatches oder Produktumstellung entsteht.
+
 [ADR-0094](adrs/0094-zweistufige-agentaktionen-im-kontrollierten-vergleich.md)
 ergänzt einen ausschließlich vom nativen Testaufbau aktivierten Application-Pfad.
 ActionChoice V1 liefert nur `version: 1` und eine geschlossene `choice`.

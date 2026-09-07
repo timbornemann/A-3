@@ -65,13 +65,58 @@ pub(super) const CHOICE_PROMPT: &str = "ActionChoice V1: choose exactly one next
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Choice(usize);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ChoiceScope {
+    All,
+    Changes,
+    Evidence,
+}
+
+impl ChoiceScope {
+    fn allows(self, name: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Changes => matches!(
+                name,
+                "patch_add"
+                    | "patch_update"
+                    | "patch_move"
+                    | "patch_delete"
+                    | "request_replan"
+                    | "report_blocked"
+            ),
+            Self::Evidence => name == "search" || name.starts_with("inspect_"),
+        }
+    }
+
+    pub(super) fn prompt(self) -> &'static str {
+        match self {
+            Self::All => CHOICE_PROMPT,
+            Self::Changes => {
+                "ActionChoice V1: you selected continue_change. Choose the operation for the concrete remaining change from this enum. patch_update edits existing files; patch_add creates; patch_move renames; patch_delete removes. request_replan stays within the goal; report_blocked requires an essential missing user decision. Return only version and choice, no arguments or code. Do not repeat already applied changes."
+            }
+            Self::Evidence => {
+                "ActionChoice V1: you selected need_evidence. Choose only the read action for the specific missing evidence from this enum. Return only version and choice, no arguments, code or status. Do not repeat already supplied evidence."
+            }
+        }
+    }
+}
+
 pub(super) fn choice_schema() -> Value {
+    choice_schema_for(ChoiceScope::All)
+}
+
+pub(super) fn choice_schema_for(scope: ChoiceScope) -> Value {
     json!({"title":"A^3 ActionChoice V1", "type":"object", "additionalProperties":false,
         "required":["version","choice"], "properties":{
-            "version":{"const":1}, "choice":{"type":"string","enum":CHOICES.map(|c|c.0)} }})
+            "version":{"const":1}, "choice":{"type":"string","enum":CHOICES.iter().map(|c|c.0).filter(|name|scope.allows(name)).collect::<Vec<_>>()} }})
 }
 
 pub(super) fn decode_choice(raw: &str) -> Option<Choice> {
+    decode_choice_for(raw, ChoiceScope::All)
+}
+
+pub(super) fn decode_choice_for(raw: &str, scope: ChoiceScope) -> Option<Choice> {
     let value: Value = serde_json::from_str(raw).ok()?;
     let fields = value.as_object()?;
     if fields.len() != 2 || fields.get("version")? != &json!(1) {
@@ -80,7 +125,7 @@ pub(super) fn decode_choice(raw: &str) -> Option<Choice> {
     let choice = fields.get("choice")?.as_str()?;
     CHOICES
         .iter()
-        .position(|entry| entry.0 == choice)
+        .position(|entry| entry.0 == choice && scope.allows(choice))
         .map(Choice)
 }
 

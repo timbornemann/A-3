@@ -1,5 +1,5 @@
-//! Owned, bounded two-stage action generation in Application, not in a provider adapter.
-use super::{staged_contract as contract, *};
+//! Owned, bounded action generation in Application, not in a provider adapter.
+use super::{after_change, staged_contract as contract, *};
 use crate::DecodedAgentAction;
 use std::time::Instant;
 
@@ -10,6 +10,25 @@ pub(super) type Generated = (
     AgentTurnRepairUsage,
     u64,
 );
+
+enum Stage {
+    AfterChange(a3_domain::AgentRunAction),
+    Choose(contract::ChoiceScope),
+    Arguments(contract::Arguments),
+}
+
+impl Stage {
+    fn request_contract(&self) -> (serde_json::Value, &str) {
+        match self {
+            Self::AfterChange(_) => (after_change::schema(), after_change::PROMPT),
+            Self::Choose(contract::ChoiceScope::All) => {
+                (contract::choice_schema(), contract::CHOICE_PROMPT)
+            }
+            Self::Choose(scope) => (contract::choice_schema_for(*scope), scope.prompt()),
+            Self::Arguments(args) => (args.schema.clone(), args.prompt.as_str()),
+        }
+    }
+}
 
 #[derive(Default)]
 struct Usage {
@@ -91,7 +110,13 @@ where
     exchange_digest.update(&digest.as_bytes());
     let snapshot = run.current_snapshot_id();
     let mut usage = Usage::default();
-    let mut arguments: Option<contract::Arguments> = None;
+    let verification = (executor.generation == AgentActionGeneration::ReviewThenSelect)
+        .then(|| after_change::planned_verification(input, run))
+        .flatten();
+    let max_calls = if verification.is_some() { 4 } else { 3 };
+    let mut stage = verification
+        .map(Stage::AfterChange)
+        .unwrap_or(Stage::Choose(contract::ChoiceScope::All));
     let mut repair: Option<String> = None;
     let step = input
         .task_ledger()
@@ -133,7 +158,7 @@ where
         )));
     };
     // No retry of a provider failure, no recursive repair, no executable choice-stage value.
-    for call in 0..3 {
+    for call in 0..max_calls {
         if AgentControllerControl::is_cancelled(control) {
             return Ok(Err(usage.reject(
                 snapshot,
@@ -156,10 +181,7 @@ where
                 )));
             }
         }
-        let (schema, prompt) = match &arguments {
-            Some(args) => (args.schema.clone(), args.prompt.as_str()),
-            None => (contract::choice_schema(), contract::CHOICE_PROMPT),
-        };
+        let (schema, prompt) = stage.request_contract();
         let Some(request) = contract::request(base, schema, prompt, repair.as_deref()) else {
             return Ok(Err(usage.reject(
                 snapshot,
@@ -200,11 +222,30 @@ where
         if let Some(reason) = completion.rejection_reason() {
             return Ok(Err(usage.reject(snapshot, reason)));
         }
-        let (failure, instruction) = if let Some(args) = &arguments {
+        let (failure, instruction) = if let Stage::AfterChange(verification) = &stage {
+            match after_change::decode(&completion.raw) {
+                Some(after_change::NextWork::Verify) => {
+                    let raw = after_change::verification_wire(verification);
+                    let AgentActionPrimaryOutcome::Accepted(action) = decoder.decode_primary_in_snapshot(&raw, executor.patch_snapshot) else {
+                        return Ok(Err(usage.reject(snapshot, AgentTurnRejectionReason::Staged(StagedActionFailure::Contract))));
+                    };
+                    return Ok(Ok(finish(action, &usage, exchange_digest)));
+                }
+                Some(after_change::NextWork::ContinueChange) => {
+                    stage = Stage::Choose(contract::ChoiceScope::Changes);
+                    continue;
+                }
+                Some(after_change::NextWork::NeedEvidence) => {
+                    stage = Stage::Choose(contract::ChoiceScope::Evidence);
+                    continue;
+                }
+                None => (StagedActionFailure::InvalidAfterChange, "Invalid AfterChange V1 decision. This is the only repair shared by all stages. Return exactly version=1 and next=verify, continue_change or need_evidence. No action, code, IDs, success status or extra fields.".to_owned()),
+            }
+        } else if let Stage::Arguments(args) = &stage {
             let raw = args.assemble(&completion.raw);
             match raw.as_deref().map(|raw|decoder.decode_primary_in_snapshot(raw, executor.patch_snapshot)) {
                 Some(AgentActionPrimaryOutcome::Accepted(action)) => {
-                    return Ok(Ok(((action, ModelTokenCount::new(usage.prompt), ModelTokenCount::new(usage.output), usage.repair(), usage.bytes), ContextDigest::from_bytes(*exchange_digest.finalize().as_bytes()))));
+                    return Ok(Ok(finish(action, &usage, exchange_digest)));
                 }
                 Some(AgentActionPrimaryOutcome::RepairRequired(rejected)) => (
                     StagedActionFailure::InvalidAction(rejected.rejection()),
@@ -212,16 +253,24 @@ where
                 ),
                 None => (StagedActionFailure::InvalidArguments, "Invalid argument envelope or unexpected fields. This is the only repair. Return only version=1 and parameters for the same locked choice and schema; no action kind, fixed IDs or additional fields.".to_owned()),
             }
-        } else if let Some(choice) = contract::decode_choice(&completion.raw) {
-            let Some(args) = contract::Arguments::new(&bound_schema, choice) else {
-                return Ok(Err(usage.reject(
-                    snapshot,
-                    AgentTurnRejectionReason::Staged(StagedActionFailure::Contract),
-                )));
-            };
-            arguments = Some(args);
-            continue;
         } else {
+            let choice = match &stage {
+                Stage::Choose(contract::ChoiceScope::All) => {
+                    contract::decode_choice(&completion.raw)
+                }
+                Stage::Choose(scope) => contract::decode_choice_for(&completion.raw, *scope),
+                _ => None,
+            };
+            if let Some(choice) = choice {
+                let Some(args) = contract::Arguments::new(&bound_schema, choice) else {
+                    return Ok(Err(usage.reject(
+                        snapshot,
+                        AgentTurnRejectionReason::Staged(StagedActionFailure::Contract),
+                    )));
+                };
+                stage = Stage::Arguments(args);
+                continue;
+            }
             (StagedActionFailure::InvalidChoice, "Invalid choice. This is the only repair shared by both stages. Return exactly version=1 and one choice from the enum; no arguments, code or additional fields.".to_owned())
         };
         if usage.repaired {
@@ -235,6 +284,23 @@ where
         snapshot,
         AgentTurnRejectionReason::Staged(StagedActionFailure::InvalidArguments),
     )))
+}
+
+fn finish(
+    action: DecodedAgentAction,
+    usage: &Usage,
+    digest: blake3::Hasher,
+) -> (Generated, ContextDigest) {
+    (
+        (
+            action,
+            ModelTokenCount::new(usage.prompt),
+            ModelTokenCount::new(usage.output),
+            usage.repair(),
+            usage.bytes,
+        ),
+        ContextDigest::from_bytes(*digest.finalize().as_bytes()),
+    )
 }
 
 fn hash_request(digest: &mut blake3::Hasher, request: &ModelProviderRequest) {

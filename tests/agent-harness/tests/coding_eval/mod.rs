@@ -46,6 +46,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 mod compaction;
+mod guided;
 mod replan;
 
 const EXPECTED_RESULTS: &str =
@@ -298,6 +299,13 @@ async fn evaluate_suite() -> Result<Vec<CodingEvalResult>, Box<dyn Error>> {
 }
 
 async fn evaluate_case(case: CodingCase) -> Result<CodingEvalResult, Box<dyn Error>> {
+    evaluate_case_with_verification(case, guided::VerificationSource::FixtureDriver).await
+}
+
+async fn evaluate_case_with_verification(
+    case: CodingCase,
+    source: guided::VerificationSource,
+) -> Result<CodingEvalResult, Box<dyn Error>> {
     let fixture = CodingFixture::new(case.files).await?;
     let catalog =
         DiscoverProjectCommands.execute(fixture.project.worktree().id(), &fixture.published)?;
@@ -434,6 +442,14 @@ async fn evaluate_case(case: CodingCase) -> Result<CodingEvalResult, Box<dyn Err
         return Err(test_error("coding patch did not request verification"));
     }
     let patched_index = latest_index(&fixture).await?;
+    let verification_action = match source {
+        guided::VerificationSource::FixtureDriver => {
+            AgentAction::Run(AgentRunAction::new(step_id, command.id()))
+        }
+        guided::VerificationSource::AfterChangeDecision => {
+            guided::select_verification(&fixture, &mut durable, &context, &patched_index).await?
+        }
+    };
     let selection = MutationCommandSelection::new(&catalog, &confirmation);
     let process_events = RecordingProcessEvents::default();
     let verified = controller
@@ -443,7 +459,7 @@ async fn evaluate_case(case: CodingCase) -> Result<CodingEvalResult, Box<dyn Err
             &mut durable.ledger,
             &mut durable.ledger_version,
             &patched_index,
-            AgentAction::Run(AgentRunAction::new(step_id, command.id())),
+            verification_action,
             Some(selection),
             &WorkspacePolicy::unrestricted(),
             None,

@@ -41,10 +41,18 @@ impl AgentContextCompiler for RepeatStagedCompiler {
 }
 
 fn staged_fixture(raw: &[&str]) -> Result<TurnFixture, Box<dyn Error>> {
-    let mut fixture = turn_fixture(
+    staged_fixture_with_command(raw, None)
+}
+
+fn staged_fixture_with_command(
+    raw: &[&str],
+    command: Option<a3_domain::DiscoveredCommandId>,
+) -> Result<TurnFixture, Box<dyn Error>> {
+    let mut fixture = turn_fixture_with_command(
         raw.iter()
             .map(|raw| provider_response(raw))
             .collect::<Result<_, _>>()?,
+        command,
     )?;
     let step = fixture
         .input
@@ -80,6 +88,8 @@ fn staged_fixture(raw: &[&str]) -> Result<TurnFixture, Box<dyn Error>> {
     );
     Ok(fixture)
 }
+
+mod after_change;
 
 const SEARCH_CHOICE: &str = r#"{"version":1,"choice":"search"}"#;
 const SEARCH_ARGUMENTS: &str = r#"{"version":1,"parameters":{"query":"increment","limit":3}}"#;
