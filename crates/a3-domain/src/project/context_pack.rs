@@ -30,8 +30,11 @@ impl ContextCompilerPolicyVersion {
     /// ADR-0038 policy that revalidates and injects current research handoff paths.
     pub const V4: Self = Self(4);
 
+    /// ADR-0077 reserves the configured output cap and fits complete mandatory sections.
+    pub const V5: Self = Self(5);
+
     /// Policy emitted by the current deterministic compiler implementation.
-    pub const CURRENT: Self = Self::V4;
+    pub const CURRENT: Self = Self::V5;
 
     /// Returns the stable persisted integer.
     #[must_use]
@@ -88,7 +91,7 @@ pub enum ContextSection {
     ToolResults,
 }
 
-/// Proportionally scaled V1 allowances plus non-packable safety and output reserves.
+/// Scaled reference allowances with complete mandatory sections and non-packable reserves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContextBudgetPlan {
     context_limit: u32,
@@ -102,23 +105,17 @@ pub struct ContextBudgetPlan {
 }
 
 impl ContextBudgetPlan {
-    /// Derives the exact V1 budget from a ModelProfile without tokenizer heuristics.
+    /// Derives the V5 reference budget without changing the profile or tokenizer strategy.
     pub fn for_profile(profile: &ModelProfile) -> Result<Self, ContextBudgetError> {
         let context_limit = profile.settings().context_limit().get();
-        let output_reserve =
-            scaled(OUTPUT_REFERENCE_TOKENS, context_limit).max(percentage_ceiling(
+        let output_reserve = scaled(OUTPUT_REFERENCE_TOKENS, context_limit)
+            .max(percentage_ceiling(
                 context_limit,
                 OUTPUT_PERCENT_NUMERATOR,
                 OUTPUT_PERCENT_DENOMINATOR,
-            )?);
-        let supported_output = profile.settings().output_limit().get();
-        if supported_output < output_reserve {
-            return Err(ContextBudgetError::OutputCapabilityTooSmall {
-                required: output_reserve,
-                supported: supported_output,
-            });
-        }
-        let plan = Self {
+            )?)
+            .max(profile.settings().output_limit().get());
+        let mut plan = Self {
             context_limit,
             system_and_tools: scaled_non_zero(SYSTEM_REFERENCE_TOKENS, context_limit),
             goal_and_ledger: scaled_non_zero(GOAL_LEDGER_REFERENCE_TOKENS, context_limit),
@@ -128,10 +125,85 @@ impl ContextBudgetPlan {
             safety_reserve: scaled_non_zero(SAFETY_REFERENCE_TOKENS, context_limit),
             output_reserve,
         };
-        if plan.maximum_accounted_tokens()? > context_limit {
+        let excess = plan
+            .maximum_accounted_tokens()?
+            .saturating_sub(context_limit);
+        plan.consume_optional_code(excess)?;
+        Ok(plan)
+    }
+
+    /// Fits counted mandatory input using free and optional space, never safety/output reserves.
+    pub fn with_mandatory_sections(
+        self,
+        system: u32,
+        goal: u32,
+    ) -> Result<Self, ContextBudgetError> {
+        self.with_mandatory_evidence(system, goal, 0)
+    }
+
+    /// Also protects counted open-memory/research evidence before distributing optional space.
+    pub fn with_mandatory_evidence(
+        self,
+        system: u32,
+        goal: u32,
+        evidence: u32,
+    ) -> Result<Self, ContextBudgetError> {
+        self.with_mandatory_repository(system, goal, evidence, 0)
+    }
+
+    /// Protects the actual mandatory repository L0 and framing once retrieval has produced them.
+    pub fn with_mandatory_repository(
+        mut self,
+        system: u32,
+        goal: u32,
+        evidence: u32,
+        project: u32,
+    ) -> Result<Self, ContextBudgetError> {
+        let extra = system
+            .saturating_sub(self.system_and_tools)
+            .checked_add(goal.saturating_sub(self.goal_and_ledger))
+            .and_then(|extra| extra.checked_add(evidence.saturating_sub(self.code_and_evidence)))
+            .and_then(|extra| extra.checked_add(project.saturating_sub(self.project_map)))
+            .ok_or(ContextBudgetError::AllocationOverflow)?;
+        let free = self
+            .context_limit
+            .checked_sub(self.maximum_accounted_tokens()?)
+            .ok_or(ContextBudgetError::AllocationOverflow)?;
+        let mut needed = extra.saturating_sub(free);
+        for (area, reference, mandatory) in [
+            (
+                &mut self.code_and_evidence,
+                CODE_EVIDENCE_REFERENCE_TOKENS,
+                evidence,
+            ),
+            (&mut self.project_map, PROJECT_MAP_REFERENCE_TOKENS, project),
+            (&mut self.tool_results, TOOL_RESULTS_REFERENCE_TOKENS, 0),
+        ] {
+            let minimum = scaled_non_zero(reference, self.context_limit)
+                .min(256)
+                .max(mandatory);
+            let take = area.saturating_sub(minimum).min(needed);
+            *area -= take;
+            needed -= take;
+        }
+        if needed != 0 {
             return Err(ContextBudgetError::AllocationOverflow);
         }
-        Ok(plan)
+        self.system_and_tools = self.system_and_tools.max(system);
+        self.goal_and_ledger = self.goal_and_ledger.max(goal);
+        self.code_and_evidence = self.code_and_evidence.max(evidence);
+        self.project_map = self.project_map.max(project);
+        Ok(self)
+    }
+
+    fn consume_optional_code(&mut self, tokens: u32) -> Result<(), ContextBudgetError> {
+        let minimum = scaled_non_zero(CODE_EVIDENCE_REFERENCE_TOKENS, self.context_limit).min(256);
+        self.code_and_evidence = self
+            .code_and_evidence
+            .checked_sub(tokens)
+            .filter(|remaining| *remaining >= minimum)
+            .ok_or(ContextBudgetError::AllocationOverflow)?;
+        Ok(())
     }
 
     /// Returns the effective model context window.
@@ -387,29 +459,41 @@ mod tests {
     }
 
     #[test]
-    fn sixteen_k_budget_matches_the_documented_v1_profile() -> Result<(), Box<dyn Error>> {
+    fn configured_output_is_a_cap_not_a_minimum_generation_requirement()
+    -> Result<(), Box<dyn Error>> {
+        let low = ContextBudgetPlan::for_profile(&profile(16_384, 2_048)?)?;
+        assert_eq!(low.output_reserve(), 3_605);
+        let high = ContextBudgetPlan::for_profile(&profile(16_384, 4_096)?)?;
+        assert_eq!(high.output_reserve(), 4_096);
+        assert_eq!(high.safety_reserve(), 900);
+        assert!(high.maximum_accounted_tokens()? <= high.context_limit());
+        Ok(())
+    }
+
+    #[test]
+    fn sixteen_k_budget_matches_the_documented_v5_profile() -> Result<(), Box<dyn Error>> {
         assert_eq!(
             ContextCompilerPolicyVersion::CURRENT,
-            ContextCompilerPolicyVersion::V4
+            ContextCompilerPolicyVersion::V5
         );
         let plan = ContextBudgetPlan::for_profile(&profile(16_384, 4_096)?)?;
         assert_eq!(plan.allowance(ContextSection::SystemAndTools), 900);
         assert_eq!(plan.allowance(ContextSection::GoalAndLedger), 1_100);
         assert_eq!(plan.allowance(ContextSection::ProjectMap), 1_200);
-        assert_eq!(plan.allowance(ContextSection::CodeAndEvidence), 6_800);
+        assert_eq!(plan.allowance(ContextSection::CodeAndEvidence), 6_688);
         assert_eq!(plan.allowance(ContextSection::ToolResults), 1_500);
         assert_eq!(plan.safety_reserve(), 900);
-        assert_eq!(plan.output_reserve(), 3_605);
+        assert_eq!(plan.output_reserve(), 4_096);
         assert!(plan.maximum_accounted_tokens()? <= plan.context_limit());
         Ok(())
     }
 
     #[test]
     fn output_and_section_limits_are_hard_boundaries() -> Result<(), Box<dyn Error>> {
-        assert!(matches!(
-            ContextBudgetPlan::for_profile(&profile(16_384, 3_500)?),
-            Err(ContextBudgetError::OutputCapabilityTooSmall { .. })
-        ));
+        assert_eq!(
+            ContextBudgetPlan::for_profile(&profile(16_384, 3_500)?)?.output_reserve(),
+            3_605
+        );
         let plan = ContextBudgetPlan::for_profile(&profile(16_384, 4_096)?)?;
         assert!(matches!(
             ContextBudgetUsage::new(plan, 901, 1, 1, 1, 1),
@@ -422,9 +506,131 @@ mod tests {
     }
 
     #[test]
+    fn mandatory_context_borrows_only_counted_optional_tokens() -> Result<(), Box<dyn Error>> {
+        for (context, output) in [(8_192, 2_048), (16_384, 2_048), (16_384, 4_096)] {
+            let base = ContextBudgetPlan::for_profile(&profile(context, output)?)?;
+            let system = base.allowance(ContextSection::SystemAndTools) + 123;
+            let goal = base.allowance(ContextSection::GoalAndLedger) + 700;
+            let fitted = base.with_mandatory_sections(system, goal)?;
+            assert_eq!(
+                fitted.allowance(ContextSection::CodeAndEvidence),
+                base.allowance(ContextSection::CodeAndEvidence)
+                    - 823_u32.saturating_sub(context - base.maximum_accounted_tokens()?)
+            );
+            assert_eq!(fitted.safety_reserve(), base.safety_reserve());
+            assert_eq!(fitted.output_reserve(), base.output_reserve());
+            assert_eq!(
+                fitted.maximum_accounted_tokens()?,
+                context.min(base.maximum_accounted_tokens()? + 823)
+            );
+            assert!(fitted.maximum_accounted_tokens()? <= context);
+            assert_eq!(fitted, base.with_mandatory_sections(system, goal)?);
+            assert_eq!(fitted, fitted.with_mandatory_sections(system, goal)?);
+            assert!(base.with_mandatory_sections(u32::MAX, u32::MAX).is_err());
+            assert!(base.with_mandatory_sections(context, context).is_err());
+            assert!(ContextBudgetUsage::new(fitted, system + 1, goal, 0, 0, 0).is_err());
+            let free = context - base.maximum_accounted_tokens()?;
+            let transferable = free
+                + [
+                    ContextSection::CodeAndEvidence,
+                    ContextSection::ProjectMap,
+                    ContextSection::ToolResults,
+                ]
+                .into_iter()
+                .map(|section| base.allowance(section) - 256)
+                .sum::<u32>();
+            let full = base.with_mandatory_sections(
+                base.allowance(ContextSection::SystemAndTools) + transferable,
+                base.allowance(ContextSection::GoalAndLedger),
+            )?;
+            for section in [
+                ContextSection::CodeAndEvidence,
+                ContextSection::ProjectMap,
+                ContextSection::ToolResults,
+            ] {
+                assert_eq!(full.allowance(section), 256);
+            }
+            assert_eq!(full.maximum_accounted_tokens()?, context);
+            assert!(
+                base.with_mandatory_sections(
+                    base.allowance(ContextSection::SystemAndTools) + transferable + 1,
+                    base.allowance(ContextSection::GoalAndLedger)
+                )
+                .is_err()
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn digest_has_stable_hex_form() {
         let digest = ContextDigest::from_bytes([0xab; 32]);
         assert_eq!(digest.to_string(), "ab".repeat(32));
         assert_eq!(digest.as_bytes(), [0xab; 32]);
+    }
+
+    #[test]
+    fn mandatory_evidence_cannot_be_donated_to_other_sections() -> Result<(), Box<dyn Error>> {
+        for (context, output) in [(8_192, 2_048), (16_384, 2_048), (16_384, 4_096)] {
+            let base = ContextBudgetPlan::for_profile(&profile(context, output)?)?;
+            for evidence in [700, base.allowance(ContextSection::CodeAndEvidence) + 100] {
+                let goal = base.allowance(ContextSection::GoalAndLedger);
+                let system =
+                    context - base.output_reserve() - base.safety_reserve() - goal - evidence - 512;
+                let fitted = base.with_mandatory_evidence(system, goal, evidence)?;
+                assert_eq!(fitted.allowance(ContextSection::CodeAndEvidence), evidence);
+                assert_eq!(fitted.allowance(ContextSection::ProjectMap), 256);
+                assert_eq!(fitted.allowance(ContextSection::ToolResults), 256);
+                assert_eq!(fitted.output_reserve(), base.output_reserve());
+                assert_eq!(fitted.safety_reserve(), base.safety_reserve());
+                assert_eq!(fitted.maximum_accounted_tokens()?, context);
+                assert_eq!(
+                    fitted,
+                    fitted.with_mandatory_evidence(system, goal, evidence)?
+                );
+                assert_eq!(
+                    fitted,
+                    base.with_mandatory_evidence(system, goal, evidence)?
+                );
+                assert!(
+                    base.with_mandatory_evidence(system, goal, evidence + 1)
+                        .is_err()
+                );
+                assert!(
+                    ContextBudgetUsage::new(fitted, system, goal, 256, evidence + 1, 256).is_err()
+                );
+            }
+            assert!(
+                base.with_mandatory_evidence(u32::MAX, u32::MAX, u32::MAX)
+                    .is_err()
+            );
+            let evidence = 700;
+            let project = 420;
+            let goal = base.allowance(ContextSection::GoalAndLedger);
+            let system = context
+                - base.output_reserve()
+                - base.safety_reserve()
+                - goal
+                - evidence
+                - project
+                - 256;
+            let full = base.with_mandatory_repository(system, goal, evidence, project)?;
+            assert_eq!(full.allowance(ContextSection::CodeAndEvidence), evidence);
+            assert_eq!(full.allowance(ContextSection::ProjectMap), project);
+            assert_eq!(full.maximum_accounted_tokens()?, context);
+            assert_eq!(
+                full,
+                full.with_mandatory_repository(system, goal, evidence, project)?
+            );
+            assert!(
+                base.with_mandatory_repository(system, goal, evidence, project + 1)
+                    .is_err()
+            );
+            assert!(
+                base.with_mandatory_repository(u32::MAX, u32::MAX, u32::MAX, u32::MAX)
+                    .is_err()
+            );
+        }
+        Ok(())
     }
 }

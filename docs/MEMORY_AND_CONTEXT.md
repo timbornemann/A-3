@@ -281,14 +281,47 @@ Standard bei einem Modellkontext von 16.384 Tokens:
 
 Budgets skalieren proportional, aber Goal Contract und Outputreserve dürfen nicht auf null verdrängt werden. Mindestens 22 Prozent des Modellkontexts werden standardmäßig für Output reserviert.
 
-`ContextBudgetPlan::V1` skaliert alle Grenzen ganzzahlig und reproduzierbar. Beim 16.384er-Profil
-beträgt die durch Aufrunden tatsächlich reservierte 22-Prozent-Outputmenge 3.605 Tokens. Statischer
+Die Referenzanteile werden ganzzahlig und reproduzierbar skaliert. Beim 16.384er-Profil
+beträgt die durch Aufrunden reservierte 22-Prozent-Outputmenge 3.605 Tokens. Seit
+[ADR-0077](adrs/0077-vollstaendige-agent-anker-im-konfigurierten-kontext.md) und Policy V5
+ist die tatsächliche Reserve das Maximum daraus und dem konfigurierten Outputlimit.
+Ein Limit von 2.048 bleibt unverändert nutzbar; die ungenutzte Reserve wird nicht gepackt.
+Bei 4.096 Outputtokens sinkt der Code/Evidence-Referenzanteil auf 6.688, damit die
+Gesamtrechnung einschließlich vollständigem Output und Sicherheit ins Fenster passt. Statischer
 Prompt, optional wiederholtes Schema, vollständiger Anchor, Pack-Framing, Project Map,
 Code/Evidence und Toolresultate werden lückenlos genau einer Sektion zugerechnet; zusätzlich
-bleiben 900 Tokens Sicherheitsreserve frei. Eine ungekürzte Pflichtsektion, die ihre Grenze
-überschreitet, bricht den Compile ab, statt still Inhalte zu verlieren.
+bleiben 900 Tokens Sicherheitsreserve frei. Vor Retrieval übernehmen größere ungekürzte
+System- und Goal/Ledger-Pflichtsektionen nur ihren tatsächlich gezählten Mehrbedarf.
+[ADR-0078](adrs/0078-freien-kontext-vor-pflichtabbruch-nutzen.md) nutzt dafür zuerst
+nicht zugeteilten Platz, dann in fester Reihenfolge Code/Evidence, Project Map und
+Toolresultate. Mindestens 256 Tokens beziehungsweise der kleinere skalierte
+Referenzanteil bleiben in jedem Spenderbereich übrig. Reicht das nicht, bricht der Compile ab, statt Inhalt zu kürzen,
+Reserven zu verbrauchen oder das Modellprofil zu verändern. Anschließend bleiben alle
+neu festgelegten Bereichsgrenzen und die Gesamtgleichung hart geprüft.
 
-`ContextCompilerPolicyVersion::V4` behält den vollständigen kompakten L0-Repository-Anchor aus V2
+Nach [ADR-0080](adrs/0080-pflichtmemory-vor-optionaler-kontextverteilung.md) werden
+vor dieser Verteilung auch die vollständige Run-Memory-Identität, offene Fehler und
+Hypothesen sowie Research-/Replan-Pflichten einmal dargestellt und gezählt. Ihr
+Code/Evidence-Anteil einschließlich Header darf nicht an andere Sektionen abgegeben
+werden. Anschließend werden genau diese Bytes weiterverwendet und optionale historische
+Ergebnisse ergänzt. Echte Übergröße scheitert vor Retrieval; die frische Snapshotbindung
+wird weiterhin gegen die geladene Publikation vor der Modellanfrage geprüft.
+Sobald die Task Lens vorliegt, wird zusätzlich der tatsächliche L0-Projektanker samt
+Pack-Framing gezählt und derselbe Plan aus den Referenzanteilen vollständig neu eingepasst.
+Das 256er-Minimum ist keine Erlaubnis, einen größeren Pflicht-L0 zu verdrängen. Passt das
+vollständige Pflichtpaket insgesamt nicht, wird keine Modellanfrage erzeugt.
+
+Der Pflichtanker enthält außerdem die exakte Worktree-ID aus der validierten
+Projektidentität und, wenn vorhanden, die Run-ID des aktuellen Step-Versuchs.
+Diese bereits durch E3 verlangten IDs dürfen beim Erzeugen eines Patches nicht
+vom Modell geraten oder aus anderen Aufgaben übernommen werden. Ihre Bytes gehen
+vollständig in die Goal-/Ledger-Sektion und den versionsgebundenen Digest ein.
+Eine sicher gelesene Original-Dateiseite liefert außerdem `expected_hash` aus ihrer
+vollständig geprüften `FileRevision`, getrennt von Evidence-ID und Toolresultat-Digest.
+Dieser Hash bindet ein vorgeschlagenes Update an genau den gelesenen Dateistand;
+Patchvorschau und Schreibgrenze prüfen ihn weiterhin unabhängig erneut.
+
+`ContextCompilerPolicyVersion::V5` behält den vollständigen kompakten L0-Repository-Anchor aus V2
 vor allen optionalen gerankten L1-/L2-Einträgen. Package- und Entrypointmengen erscheinen in L0 als
 Anzahlen; konkrete IDs werden nicht dort und später erneut bezahlt, sondern bleiben in den
 evidenzgebundenen Modul- und Symboleinträgen. Die relative Retrievalreihenfolge innerhalb der
@@ -376,8 +409,14 @@ Jeder Read-Lauf erzeugt nach dem Model-Event genau ein journalgeordnetes `tool_a
 persistiert nur Status, Digest, Trunkierungsmetadaten, Snapshot-Anker und typisierte File-/Span-
 Locators; Query und Preview bleiben flüchtig. `UpdateLedger` darf ein Ergebnis nur mit aktueller,
 vom Controller übernommener Tool-Evidence auf `Verifying` setzen. Ledgerprojektion und zugehörige
-Runtransition werden atomar gespeichert. `Finish` fordert ausschließlich `Verify` an; `Done` bleibt
+Runtransition werden atomar gespeichert. `Finish` fordert Verifikation an; `Done` bleibt
 dem separaten Acceptance-Verifier nach erfolgreicher objektiver Verifikation vorbehalten.
+Bei einem noch laufenden operationalen Command-/Test-/Diagnostic-Schritt leitet der Core nach
+[ADR-0079](adrs/0079-abschlussanforderung-verifiziert-zuerst-den-schritt.md) zuerst dessen genaue
+Verifikationsaktion aus dem aktuellen dauerhaften Ledger ab. Die normale Run-Policy und
+Freigabe bleiben wirksam; Modellanforderung und tatsächliche Prozess-/Verification-Evidence
+bleiben getrennt nachvollziehbar. Es entstehen weder zusätzliche Modellturns noch ein
+zweiter volatiler Plan oder neue argv. Andere Spec-Arten erhalten keine automatische Run-Aktion.
 
 E6 persistiert dafür immutable, schema-versionierte Verification-Evidence ohne Source- oder
 Prozessoutput. Command-Artifacts enthalten Process-/Policy-IDs, Termination, Dauer, vollständige

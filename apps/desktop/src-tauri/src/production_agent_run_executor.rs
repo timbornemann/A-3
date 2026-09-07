@@ -447,7 +447,13 @@ impl ProductionAgentRunExecutor {
             )
             .execute(&run, &input, observed_at, &attempt_control)
             .await
-            .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+            .map_err(|error| {
+                // Test-only neutral classifications; never log provider payloads or source text.
+                #[cfg(test)]
+                eprintln!("A3_AGENT_TURN_FAILURE {error:?}");
+                let _classification = error;
+                AgentRunExecutionFailure::Unavailable
+            })?;
             let expected_sequence = run.last_event_sequence();
             let event = turn_outcome
                 .record(&mut run, run_event_id()?, observed_at)
@@ -503,6 +509,8 @@ impl ProductionAgentRunExecutor {
                 }
                 AgentTurnOutcome::Executed(execution) => execution,
                 AgentTurnOutcome::Rejected(rejected) => {
+                    #[cfg(test)]
+                    eprintln!("A3_AGENT_TURN_REJECTED {:?}", rejected.reason());
                     let signal = if matches!(
                         rejected.reason(),
                         AgentTurnRejectionReason::CancelledBeforeAction
@@ -541,7 +549,17 @@ impl ProductionAgentRunExecutor {
                     });
                 }
             };
-            let action = execution.action().clone();
+            let mut action = execution.action().clone();
+            if matches!(action, AgentAction::Finish(_)) {
+                let step = ledger
+                    .step(step_id)
+                    .ok_or(AgentRunExecutionFailure::AnchorsChanged)?;
+                if let Some(verification) = RequestAgentFinish.verification_command(step) {
+                    // Finish requests verification; it cannot skip the still-open current step.
+                    // This Core-selected Run uses exactly the normal policy/approval path below.
+                    action = AgentAction::Run(verification);
+                }
+            }
             match action {
                 AgentAction::Search(_) | AgentAction::Inspect(_) => {
                     let mut result = execution
@@ -926,7 +944,16 @@ impl ProductionAgentRunExecutor {
                 control,
             )
             .await
-            .map_err(|_| AgentRunExecutionFailure::Unavailable)
+            .map_err(|error| {
+                #[cfg(test)]
+                eprintln!("A3_AGENT_MUTATION_FAILURE {error}");
+                #[cfg(test)]
+                if let a3_application::MutationControllerFailure::PatchPreview(reason) = &error {
+                    eprintln!("A3_AGENT_PATCH_PREVIEW {reason:?}");
+                }
+                let _classification = error;
+                AgentRunExecutionFailure::Unavailable
+            })
     }
 
     fn handle_mutation_outcome(
@@ -966,7 +993,12 @@ impl ProductionAgentRunExecutor {
             ledger.clone(),
             memory,
         )
-        .map_err(|_| AgentRunExecutionFailure::AnchorsChanged)?;
+        .map_err(|error| {
+            #[cfg(test)]
+            eprintln!("A3_AGENT_ACCEPTANCE_REQUEST {error}");
+            let _classification = error;
+            AgentRunExecutionFailure::AnchorsChanged
+        })?;
         let expected_sequence = run.last_event_sequence();
         let verifier = DeterministicAcceptanceVerifier::new(self.ports.evidence.as_ref());
         let accepted = VerifyAgentAcceptance::new(&verifier)

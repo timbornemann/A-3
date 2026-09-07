@@ -1310,3 +1310,90 @@ behauptet im CSV-Plan aber weiterhin unbelegt Persistenz durch `save_tasks`:
 die vollständig geprüfte Fixture implementiert dort nur eine Tupelrückgabe.
 Die grüne Keywordrubrik ist daher ausdrücklich keine semantische Gesamtabnahme.
 Ein tatsächlicher mutierender Live-Agent-Abschluss bleibt separat nachzuweisen.
+
+### Tatsächlich mutierender Agent: erste Produktionsabnahme (2026-09-07)
+
+Der ignorierte Desktop-Test `agent_approved_live_coding_fixture` verwendet jetzt den
+echten ProductionAgentRunExecutor, Git, Fast Index, libSQL, Safe Reader, Patch- und
+Prozessadapter sowie das vorhandene native Providerprofil. Nur die öffentliche
+`small-local-bugfix`-Fixture wird in einem eigenen temporären Repository verarbeitet.
+Der feste bereits bestätigte Ein-Schritt-Plan beginnt in Execute; diese Prüfung ist
+kein Live-Nachweis des Planerzeugers. Der Agent muss `increment.py` tatsächlich ändern.
+Test, Runner, Manifest und fremde Sentineldatei bleiben bytegleich. Ein physischer
+unabhängiger Test ist vorher rot und muss nachher grün sein; außerdem werden echte
+Step-Evidence und Run=Done verlangt. Modellprosa oder ein beendeter Versuch reichen nicht.
+Die Fixture bestätigt nur exakt diese einzelne Update-Datei oder den bereits bestätigten
+manifestbelegten `python -m pytest`-Befehl; Scope-Negativtests lehnen andere Pfade,
+Operationen, CWD, argv, Shell- und Netzwerkrechte ab. Nutzereinstellungen bleiben read-only.
+
+Mit dem unveränderten Luna-Profil (16384 Kontext, 2048 Output,
+ConservativeUtf8BytesV1, RepeatSchemaInPrompt) wurden nacheinander folgende Ursachen
+isoliert und mit Regressionen korrigiert:
+
+- Der Compiler verlangte fälschlich eine Outputkapazität von mindestens 3605. Die
+  reservierte Menge und die tatsächliche Outputcap sind nun getrennt (ADR-0077).
+- 823 Bytes statischer Prompt plus 6681 Bytes Schema passten nicht in starre Bereiche,
+  obwohl gesamter optionaler Platz vorhanden war (ADR-0078). Profil und Schema-Grounding
+  bleiben unverändert, ebenso die Gesamtgrenze und Sicherheits-/Outputreserve.
+- Worktree-/Run-ID sowie der tatsächliche Originaldateihash fehlten in den gelieferten
+  Patchinformationen. Sie werden nun aus den ohnehin geprüften Core-Ankern geliefert.
+- Vorzeitiges Finish versuchte die Gesamtabnahme vor der aktuellen Step-Verifikation.
+  Für operationale Specs wählt der Core nun exakt deren vorhandenen Verifikationsbefehl
+  durch den normalen Policy-/Freigabepfad (ADR-0079).
+- Offene Fehlereinträge und Hypothesen konnten durch die Pflichtbudget-Verteilung aus
+  Code/Evidence verdrängt werden (`AnchorTooLarge`). Ein separater roter Repeat-Schema-Test
+  wird durch deren vollständige Vorreservierung grün (ADR-0080).
+- Ein größeres Goal plus Pflichtmemory konnte anschließend den verpflichtenden L0-Anker
+  verdrängen (`InvalidPack`). Auch dieser Fall ist separat rot/grün reproduziert; sein
+  tatsächlicher Aufwand samt Framing wird vor dem Packing berücksichtigt.
+- Entdeckte Commands verlangten gleichzeitig TEMP, TMP und TMPDIR. Auf dem geprüften
+  Windows-Host fehlt TMPDIR, wodurch der Prozessadapter vor dem Start Denied zurückgibt.
+  Nur die drei portablen Tempvarianten dürfen jetzt fehlen; andere angeforderte fehlende
+  Werte bleiben Denied (ADR-0081). Der echte Prozessvertrag war zuvor rot und besteht nun.
+
+Die neuen Live-Fixture-Fehler durch doppelte Fortschrittsverwendung sind getrennt behoben:
+Ein Diagnosecompile markiert keinen Ausführungsjob abgeschlossen; jede Approval-Fortsetzung
+bekommt wie die Anwendung einen eigenen besessenen, abbrechbaren Job. Das sind Testgerüst-
+Korrekturen, keine behaupteten Produktverbesserungen.
+
+Eingefrorene ausführbare Diagnosebestände unter `target/research-eval`:
+
+| Bestand | SHA-256 | Terminaler Befund |
+| --- | --- | --- |
+| `agent-v5-verify-20260907/agent-tests.exe` | `b113c43a552c6a7b28534351e07ea7967a55f5396dad798644568c5dafa073d4` | Patch physisch korrekt; später InvalidAfterRepair, kein Done |
+| `agent-v5-diagnostics-20260907/agent-tests.exe` | `0cd7486b8f956ec50a971a4a6440523d9aa78dddbb49dce1d9c251301f2c3822` | Lauf 1: Mutationsanker abgewiesen; Lauf 2: Patch physisch korrekt, danach InvalidActionAfterRepair(InvalidValue), kein Done |
+
+SHA-256 der drei Logs in Tabellenreihenfolge (`luna-live-1.log`, danach
+`luna-live-1.log` und `luna-live-2.log`):
+
+- `320dc2c9883ddf495e9af2f81caec8c5bcae2b5dc6adfc3f1d7834183570b1b0`
+- `e7c09064948849ef3ff2a730539690e18a16e645dd669dd58059beb75e7f0d86`
+- `ce25d5cf28d3a5992dd812b3b16effc48234fe5fbbe2c80b65bc2374b3b42a15`
+
+`v5` in diesen Verzeichnisnamen bezeichnet die Context-Policy, nicht das weiterhin
+unveränderte AgentAction-V4-Wireschema. Die neue inhaltsfreie Fehlerklassifikation
+trennt Decoderfehler von InvalidPublicNote; der jüngste konkrete Befund ist InvalidValue,
+nicht nachgewiesenermaßen eine falsche Präsentationsnotiz. Alle Grenzen halten geschlossen.
+Es wird weder ein verifizierter Live-Abschluss noch eine vollständige Behebung aller
+Modellfehler behauptet. Die anschließende Überprüfung der Action-/Ankerübergabe bleibt offen.
+
+Lokale Gates dieses Korrekturschnitts: `cargo fmt --all --check`,
+`cargo test --workspace --all-features --offline --locked` und
+`cargo clippy --workspace --all-targets --all-features --offline --locked -- -D warnings`
+bestehen, ebenso `node scripts/check-markdown-links.mjs` (125 Markdown-Dateien,
+484 lokale Links) und `git diff --check`. Logs: `agent-v5-current-workspace-tests-2.log`
+und `agent-v5-current-clippy-2.log` unter `target/research-eval`.
+Der erste Workspace-Durchlauf fand eine noch auf die alte generische Fehlerklasse
+prüfende Integrationserwartung; der reale Invalid-Output-Vertrag prüft jetzt zusätzlich
+`malformed_json`, weiterhin genau zwei Provideraufrufe, null Reads, null Toolversuche
+und den unveränderten InvalidModelOutput-Journaleintrag. Der gezielte Nachtest und das
+erneute vollständige Gate bestehen. Diese Windows-Gates ersetzen weder andere native
+Plattformläufe noch die weiterhin offene echte Modellabnahme.
+
+Der anschließend allein laufende lokale Qwen-Nachtest auf demselben
+`agent-v5-diagnostics`-Binary verwendet unverändert 8192 Kontext, 2048 Output und
+FormatFieldOnly. Der Compile gelingt; die erste Patchvorschau endet jedoch mit
+Conflict, ohne erfolgreiche Änderung oder Done (Runsequenz 5). Geschützte Dateien
+bleiben gleich. Die genaue Konfliktart ist durch diese bisher generische Diagnose
+noch nicht belegt. `qwen-live-1.log`, SHA-256
+`8f2980c279fac5f7f931dc053b2a14a883a6ba2f1e3d197e0ca6ce8a1323753c`.

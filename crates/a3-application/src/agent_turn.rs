@@ -264,6 +264,7 @@ impl AgentTurnOutcome {
                         _ => (RunEventCode::InvalidModelOutput, RunEventOutcome::Failed),
                     },
                     AgentTurnRejectionReason::InvalidAfterRepair
+                    | AgentTurnRejectionReason::InvalidActionAfterRepair(_)
                     | AgentTurnRejectionReason::IncompleteModelOutput => {
                         (RunEventCode::InvalidModelOutput, RunEventOutcome::Failed)
                     }
@@ -322,6 +323,8 @@ pub enum AgentTurnRejectionReason {
     ReadFailed(AgentReadToolFailure),
     /// Primary output was invalid and the sole corrected output remained invalid.
     InvalidAfterRepair,
+    /// The sole action repair failed with a closed, content-free decoder classification.
+    InvalidActionAfterRepair(crate::AgentActionRepairFailure),
     /// Provider did not report a normal stop, so potentially incomplete JSON was never decoded.
     IncompleteModelOutput,
     /// A Ledger update named a step other than the current anchored step.
@@ -483,18 +486,21 @@ impl<'a> ExecuteAgentTurn<'a> {
                             observed_model_output_bytes,
                         }));
                     }
-                    let Ok(action) = prepared.decode(&corrected.raw) else {
-                        return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
-                            charge: AgentTurnCharge::new(
-                                prompt_tokens,
-                                output_tokens,
-                                None,
-                                AgentTurnRepairUsage::One,
-                            ),
-                            reason: AgentTurnRejectionReason::InvalidAfterRepair,
-                            snapshot_id,
-                            observed_model_output_bytes,
-                        }));
+                    let action = match prepared.decode(&corrected.raw) {
+                        Ok(action) => action,
+                        Err(error) => {
+                            return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
+                                charge: AgentTurnCharge::new(
+                                    prompt_tokens,
+                                    output_tokens,
+                                    None,
+                                    AgentTurnRepairUsage::One,
+                                ),
+                                reason: AgentTurnRejectionReason::InvalidActionAfterRepair(error),
+                                snapshot_id,
+                                observed_model_output_bytes,
+                            }));
+                        }
                     };
                     (
                         action,
@@ -1485,9 +1491,8 @@ mod tests {
         let AgentTurnOutcome::Rejected(rejected) = outcome else {
             return Err("invalid repaired output executed".into());
         };
-        assert_eq!(
-            rejected.reason(),
-            AgentTurnRejectionReason::InvalidAfterRepair
+        assert!(
+            matches!(rejected.reason(), AgentTurnRejectionReason::InvalidActionAfterRepair(failure) if failure.repair_code() == "unknown_or_missing_field")
         );
         assert_eq!(rejected.charge().repair(), AgentTurnRepairUsage::One);
         assert_eq!(rejected.charge().action(), None);

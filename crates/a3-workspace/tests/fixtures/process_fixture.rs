@@ -23,6 +23,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let path_present = env::var_os("PATH").is_some();
             println!("{allowed};path={path_present}");
         }
+        "temp_environment" => {
+            println!("temp={};tmp={};tmpdir={};path={}",
+                env::var_os("TEMP").is_some(), env::var_os("TMP").is_some(),
+                env::var_os("TMPDIR").is_some(), env::var_os("PATH").is_some());
+        }
         "hang" => loop {
             thread::sleep(Duration::from_secs(1));
         },

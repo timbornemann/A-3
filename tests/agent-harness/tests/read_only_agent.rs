@@ -292,7 +292,7 @@ fn invalid_primary_and_repair_never_execute_the_real_read_tools() -> Result<(), 
         let a3_application::AgentTurnOutcome::Rejected(rejected) = outcome else {
             return Err(test_error("invalid repaired model output was executed"));
         };
-        if rejected.reason() != a3_application::AgentTurnRejectionReason::InvalidAfterRepair
+        if !matches!(rejected.reason(), a3_application::AgentTurnRejectionReason::InvalidActionAfterRepair(failure) if failure.repair_code() == "malformed_json")
             || rejected.charge().action().is_some()
             || rejected.charge().repair() != AgentTurnRepairUsage::One
         {

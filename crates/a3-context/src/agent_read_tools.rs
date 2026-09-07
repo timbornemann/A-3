@@ -232,12 +232,13 @@ impl<'a> DeterministicAgentReadTools<'a> {
                 let marker = evidence.insert(source);
                 writeln!(
                     output,
-                    "FILE {} start_line={} truncated={} next_start_line={} {}",
+                    "FILE {} start_line={} truncated={} next_start_line={} expected_hash={} {}",
                     path_text(revision.path()),
                     page.start_line().get(),
                     page.truncated(),
                     page.next_start_line()
                         .map_or_else(|| "none".to_owned(), |line| line.get().to_string()),
+                    super::hex(revision.content_hash().as_bytes()),
                     marker
                 )
                 .map_err(|_| AgentReadToolFailure::InvalidResult)?;
@@ -1137,6 +1138,13 @@ mod tests {
         ))?;
 
         assert!(result.preview().as_str().contains("source=src/lib.rs:1"));
+        assert!(
+            result.preview().as_str().contains(&format!(
+                "expected_hash={}",
+                blake3::hash(b"alpha\n").to_hex()
+            )),
+            "a live original page must supply its actual E3 file hash, not just an evidence ID"
+        );
         assert!(result.preview().as_str().contains("next_start_line=2"));
         assert!(result.preview().as_str().contains("     1| alpha"));
         assert_eq!(result.evidence().evidence().len(), 1);

@@ -101,6 +101,11 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0074](0074-konkreter-belegbedarf-in-planbestandsaufnahme.md) | Konkreter Belegbedarf in der Planbestandsaufnahme |
 | [0075](0075-disjunkte-rechercheantworten-statt-leerfortschritt.md) | Disjunkte Rechercheantworten statt Leerfortschritt |
 | [0076](0076-entscheidungstyp-vor-ergebnisdaten-im-v7-vertrag.md) | Entscheidungstyp vor Ergebnisdaten im V7-Vertrag |
+| [0077](0077-vollstaendige-agent-anker-im-konfigurierten-kontext.md) | Vollständige Agent-Anker im konfigurierten Kontext |
+| [0078](0078-freien-kontext-vor-pflichtabbruch-nutzen.md) | Freien Kontext vor Pflichtabbruch nutzen |
+| [0079](0079-abschlussanforderung-verifiziert-zuerst-den-schritt.md) | Abschlussanforderung verifiziert zuerst den Schritt |
+| [0080](0080-pflichtmemory-vor-optionaler-kontextverteilung.md) | Pflichtmemory vor optionaler Kontextverteilung |
+| [0081](0081-optionale-portable-tempvariablen.md) | Optionale portable Tempvariablen |
 
 ## Neue ADRs
 

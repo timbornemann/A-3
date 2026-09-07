@@ -33,10 +33,15 @@ pub(crate) fn prepare_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     for variable in specification.environment_allowlist() {
-        let value = environment
-            .value(variable)
-            .ok_or(ProcessRunFailure::Denied)?;
-        command.env(variable.as_str(), value);
+        match environment.value(variable) {
+            Some(value) => {
+                command.env(variable.as_str(), value);
+            }
+            // Portable discovered commands list all three names; absent platform variants
+            // remain absent after env_clear. No fallback or ambient value is introduced.
+            None if matches!(variable.as_str(), "TEMP" | "TMP" | "TMPDIR") => {}
+            None => return Err(ProcessRunFailure::Denied),
+        }
     }
     Ok(command)
 }

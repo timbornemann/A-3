@@ -126,6 +126,58 @@ fn endless_process_group_is_killed_at_timeout() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn portable_temp_variables_may_be_absent_without_inheriting_other_values()
+-> Result<(), Box<dyn Error>> {
+    let fixture = ProcessFixture::new()?;
+    let runner = WorkspaceProcessRunner::new(fixture.environment()?);
+    let allowed = ["TEMP", "TMP", "TMPDIR"]
+        .into_iter()
+        .map(|name| ProcessEnvironmentVariable::try_from_string(name.to_owned()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let (result, _) = fixture.run(
+        &runner,
+        vec!["temp_environment"],
+        WorkspaceDirectory::Root,
+        allowed,
+        5_000,
+        1_024,
+        &ActiveControl,
+    )?;
+    assert_success(&result.termination())?;
+    assert_eq!(
+        result.stdout().content().as_text(),
+        Some("temp=false;tmp=false;tmpdir=false;path=false\n")
+    );
+    let specification = fixture.specification(
+        ProcessExecutable::try_from_string(
+            fixture
+                .executable
+                .to_str()
+                .ok_or("fixture executable path")?
+                .to_owned(),
+        )?,
+        vec!["environment"],
+        WorkspaceDirectory::Root,
+        vec![ProcessEnvironmentVariable::try_from_string(
+            "A3_REQUIRED_MISSING".to_owned(),
+        )?],
+        5_000,
+        1_024,
+    )?;
+    let decision = automatic_decision(&specification)?;
+    assert_eq!(
+        futures::executor::block_on(runner.run(
+            &fixture.project,
+            AuthorizedProcessSpec::new(specification, &decision)?,
+            &ActiveControl,
+            &RecordingEvents::default()
+        )),
+        Err(ProcessRunFailure::Denied)
+    );
+    Ok(())
+}
+
+#[test]
 fn cancellation_kills_the_spawned_child_process() -> Result<(), Box<dyn Error>> {
     let fixture = ProcessFixture::new()?;
     let runner = WorkspaceProcessRunner::new(fixture.environment()?);

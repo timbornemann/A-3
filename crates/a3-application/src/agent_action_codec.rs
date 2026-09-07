@@ -187,7 +187,7 @@ impl DecodeAgentAction {
         let public_note = if self.version >= AgentActionSchemaVersion::V3 {
             Some(
                 decode_note(required(root, "public_note")?)
-                    .map_err(|_| AgentActionDecodeError::InvalidValue)?,
+                    .map_err(|_| AgentActionDecodeError::InvalidPublicNote)?,
             )
         } else {
             None
@@ -654,6 +654,8 @@ pub enum AgentActionDecodeError {
     UnknownAction,
     /// A typed ID, path, enum, number, or bounded text value was invalid.
     InvalidValue,
+    /// Presentation-only note violated its separate legacy evidence/text contract.
+    InvalidPublicNote,
 }
 
 impl AgentActionDecodeError {
@@ -668,6 +670,7 @@ impl AgentActionDecodeError {
             Self::UnsupportedVersion => "unsupported_version",
             Self::UnknownAction => "unknown_action",
             Self::InvalidValue => "invalid_value",
+            Self::InvalidPublicNote => "invalid_public_note",
         }
     }
 }
@@ -682,6 +685,7 @@ impl fmt::Display for AgentActionDecodeError {
             Self::UnsupportedVersion => "AgentAction output uses an unsupported schema version",
             Self::UnknownAction => "AgentAction output names an unknown action",
             Self::InvalidValue => "AgentAction output contains an invalid bounded value",
+            Self::InvalidPublicNote => "AgentAction presentation note violates its contract",
         })
     }
 }
@@ -929,7 +933,7 @@ mod tests {
             DecodeAgentAction::version_three().decode(
                 r#"{"schema_version":3,"public_note":{"goal":"g","finding_kind":"hypothesis","finding":"f","finding_source_refs":[],"gap":"g","next_step":"n","action":{"kind":"finish"}},"action":{"kind":"finish"}}"#,
             ),
-            Err(AgentActionDecodeError::InvalidValue)
+            Err(AgentActionDecodeError::InvalidPublicNote)
         );
         Ok(())
     }

@@ -260,6 +260,143 @@ fn replan_originals_reserve_space_before_optional_run_summaries() -> Result<(), 
 }
 
 #[test]
+fn executable_context_supplies_exact_current_patch_run_and_worktree_ids()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let calls = Mutex::new(Vec::new());
+    let store = StubStore {
+        published: fixture.published.clone(),
+        symbol_id: fixture.symbol_id,
+        module_id: fixture.module_id,
+        calls: &calls,
+    };
+    let base = input(fixture.snapshot_id)?;
+    let mut ledger = base.task_ledger().clone();
+    let run_id = AgentRunId::from_bytes([42; 32]);
+    ledger.start_step(
+        base.current_step_id(),
+        run_id,
+        TaskLedgerTimestamp::from_unix_millis(10)?,
+    )?;
+    let input = AgentContextCompileInput::new(
+        base.project().clone(),
+        base.goal_contract().clone(),
+        ledger,
+        base.current_step_id(),
+        base.model_profile().clone(),
+        None,
+        Vec::new(),
+        Vec::new(),
+    )?;
+    let compiler =
+        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let compiled = block_on(compiler.compile(&input, &RecordingControl::default()))?;
+    let pack = compiled
+        .request()
+        .messages()
+        .last()
+        .ok_or("pack")?
+        .content();
+    assert!(
+        pack.contains(&format!("run_id={run_id}")),
+        "E3 requires a Core-supplied run ID, never an invented one"
+    );
+    assert!(pack.contains(&format!("worktree_id={}", input.project().worktree().id())));
+    Ok(())
+}
+
+#[test]
+fn small_context_and_low_output_keep_full_mandatory_anchors() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let calls = Mutex::new(Vec::new());
+    let store = StubStore {
+        published: fixture.published.clone(),
+        symbol_id: fixture.symbol_id,
+        module_id: fixture.module_id,
+        calls: &calls,
+    };
+    let compiler =
+        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let base = input(fixture.snapshot_id)?;
+    for (context, output, grounding) in [
+        (8_192, 2_048, ModelPromptSchemaGrounding::FormatFieldOnly),
+        (16_384, 2_048, ModelPromptSchemaGrounding::FormatFieldOnly),
+        (16_384, 4_096, ModelPromptSchemaGrounding::FormatFieldOnly),
+        (
+            16_384,
+            2_048,
+            ModelPromptSchemaGrounding::RepeatSchemaInPrompt,
+        ),
+    ] {
+        let profile = profile_with_grounding(context, output, grounding)?;
+        let input = AgentContextCompileInput::new(
+            base.project().clone(),
+            base.goal_contract().clone(),
+            base.task_ledger().clone(),
+            base.current_step_id(),
+            profile.clone(),
+            None,
+            Vec::new(),
+            Vec::new(),
+        )?;
+        let compiled = block_on(compiler.compile(&input, &RecordingControl::default()))?;
+        assert_eq!(compiled.request().profile(), &profile);
+        let pack = compiled
+            .request()
+            .messages()
+            .last()
+            .ok_or("missing context")?
+            .content();
+        for required in [
+            "objective=implement H7",
+            "outcome=compile context",
+            "requirement=should statement=pack is deterministic",
+            "verification_target=test command=",
+            "selector=all minimum_cases=1 scope=targeted",
+            "step_acceptance=",
+        ] {
+            assert!(pack.contains(required), "missing {required}");
+        }
+        let prompt: usize = compiled
+            .request()
+            .messages()
+            .iter()
+            .map(|m| m.content().len())
+            .sum();
+        assert_eq!(
+            prompt,
+            usize::try_from(compiled.budget_usage().prompt_total())?
+        );
+        assert!(
+            u32::try_from(prompt)?
+                + compiled.budget_plan().output_reserve()
+                + compiled.budget_plan().safety_reserve()
+                <= context
+        );
+        assert_eq!(
+            compiled.digest(),
+            block_on(compiler.compile(&input, &RecordingControl::default()))?.digest()
+        );
+        if context == 8_192 {
+            let oversized =
+                input.with_replan_localization(a3_domain::TaskReplanReason::try_from_string(
+                    "Existing unresolved cause. ".repeat(150),
+                )?);
+            calls.lock().map_err(|_| "calls")?.clear();
+            assert!(matches!(
+                block_on(compiler.compile(&oversized, &RecordingControl::default())),
+                Err(ContextCompileFailure::Budget(_))
+            ));
+            assert!(
+                calls.lock().map_err(|_| "calls")?.is_empty(),
+                "oversized mandatory input must fail before retrieval"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn context_pack_is_fresh_bounded_and_deterministic() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     let calls = Mutex::new(Vec::new());
@@ -279,11 +416,11 @@ fn context_pack_is_fresh_bounded_and_deterministic() -> Result<(), Box<dyn Error
 
     assert_eq!(first.digest(), second.digest());
     assert_eq!(first.request(), second.request());
-    assert_eq!(first.policy_version(), ContextCompilerPolicyVersion::V4);
+    assert_eq!(first.policy_version(), ContextCompilerPolicyVersion::V5);
     assert_eq!(first.snapshot_id(), fixture.snapshot_id);
     assert_eq!(first.excluded_stale_claims(), 1);
     assert_eq!(first.budget_plan().context_limit(), 16_384);
-    assert_eq!(first.budget_plan().output_reserve(), 3_605);
+    assert_eq!(first.budget_plan().output_reserve(), 4_096);
     assert!(first.budget_usage().prompt_total() <= 11_879);
 
     let messages = first.request().messages();
@@ -532,6 +669,100 @@ fn run_memory_secret_candidate_never_reaches_provider_request() -> Result<(), Bo
         result,
         Err(ContextCompileFailure::SecretCandidate)
     ));
+    Ok(())
+}
+
+#[test]
+fn mandatory_repository_anchor_survives_large_goal_and_open_memory() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let calls = Mutex::new(Vec::new());
+    let store = StubStore {
+        published: fixture.published.clone(),
+        symbol_id: fixture.symbol_id,
+        module_id: fixture.module_id,
+        calls: &calls,
+    };
+    let compiler =
+        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let profile = profile_with_grounding(
+        16_384,
+        2_048,
+        ModelPromptSchemaGrounding::RepeatSchemaInPrompt,
+    )?;
+    let objective = "Keep open failures and all original goal constraints. ".repeat(18);
+    let (input, _, _) =
+        input_with_run_memory_goal(&fixture, "prior verified work", profile, &objective)?;
+    let compiled = block_on(compiler.compile(&input, &RecordingControl::default()))?;
+    let pack = compiled
+        .request()
+        .messages()
+        .last()
+        .ok_or(TestError("missing pack"))?
+        .content();
+    assert!(pack.contains(input.goal_contract().draft().objective().as_str()));
+    assert!(pack.contains("L0 repository snapshot="));
+    assert!(pack.contains("kind=verification_failed"));
+    assert!(
+        compiled
+            .budget_usage()
+            .section(a3_domain::ContextSection::ProjectMap)
+            <= compiled
+                .budget_plan()
+                .allowance(a3_domain::ContextSection::ProjectMap)
+    );
+    Ok(())
+}
+
+#[test]
+fn repeated_schema_reserves_open_failure_memory_before_optional_sections()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let calls = Mutex::new(Vec::new());
+    let store = StubStore {
+        published: fixture.published.clone(),
+        symbol_id: fixture.symbol_id,
+        module_id: fixture.module_id,
+        calls: &calls,
+    };
+    let compiler =
+        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let profile = profile_with_grounding(
+        16_384,
+        2_048,
+        ModelPromptSchemaGrounding::RepeatSchemaInPrompt,
+    )?;
+    let (input, digest, _) =
+        input_with_run_memory_profile(&fixture, "prior verified work", profile.clone())?;
+    let compiled = block_on(compiler.compile(&input, &RecordingControl::default()))?;
+    let pack = compiled
+        .request()
+        .messages()
+        .last()
+        .ok_or(TestError("missing pack"))?
+        .content();
+    assert!(pack.contains("[RUN_MEMORY]"));
+    assert!(pack.contains("kind=verification_failed"));
+    assert!(pack.contains("outcome=verification_failed"));
+    assert!(pack.contains("memory_claim id=4747474747474747"));
+    assert_eq!(compiled.run_memory_digest(), Some(digest));
+    assert_eq!(input.model_profile(), &profile);
+    assert_eq!(
+        compiled.digest(),
+        block_on(compiler.compile(&input, &RecordingControl::default()))?.digest()
+    );
+    let actual: usize = compiled
+        .request()
+        .messages()
+        .iter()
+        .map(|m| m.content().len())
+        .sum();
+    assert_eq!(actual, compiled.budget_usage().prompt_total() as usize);
+    assert!(
+        actual
+            + compiled.budget_plan().output_reserve() as usize
+            + compiled.budget_plan().safety_reserve() as usize
+            <= 16_384
+    );
     Ok(())
 }
 
@@ -939,10 +1170,46 @@ fn input_with_run_memory(
     ),
     Box<dyn Error>,
 > {
+    input_with_run_memory_profile(fixture, completed_summary, profile()?)
+}
+
+fn input_with_run_memory_profile(
+    fixture: &Fixture,
+    completed_summary: &str,
+    model_profile: ModelProfile,
+) -> Result<
+    (
+        AgentContextCompileInput,
+        a3_domain::RunMemoryDigest,
+        RunEventSequence,
+    ),
+    Box<dyn Error>,
+> {
+    input_with_run_memory_goal(
+        fixture,
+        completed_summary,
+        model_profile,
+        "implement H8 compaction",
+    )
+}
+
+fn input_with_run_memory_goal(
+    fixture: &Fixture,
+    completed_summary: &str,
+    model_profile: ModelProfile,
+    objective: &str,
+) -> Result<
+    (
+        AgentContextCompileInput,
+        a3_domain::RunMemoryDigest,
+        RunEventSequence,
+    ),
+    Box<dyn Error>,
+> {
     let goal = GoalContract::initial(
         TaskId::from_bytes([110; 32]),
         GoalContractDraft::new(
-            GoalObjective::try_from_string("implement H8 compaction".to_owned())?,
+            GoalObjective::try_from_string(objective.to_owned())?,
             vec![AcceptanceCriterion::new(
                 AcceptanceCriterionId::from_bytes([111; 32]),
                 AcceptanceCriterionStatement::try_from_string(
@@ -1054,7 +1321,6 @@ fn input_with_run_memory(
         )?,
     )?;
 
-    let model_profile = profile()?;
     let run = AgentRun::reconstruct(
         AgentRunIdentity::new(
             run_id,
@@ -1095,9 +1361,21 @@ fn input_with_run_memory(
 }
 
 fn profile() -> Result<ModelProfile, Box<dyn Error>> {
+    profile_with_limits(16_384, 4_096)
+}
+
+fn profile_with_limits(context: u32, output: u32) -> Result<ModelProfile, Box<dyn Error>> {
+    profile_with_grounding(context, output, ModelPromptSchemaGrounding::FormatFieldOnly)
+}
+
+fn profile_with_grounding(
+    context: u32,
+    output: u32,
+    grounding: ModelPromptSchemaGrounding,
+) -> Result<ModelProfile, Box<dyn Error>> {
     let settings = ModelProfileSettings::new(
-        ModelContextLimit::new(16_384)?,
-        ModelOutputLimit::new(4_096)?,
+        ModelContextLimit::new(context)?,
+        ModelOutputLimit::new(output)?,
         ModelTokenCountingStrategy::ConservativeUtf8BytesV1,
         ModelParallelismLimit::new(1)?,
         ModelSamplingProfile::new(
@@ -1105,7 +1383,7 @@ fn profile() -> Result<ModelProfile, Box<dyn Error>> {
             ModelTopP::from_milli(1_000)?,
         ),
         ModelStopSequences::empty(),
-        ModelPromptSchemaGrounding::FormatFieldOnly,
+        grounding,
     )?;
     Ok(ModelProfile::from_probe(
         ModelProviderId::try_from_string("fixture".to_owned())?,

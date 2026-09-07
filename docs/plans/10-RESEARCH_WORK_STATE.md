@@ -40,6 +40,22 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [ ] Portablen Prozessstart ohne undefinierte Tempvariablen ermöglichen, echte
+      Prozess-/Sicherheitsverträge und mutierenden Live-Test prüfen
+      ([ADR-0081](../adrs/0081-optionale-portable-tempvariablen.md)).
+
+- [ ] Offene Fehler-/Hypothesen-Memory vor optionaler Kontextverteilung reservieren;
+      reproduzierten RepeatSchemaInPrompt-Abbruch regressionsprüfen und live nachtesten
+      ([ADR-0080](../adrs/0080-pflichtmemory-vor-optionaler-kontextverteilung.md)).
+
+- [ ] Vorzeitiges Agent-Finish über die vorhandene Step-Verifikation führen und live
+      bis zum nachgewiesenen Done prüfen ([ADR-0079](../adrs/0079-abschlussanforderung-verifiziert-zuerst-den-schritt.md)).
+
+- [ ] Tatsächlich mutierenden Live-Agent mit gesperrten Tests und unabhängiger
+      Verifikation ergänzen; aufgedeckte Budgetinkompatibilität ohne Änderung des
+      Modellprofils beheben ([ADR-0077](../adrs/0077-vollstaendige-agent-anker-im-konfigurierten-kontext.md),
+      [ADR-0078](../adrs/0078-freien-kontext-vor-pflichtabbruch-nutzen.md)).
+
 - [ ] Disjunkte V7-Phasenantworten gegen leeren Fortschritt implementieren und mit
       striktem Legacy-/Provider-/Mehrmodusvertrag sowie unveränderten öffentlichen
       Modellfällen nachtesten ([ADR-0075](../adrs/0075-disjunkte-rechercheantworten-statt-leerfortschritt.md)).

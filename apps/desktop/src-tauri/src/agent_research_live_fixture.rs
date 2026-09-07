@@ -1,4 +1,7 @@
 //! Explicitly opted-in model smoke. No desktop configuration or original repository is changed.
+#[path = "agent_live_coding_fixture.rs"]
+mod coding;
+
 use super::*;
 use a3_application::{
     ConfiguredModelEndpoint, DesktopSettings, DiscoverProviderModels,

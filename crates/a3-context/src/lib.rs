@@ -67,6 +67,13 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
             AgentPromptContract::current().prepare(profile)
         }
         .map_err(|_| ContextCompileFailure::PromptUnavailable)?;
+        let (system_message, schema_grounding, structured_output) = prompt.into_parts();
+        let system_tokens = count(profile, system_message.content())?
+            .checked_add(match schema_grounding.as_ref() {
+                Some(message) => count(profile, message.content())?,
+                None => 0,
+            })
+            .ok_or(ContextCompileFailure::InvalidPack)?;
         let current_step = input
             .task_ledger()
             .step(input.current_step_id())
@@ -84,6 +91,13 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
             profile,
             command_profile.as_ref(),
         );
+        push_line(
+            &mut anchor,
+            format_args!("worktree_id={}", input.project().worktree().id()),
+        );
+        if let Some(attempt) = current_step.attempts().last() {
+            push_line(&mut anchor, format_args!("run_id={}", attempt.run_id()));
+        }
         if let Some(reason) = input.replan_localization() {
             anchor.push_str(&format!(
                 "[REPLAN_LOCALIZATION] read-only; not implementation verification\ncause={}\n",
@@ -92,9 +106,38 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
         }
         reject_secret_candidate(&anchor)?;
         let goal_tokens = count(profile, &anchor)?;
-        if goal_tokens > budget_plan.allowance(ContextSection::GoalAndLedger) {
-            return Err(ContextCompileFailure::AnchorTooLarge);
-        }
+        let work = input
+            .research_handoff()
+            .and_then(|handoff| handoff.work_state().map(|state| (handoff, state)))
+            .map(|(handoff, state)| {
+                let mut state = state.clone();
+                state
+                    .revalidate(handoff.revisions())
+                    .map_err(|_| ContextCompileFailure::StaleOrMismatchedInput)?;
+                Ok::<_, ContextCompileFailure>(state)
+            })
+            .transpose()?;
+        let handoff_contract = work
+            .as_ref()
+            .map(research_handoff_contract)
+            .unwrap_or_default();
+        let replan_contract = input
+            .replan_research()
+            .map(|research| research.render())
+            .unwrap_or_default();
+        let mandatory_research_tokens = count(profile, &handoff_contract)?
+            .checked_add(count(profile, &replan_contract)?)
+            .ok_or(ContextCompileFailure::InvalidPack)?;
+        let mandatory_memory = render_mandatory_run_memory(input.run_memory(), profile)?;
+        let evidence_header_tokens = count(profile, CODE_AND_EVIDENCE_HEADER)?;
+        let mandatory_evidence_tokens = mandatory_memory
+            .tokens
+            .checked_add(mandatory_research_tokens)
+            .and_then(|n| n.checked_add(evidence_header_tokens))
+            .ok_or(ContextCompileFailure::InvalidPack)?;
+        let budget_plan = budget_plan
+            .with_mandatory_evidence(system_tokens, goal_tokens, mandatory_evidence_tokens)
+            .map_err(ContextCompileFailure::Budget)?;
 
         let goal_seed = TaskLensSeedText::try_from_string(bounded_seed(
             input.goal_contract().draft().objective().as_str(),
@@ -132,41 +175,33 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
             return Err(ContextCompileFailure::StaleOrMismatchedInput);
         }
 
-        let work = input
-            .research_handoff()
-            .and_then(|handoff| handoff.work_state().map(|state| (handoff, state)))
-            .map(|(handoff, state)| {
-                let mut state = state.clone();
-                state
-                    .revalidate(handoff.revisions())
-                    .map_err(|_| ContextCompileFailure::StaleOrMismatchedInput)?;
-                Ok::<_, ContextCompileFailure>(state)
-            })
-            .transpose()?;
-        let handoff_contract = work
-            .as_ref()
-            .map(research_handoff_contract)
-            .unwrap_or_default();
-        let replan_contract = input
+        if input
             .replan_research()
-            .map(|research| {
-                if research.checkpoint.snapshot_id != lens.snapshot_id() {
-                    return Err(ContextCompileFailure::StaleOrMismatchedInput);
-                }
-                Ok(research.render())
+            .is_some_and(|research| research.checkpoint.snapshot_id != lens.snapshot_id())
+        {
+            return Err(ContextCompileFailure::StaleOrMismatchedInput);
+        }
+        // L0's actual rendering is known only after retrieval. Refit from the same base,
+        // keeping every previously counted mandatory byte and both untouched reserves.
+        let project_floor = mandatory_project_tokens(&lens, profile)?;
+        let budget_plan = ContextBudgetPlan::for_profile(profile)
+            .and_then(|plan| {
+                plan.with_mandatory_repository(
+                    system_tokens,
+                    goal_tokens,
+                    mandatory_evidence_tokens,
+                    project_floor,
+                )
             })
-            .transpose()?
-            .unwrap_or_default();
+            .map_err(ContextCompileFailure::Budget)?;
         // Current investigation obligations precede optional historical summaries.
-        let mandatory_research_tokens = count(profile, &handoff_contract)?
-            .checked_add(count(profile, &replan_contract)?)
-            .ok_or(ContextCompileFailure::InvalidPack)?;
         let mut run_memory = pack_run_memory(
             input.run_memory(),
             &lens,
             profile,
             budget_plan,
             mandatory_research_tokens,
+            mandatory_memory,
         )?;
         if !replan_contract.is_empty() {
             append_mandatory_memory_item(
@@ -226,13 +261,6 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
 
         check_cancelled(control)?;
         report(control, ContextCompilePhase::Pack)?;
-        let (system_message, schema_grounding, structured_output) = prompt.into_parts();
-        let system_tokens = count(profile, system_message.content())?
-            .checked_add(match schema_grounding.as_ref() {
-                Some(message) => count(profile, message.content())?,
-                None => 0,
-            })
-            .ok_or(ContextCompileFailure::InvalidPack)?;
         if system_tokens > budget_plan.allowance(ContextSection::SystemAndTools) {
             return Err(ContextCompileFailure::Budget(
                 a3_domain::ContextBudgetError::SectionExceeded {
@@ -573,12 +601,9 @@ fn research_handoff_contract(work: &a3_domain::ResearchWorkState) -> String {
     text
 }
 
-fn pack_run_memory(
+fn render_mandatory_run_memory(
     checkpoint: Option<&RunMemoryCheckpoint>,
-    lens: &TaskLens,
     profile: &ModelProfile,
-    budget: ContextBudgetPlan,
-    mandatory_research_reserved: u32,
 ) -> Result<PackedRunMemory, ContextCompileFailure> {
     let Some(checkpoint) = checkpoint else {
         return Ok(PackedRunMemory {
@@ -588,12 +613,6 @@ fn pack_run_memory(
             truncated: false,
         });
     };
-    if checkpoint.index_run_id() != lens.index_run_id()
-        || checkpoint.snapshot_id() != lens.snapshot_id()
-    {
-        return Err(ContextCompileFailure::StaleOrMismatchedInput);
-    }
-
     let mut text = String::from("[RUN_MEMORY]\n");
     push_line(
         &mut text,
@@ -607,10 +626,9 @@ fn pack_run_memory(
         ),
     );
     reject_secret_candidate(&text)?;
-    let allowance = budget.allowance(ContextSection::CodeAndEvidence);
-    let reserved_tokens = count(profile, CODE_AND_EVIDENCE_HEADER)?
-        .checked_add(mandatory_research_reserved)
-        .ok_or(ContextCompileFailure::InvalidPack)?;
+    // Count the complete mandatory representation before allocating any optional section.
+    let allowance = u32::MAX;
+    let reserved_tokens = 0;
     let mut tokens = count(profile, &text)?;
     ensure_memory_fits(reserved_tokens, tokens, allowance)?;
     let mut claim_ids = BTreeSet::new();
@@ -665,7 +683,41 @@ fn pack_run_memory(
         claim_ids.insert(claim.id());
     }
 
-    let mut truncated = false;
+    Ok(PackedRunMemory {
+        text,
+        tokens,
+        claim_ids,
+        truncated: false,
+    })
+}
+
+fn pack_run_memory(
+    checkpoint: Option<&RunMemoryCheckpoint>,
+    lens: &TaskLens,
+    profile: &ModelProfile,
+    budget: ContextBudgetPlan,
+    mandatory_research_reserved: u32,
+    mandatory: PackedRunMemory,
+) -> Result<PackedRunMemory, ContextCompileFailure> {
+    let Some(checkpoint) = checkpoint else {
+        return Ok(mandatory);
+    };
+    if checkpoint.index_run_id() != lens.index_run_id()
+        || checkpoint.snapshot_id() != lens.snapshot_id()
+    {
+        return Err(ContextCompileFailure::StaleOrMismatchedInput);
+    }
+    let PackedRunMemory {
+        mut text,
+        mut tokens,
+        mut claim_ids,
+        mut truncated,
+    } = mandatory;
+    let allowance = budget.allowance(ContextSection::CodeAndEvidence);
+    let reserved_tokens = count(profile, CODE_AND_EVIDENCE_HEADER)?
+        .checked_add(mandatory_research_reserved)
+        .ok_or(ContextCompileFailure::InvalidPack)?;
+    ensure_memory_fits(reserved_tokens, tokens, allowance)?;
     for result in checkpoint.step_results() {
         let source = result.source();
         let summary = result.summary().map_or("-", |summary| summary.as_str());
@@ -822,6 +874,34 @@ const fn open_issue_kind(kind: OpenRunIssueKind) -> &'static str {
     }
 }
 
+fn project_framing_tokens(
+    lens: &TaskLens,
+    profile: &ModelProfile,
+) -> Result<u32, ContextCompileFailure> {
+    count(profile, CONTEXT_PACK_HEADER)?
+        .checked_add(
+            count(profile, &render_pack_state(lens, false))?
+                .max(count(profile, &render_pack_state(lens, true))?),
+        )
+        .ok_or(ContextCompileFailure::InvalidPack)
+}
+
+fn mandatory_project_tokens(
+    lens: &TaskLens,
+    profile: &ModelProfile,
+) -> Result<u32, ContextCompileFailure> {
+    let repository = lens
+        .entries()
+        .iter()
+        .find(|entry| matches!(entry.target(), TaskLensTarget::Repository(_)))
+        .ok_or(ContextCompileFailure::InvalidPack)?;
+    let repository_tokens = count(profile, &render_lens_entry(repository))?;
+    project_framing_tokens(lens, profile)?
+        .checked_add(count(profile, "[PROJECT_MAP]\n")?)
+        .and_then(|n| n.checked_add(repository_tokens))
+        .ok_or(ContextCompileFailure::InvalidPack)
+}
+
 fn pack_ranked_context(
     lens: &TaskLens,
     run_memory_claim_ids: &BTreeSet<ModuleCardClaimId>,
@@ -832,12 +912,7 @@ fn pack_ranked_context(
 ) -> Result<PackedSections, ContextCompileFailure> {
     let mut project_map = String::from("[PROJECT_MAP]\n");
     let mut code_and_evidence = String::from(CODE_AND_EVIDENCE_HEADER);
-    let framing_reserve = count(profile, CONTEXT_PACK_HEADER)?
-        .checked_add(
-            count(profile, &render_pack_state(lens, false))?
-                .max(count(profile, &render_pack_state(lens, true))?),
-        )
-        .ok_or(ContextCompileFailure::InvalidPack)?;
+    let framing_reserve = project_framing_tokens(lens, profile)?;
     let mut project_tokens = count(profile, &project_map)?
         .checked_add(framing_reserve)
         .ok_or(ContextCompileFailure::InvalidPack)?;

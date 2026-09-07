@@ -537,7 +537,10 @@ Vor jedem Start wird die Prozessumgebung geleert. Nur in der Spezifikation erlau
 aus dem expliziten `ProcessHostEnvironment` übernommen; der Runner liest keine vollständige
 Ambient-Umgebung und gibt Werte weder in Debugausgaben noch in Fehlern wieder. Entdeckte Commands
 erlauben ausschließlich `PATH` sowie die plattformüblichen temporären Laufzeitnamen `TEMP`, `TMP`
-und `TMPDIR`; der Composition Root muss dafür explizite Werte bereitstellen. So können unter
+und `TMPDIR`; der Composition Root stellt vorhandene Werte explizit bereit. Nach
+[ADR-0081](adrs/0081-optionale-portable-tempvariablen.md) bleiben ausschließlich fehlende
+`TEMP`-/`TMP`-/`TMPDIR`-Werte auch im Kindprozess abwesend; andere verlangte fehlende Werte
+bleiben `Denied`. Es werden keine Ersatzwerte erzeugt oder Umgebungsrechte erweitert. So können unter
 anderem Compiler temporäre Dateien auch unter Windows außerhalb geschützter Systemverzeichnisse
 anlegen. Timeout und
 wakebare Cancellation beenden nicht nur den direkten Prozess, sondern dessen gesamte
@@ -560,8 +563,14 @@ eine neue Trust-Boundary-Entscheidung und benötigt einen eigenen ADR.
 `UpdateLedger` akzeptiert für Resultate nur controllerseitig erzeugte, snapshotgleiche Tool-
 Evidence und kann einen Schritt damit lediglich zur objektiven Verifikation vorbereiten. Die
 Ledgeränderung und Controllertransition werden atomar mit getrennten Ledger- und Run-CAS-Ankern
-persistiert. `Finish` ist content-frei und wechselt nur in `Verify`; weder Modellausgabe noch
-Toolerfolg können `Done` setzen.
+persistiert. `Finish` ist content-frei und fordert Verifikation an; weder Modellausgabe noch
+Toolerfolg können `Done` setzen. Nach [ADR-0079](adrs/0079-abschlussanforderung-verifiziert-zuerst-den-schritt.md)
+wählt der Core für einen noch laufenden Schritt mit operationaler Command-, Test- oder
+Diagnostic-Spec zuerst exakt dessen vorhandene Step-/Command-ID. Diese einzelne Run-Aktion
+durchläuft denselben aktuellen Command-Katalog, dieselbe Bestätigung, zentrale Policy und
+gegebenenfalls Einmalfreigabe wie eine explizite Run-Auswahl. Erst die echte erfolgreiche
+Step-Verifikation erlaubt Planfortsetzung beziehungsweise vollständige Acceptance. Für andere
+Verifikationsarten entsteht keine automatische Prozessaktion; der bisherige Verify-Pfad bleibt.
 
 E6 akzeptiert für `Done` ausschließlich immutable typisierte Evidence zu den Must-Kriterien der
 exakten Goal-/Ledgerrevision. Command-Evidence speichert keine stdout-/stderr-Inhalte, sondern nur
@@ -851,3 +860,33 @@ gefährliche SVG-Elemente, Eventattribute, externe Referenzen und aktive URLs, u
 Export ausschließlich die begrenzten Nutzdaten. Rust prüft SVG beziehungsweise PNG erneut, öffnet
 selbst den nativen Speicherdialog und schreibt atomar. Zielpfade, allgemeine Dialogrechte und
 Dateischreibrechte werden niemals an die WebView delegiert.
+
+### Begrenzter mutierender Live-Test
+
+Der explizite Test `agent_approved_live_coding_fixture` verwendet ausschließlich eine
+neue Kopie der öffentlichen `small-local-bugfix`-Fixture. Er beginnt mit einem
+festen akzeptierten Ein-Schritt-Plan, nicht mit einer behaupteten Live-Planerstellung.
+Einmalfreigaben durchlaufen das normale Approval Center und akzeptieren nur eine
+Update-Operation auf `increment.py` oder `python -m pytest` im Fixture-Root,
+KnownSafe, Netzwerk deklarativ Denied. Andere Aktionen werden nicht freigegeben.
+Diese Deklaration ist keine Behauptung eines Betriebssystem-Netzwerksandkastens.
+Runner, Tests, Manifest und fremde Sentineldatei bleiben bytegenau geschützt.
+Ein unabhängiger begrenzter Testprozess prüft Rot vor und Grün nach dem Lauf;
+zusätzlich sind dauerhafter Done-Zustand und erfolgreiche Step-Evidence erforderlich.
+Das Modellprofil wird ausschließlich in einem schreibgesperrten In-Memory-Settings-
+Adapter gebunden; native Credentials bleiben an ihren vorhandenen Origin gebunden.
+Der Benutzerkatalog wird nicht verändert. Der Test ist standardmäßig ignoriert.
+
+Die Budgetkorrektur nach [ADR-0077](adrs/0077-vollstaendige-agent-anker-im-konfigurierten-kontext.md)
+und [ADR-0078](adrs/0078-freien-kontext-vor-pflichtabbruch-nutzen.md)
+erhöht weder Output-/Kontextlimits noch Sicherheitsrechte. Vollständige Pflichtanker
+dürfen nur freien und optionalen Kontextplatz verwenden, niemals Output- oder Sicherheitsreserve.
+Dies gilt nach [ADR-0080](adrs/0080-pflichtmemory-vor-optionaler-kontextverteilung.md)
+auch für vollständige offene Fehlereinträge, Hypothesen und aktuelle Recherchepflichten.
+Ihre Bytes werden vor der Verteilung gezählt und dürfen nicht als optional verdrängt werden.
+Der tatsächliche L0-Projektanker und das vollständige Pack-Framing werden nach Retrieval
+ebenfalls vor dem Packing reserviert. Keine dieser Korrekturen entfernt Pflichtinformationen.
+
+Nach dem einzigen erfolglosen Action-Repair bleibt dessen geschlossene Decoderklasse erhalten
+(`InvalidActionAfterRepair`); ein ungültiger Präsentationshinweis ist separat
+`InvalidPublicNote`. Weder rohe Modellausgabe noch zusätzliche Repairrechte entstehen daraus.

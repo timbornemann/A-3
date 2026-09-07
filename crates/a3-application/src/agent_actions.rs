@@ -296,6 +296,28 @@ impl ApplyAgentLedgerUpdate {
 pub struct RequestAgentFinish;
 
 impl RequestAgentFinish {
+    /// Selects only the current operational verification command; execution still requires
+    /// the current manifest catalog, confirmation and central mutation policy (ADR-0079).
+    #[must_use]
+    pub fn verification_command(
+        self,
+        step: &a3_domain::TaskStep,
+    ) -> Option<a3_domain::AgentRunAction> {
+        if !step.is_active_plan_step() || step.status() != TaskStepStatus::InProgress {
+            return None;
+        }
+        let command = match step.definition().verification_spec().target() {
+            a3_domain::VerificationTarget::Command { command_id, .. }
+            | a3_domain::VerificationTarget::Test { command_id, .. }
+            | a3_domain::VerificationTarget::Diagnostic { command_id, .. } => *command_id,
+            _ => return None,
+        };
+        Some(a3_domain::AgentRunAction::new(
+            step.definition().id(),
+            command,
+        ))
+    }
+
     /// Moves Execute to Verify; only the existing AcceptanceVerifier may later grant Done.
     pub fn execute(
         self,
@@ -841,6 +863,129 @@ mod tests {
 
         assert_eq!(advance.state(), AgentControllerState::Verify);
         assert_ne!(advance.state(), AgentControllerState::Done);
+        Ok(())
+    }
+
+    #[test]
+    fn finish_selects_only_the_current_operational_verification() -> Result<(), Box<dyn Error>> {
+        use a3_domain::{
+            DiagnosticPolicy, DiffInvariantMode, DiffInvariantVerification, DiscoveredCommandId,
+            MinimumTestCaseCount, PolicyResourceId, TestCaseSelector, VerificationScope,
+        };
+        let (run, existing, step_id) = fixture()?;
+        let spec_id = VerificationSpecId::from_bytes([41; 32]);
+        let command_id = DiscoveredCommandId::from_bytes([42; 32]);
+        let requirement = VerificationRequirement::try_from_string("verify actual changes".into())?;
+        let specifications = [
+            (
+                VerificationSpec::command(
+                    spec_id,
+                    requirement.clone(),
+                    command_id,
+                    VerificationScope::Targeted,
+                ),
+                true,
+            ),
+            (
+                VerificationSpec::test(
+                    spec_id,
+                    requirement.clone(),
+                    command_id,
+                    TestCaseSelector::All,
+                    MinimumTestCaseCount::new(1)?,
+                    VerificationScope::Package,
+                ),
+                true,
+            ),
+            (
+                VerificationSpec::diagnostic(
+                    spec_id,
+                    requirement.clone(),
+                    command_id,
+                    DiagnosticPolicy::NoWarnings,
+                    VerificationScope::Workspace,
+                ),
+                true,
+            ),
+            (
+                VerificationSpec::diff_invariant(
+                    spec_id,
+                    requirement.clone(),
+                    DiffInvariantVerification::new(DiffInvariantMode::NoChanges, Vec::new())?,
+                ),
+                false,
+            ),
+            (
+                VerificationSpec::user_confirm(
+                    spec_id,
+                    requirement.clone(),
+                    PolicyResourceId::from_bytes([43; 32]),
+                ),
+                false,
+            ),
+            (
+                VerificationSpec::new(spec_id, VerificationMethod::Command, requirement),
+                false,
+            ),
+        ];
+        for (specification, operational) in specifications {
+            let mut ledger = TaskLedger::new(
+                existing.goal_contract(),
+                vec![TaskStepDefinition::new(
+                    step_id,
+                    None,
+                    TaskStepOutcome::try_from_string("repair increment".into())?,
+                    TaskStepRationale::try_from_string("verified before acceptance".into())?,
+                    Vec::new(),
+                    vec![ExpectedTaskEvidence::try_from_string(
+                        "actual verification evidence".into(),
+                    )?],
+                    specification,
+                )?],
+                TaskLedgerTimestamp::from_unix_millis(1)?,
+            )?;
+            let selected = |ledger: &TaskLedger| {
+                ledger
+                    .step(step_id)
+                    .and_then(|step| RequestAgentFinish.verification_command(step))
+            };
+            assert_eq!(selected(&ledger), None, "unstarted steps cannot run");
+            ledger.start_step(step_id, run.id(), TaskLedgerTimestamp::from_unix_millis(5)?)?;
+            let before = ledger.clone();
+            assert_eq!(
+                selected(&ledger),
+                operational.then_some(a3_domain::AgentRunAction::new(step_id, command_id))
+            );
+            assert_eq!(
+                ledger, before,
+                "selection cannot grant success or modify evidence"
+            );
+            let evidence_id = TaskEvidenceId::from_bytes([44; 32]);
+            ledger.begin_step_verification(
+                step_id,
+                run.id(),
+                None,
+                vec![evidence_id],
+                TaskLedgerTimestamp::from_unix_millis(6)?,
+            )?;
+            assert_eq!(
+                selected(&ledger),
+                None,
+                "ongoing verification cannot run again"
+            );
+            ledger.finish_step_verification(
+                step_id,
+                StepVerification::new(
+                    StepVerificationId::from_bytes([45; 32]),
+                    spec_id,
+                    run.id(),
+                    StepVerificationOutcome::Passed,
+                    vec![evidence_id],
+                    TaskLedgerTimestamp::from_unix_millis(7)?,
+                )?,
+            )?;
+            assert_eq!(selected(&ledger), None, "completed steps cannot run again");
+        }
         Ok(())
     }
 
