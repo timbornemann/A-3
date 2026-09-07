@@ -345,6 +345,7 @@ pub struct ExecuteAgentTurn<'a> {
     recovery: &'a dyn AgentRecoveryStore,
     model_timeout: ModelRequestTimeout,
     read_timeout: AgentReadTimeout,
+    patch_snapshot: Option<&'a a3_domain::PublishedIndex>,
 }
 
 impl<'a> ExecuteAgentTurn<'a> {
@@ -363,7 +364,16 @@ impl<'a> ExecuteAgentTurn<'a> {
             recovery,
             model_timeout: ModelRequestTimeout::DEFAULT,
             read_timeout: AgentReadTimeout::DEFAULT,
+            patch_snapshot: None,
         }
+    }
+
+    /// Adds pure patch admission against the immutable publication for this exact turn.
+    /// Live source, policy, approval and mutation checks remain independently required.
+    #[must_use]
+    pub const fn with_patch_snapshot(mut self, published: &'a a3_domain::PublishedIndex) -> Self {
+        self.patch_snapshot = Some(published);
+        self
     }
 
     /// Compiles a fresh turn, executes at most one read, and returns mutations unexecuted.
@@ -391,6 +401,10 @@ impl<'a> ExecuteAgentTurn<'a> {
             || compiled.ledger_revision() != run.task_ledger_revision()
             || compiled.current_step_id() != input.current_step_id()
             || compiled.snapshot_id() != run.current_snapshot_id()
+            || self.patch_snapshot.is_some_and(|published| {
+                published.run().snapshot_id() != compiled.snapshot_id()
+                    || published.run().id() != compiled.index_run_id()
+            })
         {
             return Err(ExecuteAgentTurnFailure::ContextMismatch);
         }
@@ -447,7 +461,7 @@ impl<'a> ExecuteAgentTurn<'a> {
         }
         .with_turn_anchors(anchors);
         let (decoded, prompt_tokens, output_tokens, repair, observed_model_output_bytes) =
-            match decoder.decode_primary(&primary.raw) {
+            match decoder.decode_primary_in_snapshot(&primary.raw, self.patch_snapshot) {
                 AgentActionPrimaryOutcome::Accepted(action) => (
                     action,
                     primary.prompt_tokens,
@@ -503,7 +517,9 @@ impl<'a> ExecuteAgentTurn<'a> {
                             observed_model_output_bytes,
                         }));
                     }
-                    let action = match prepared.decode(&corrected.raw) {
+                    let action = match prepared
+                        .decode_in_snapshot(&corrected.raw, self.patch_snapshot)
+                    {
                         Ok(action) => action,
                         Err(error) => {
                             return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
@@ -1663,6 +1679,217 @@ mod tests {
         assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
         assert_eq!(recovery.begins.load(Ordering::SeqCst), 0);
         Ok(())
+    }
+
+    #[test]
+    fn patch_snapshot_conflicts_share_one_repair_before_tools() -> Result<(), Box<dyn Error>> {
+        for (operation, code) in [
+            (
+                serde_json::json!({"kind":"add","path":"existing.rs","content":"changed\n"}),
+                "patch_target_already_exists",
+            ),
+            (
+                serde_json::json!({"kind":"update","path":"existing.rs","expected_hash":"ff".repeat(32),"content":"changed\n"}),
+                "patch_source_revision_changed",
+            ),
+            (
+                serde_json::json!({"kind":"update","path":"missing.rs","expected_hash":"07".repeat(32),"content":"changed\n"}),
+                "patch_source_not_indexed",
+            ),
+            (
+                serde_json::json!({"kind":"move","path":"source.rs","expected_hash":"08".repeat(32),"destination":"existing.rs"}),
+                "patch_target_already_exists",
+            ),
+            (
+                serde_json::json!({"kind":"delete","path":"missing.rs","expected_hash":"07".repeat(32)}),
+                "patch_source_not_indexed",
+            ),
+        ] {
+            for correction in ["repeat", "update", "add", "move", "delete", "inspect"] {
+                let corrected = correction != "repeat";
+                let mut fixture = turn_fixture(Vec::new())?;
+                let index = patch_index(snapshot(), IndexRunId::from_bytes([12; 32]))?;
+                let step = fixture.input.current_step_id();
+                let valid = serde_json::json!({"schema_version":4,"public_note":{"goal":"Current step","finding_kind":"hypothesis","finding":"Check remains open","finding_source_refs":[],"gap":"Verification","next_step":"Apply scoped update"},"action":{
+                    "kind":"apply_patch","run_id":fixture.run.id().to_string(),"worktree_id":fixture.input.project().worktree().id().to_string(),"snapshot_id":snapshot().to_string(),"step_id":step.to_string(),
+                    "verification_spec_id":fixture.input.task_ledger().step(step).ok_or("step")?.definition().verification_spec().id().to_string(),"rationale":"current scoped change",
+                    "operations":[{"kind":"update","path":"existing.rs","expected_hash":"07".repeat(32),"content":"changed\n"}]
+                }});
+                let mut wrong = valid.clone();
+                wrong["action"]["operations"] = serde_json::json!([operation.clone()]);
+                let mut repaired = valid.clone();
+                match correction {
+                    "repeat" => repaired = wrong.clone(),
+                    "add" => {
+                        repaired["action"]["operations"] = serde_json::json!([
+                            {"kind":"add","path":"new.rs","content":"new\n"}
+                        ])
+                    }
+                    "move" => {
+                        repaired["action"]["operations"] = serde_json::json!([
+                            {"kind":"move","path":"source.rs","expected_hash":"08".repeat(32),"destination":"new.rs"}
+                        ])
+                    }
+                    "delete" => {
+                        repaired["action"]["operations"] = serde_json::json!([
+                            {"kind":"delete","path":"existing.rs","expected_hash":"07".repeat(32)}
+                        ])
+                    }
+                    "inspect" => {
+                        repaired["action"] = serde_json::json!({
+                            "kind":"inspect","target":{"kind":"file","path":"existing.rs","start_line":1,"line_count":20}
+                        })
+                    }
+                    _ => {}
+                }
+                // Schema-only replay remains valid; only the bound publication disproves it.
+                assert!(
+                    crate::DecodeAgentAction::current()
+                        .decode(&wrong.to_string())
+                        .is_ok()
+                );
+                let provider = ScriptedProvider {
+                    provider_id: fixture.profile.provider_id().clone(),
+                    responses: Mutex::new(
+                        vec![
+                            provider_response(&wrong.to_string())?,
+                            provider_response(&repaired.to_string())?,
+                            provider_response(&valid.to_string())?,
+                        ]
+                        .into(),
+                    ),
+                };
+                let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
+                let tools = CountingReadTools {
+                    calls: AtomicUsize::new(0),
+                };
+                let recovery = TestRecoveryStore::default();
+                let outcome = futures::executor::block_on(
+                    ExecuteAgentTurn::new(&compiler, &provider, &tools, &recovery)
+                        .with_patch_snapshot(&index)
+                        .execute(&fixture.run, &fixture.input, timestamp(5)?, &TestControl),
+                )?;
+                let event = outcome.record(&mut fixture.run, event_id(20), timestamp(5)?)?;
+                match outcome {
+                    AgentTurnOutcome::Executed(execution) if corrected => {
+                        assert_eq!(
+                            execution.action(),
+                            &crate::DecodeAgentAction::current().decode(&repaired.to_string())?
+                        );
+                        assert_eq!(execution.charge().repair(), AgentTurnRepairUsage::One);
+                    }
+                    AgentTurnOutcome::Rejected(rejected) if !corrected => {
+                        assert!(
+                            matches!(rejected.reason(),AgentTurnRejectionReason::InvalidActionAfterRepair(failure) if failure.repair_code()==code)
+                        );
+                        assert!(rejected.charge().action().is_none());
+                        assert_eq!(event.payload().code(), RunEventCode::InvalidModelOutput);
+                    }
+                    _ => {
+                        return Err(format!(
+                            "patch conflict admission failed: {code}, correction={correction}"
+                        )
+                        .into());
+                    }
+                }
+                assert_eq!(fixture.run.usage().repair_count(), 1);
+                assert_eq!(
+                    provider
+                        .responses
+                        .lock()
+                        .map_err(|_| "provider lock")?
+                        .len(),
+                    1
+                );
+                let reads = usize::from(correction == "inspect");
+                assert_eq!(tools.calls.load(Ordering::SeqCst), reads);
+                assert_eq!(recovery.begins.load(Ordering::SeqCst), reads);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn mismatched_patch_publication_never_calls_the_model() -> Result<(), Box<dyn Error>> {
+        for (snapshot_id, index_id) in [
+            (
+                SnapshotId::from_bytes([99; 32]),
+                IndexRunId::from_bytes([12; 32]),
+            ),
+            (snapshot(), IndexRunId::from_bytes([99; 32])),
+        ] {
+            let fixture = turn_fixture(vec![provider_response("must not be consumed")?])?;
+            let index = patch_index(snapshot_id, index_id)?;
+            let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
+            let provider = ScriptedProvider {
+                provider_id: fixture.profile.provider_id().clone(),
+                responses: Mutex::new(fixture.responses),
+            };
+            let tools = CountingReadTools {
+                calls: AtomicUsize::new(0),
+            };
+            let recovery = TestRecoveryStore::default();
+            let result = futures::executor::block_on(
+                ExecuteAgentTurn::new(&compiler, &provider, &tools, &recovery)
+                    .with_patch_snapshot(&index)
+                    .execute(&fixture.run, &fixture.input, timestamp(5)?, &TestControl),
+            );
+            assert!(matches!(
+                result,
+                Err(ExecuteAgentTurnFailure::ContextMismatch)
+            ));
+            assert_eq!(
+                provider
+                    .responses
+                    .lock()
+                    .map_err(|_| "provider lock")?
+                    .len(),
+                1
+            );
+            assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
+            assert_eq!(recovery.begins.load(Ordering::SeqCst), 0);
+        }
+        Ok(())
+    }
+
+    fn patch_index(
+        snapshot_id: SnapshotId,
+        index_id: IndexRunId,
+    ) -> Result<a3_domain::PublishedIndex, Box<dyn Error>> {
+        use a3_domain::*;
+        let files = vec![
+            FileRevision::new(
+                RepositoryPath::try_from_bytes(b"existing.rs".to_vec())?,
+                ContentHash::from_bytes([7; 32]),
+            ),
+            FileRevision::new(
+                RepositoryPath::try_from_bytes(b"source.rs".to_vec())?,
+                ContentHash::from_bytes([8; 32]),
+            ),
+        ];
+        let graph = LinkedGraph::new(snapshot_id, files, Vec::new(), Vec::new(), Vec::new())?;
+        let ranking = RankProjection::new(snapshot_id, RankingPolicyVersion::v1(), Vec::new())?;
+        let policy = ModulePolicyVersion::v1();
+        let card = RepositoryCard::new(
+            snapshot_id,
+            policy,
+            Vec::new(),
+            Vec::new(),
+            ModuleSymbolSet::empty(),
+            2,
+            0,
+        )?;
+        let modules = ModuleProjection::new(snapshot_id, policy, Vec::new(), Vec::new(), card)?;
+        Ok(PublishedIndex::new(
+            IndexRunRecord::new(
+                index_id,
+                snapshot_id,
+                RankingPolicyVersion::v1(),
+                IndexRunSequence::new(1)?,
+                IndexRunStatus::Published,
+            ),
+            IndexPublication::new(graph, ranking, Vec::new(), modules)?,
+        )?)
     }
 
     #[test]

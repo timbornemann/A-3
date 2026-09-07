@@ -439,12 +439,15 @@ impl ProductionAgentRunExecutor {
                 None => input,
             };
             let observed_at = timestamp()?;
+            let turn_index =
+                current_index(self.ports.index.as_ref(), project, &attempt_control).await?;
             let turn_outcome = ExecuteAgentTurn::new(
                 &context_compiler,
                 provider.as_ref(),
                 &read_tools,
                 self.ports.recovery.as_ref(),
             )
+            .with_patch_snapshot(&turn_index)
             .execute(&run, &input, observed_at, &attempt_control)
             .await
             .map_err(|error| {

@@ -335,6 +335,14 @@ enthalten denselben Vertrag; seine vollständigen tatsächlichen Bytes werden ge
 Noch unbekannte Snapshot- und Dateihashwerte sowie gesonderte Replan-Schemata bleiben
 unverändert. Auch ein Provider, der Konstanten ignoriert, passiert den Decoder nicht.
 
+Nach [ADR-0085](adrs/0085-patch-snapshotkonflikte-im-einzelrepair.md) bindet der
+produktive Turn zusätzlich eine immutable PublishedIndex-Referenz an genau den
+kompilierten Index-Run und Snapshot. Die geordneten FileRevisions widerlegen bekannte
+Patchkonflikte vor der Ausführung im bestehenden Einzelrepair. Dafür werden weder
+der gesamte Index in den Prompt kopiert noch Originale nachgeladen oder Modellwerte
+korrigiert. Dieselbe Publikation gilt für Primär- und Repairantwort; sie ersetzt
+keine Live-Frischeprüfung und erteilt keine Schreibfreigabe.
+
 `ContextCompilerPolicyVersion::V5` behält den vollständigen kompakten L0-Repository-Anchor aus V2
 vor allen optionalen gerankten L1-/L2-Einträgen. Package- und Entrypointmengen erscheinen in L0 als
 Anzahlen; konkrete IDs werden nicht dort und später erneut bezahlt, sondern bleiben in den

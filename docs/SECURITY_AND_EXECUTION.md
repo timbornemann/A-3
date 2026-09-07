@@ -928,3 +928,13 @@ Run-Pfad wie bei Finish aus. Unabhängig davon verweigert ApplyAgentLedgerUpdate
 alle operationalen Specs eine Vorbereitung mittels bloßer Read-Evidence, ohne Run
 oder Ledger zu ändern. Diff/UserConfirm erhalten keinen automatischen Prozess;
 Legacy-Read-Schritte behalten ihren alten Vertrag. Dies ist kein Abschlussbeweis.
+
+Nach [ADR-0085](adrs/0085-patch-snapshotkonflikte-im-einzelrepair.md) werden Patch-
+Vorschläge zusätzlich rein gegen dieselbe unveränderliche aktuelle Indexpublikation
+geprüft. Index-Run und Snapshot müssen vor dem Modellaufruf zum kompilierten Kontext
+passen. Bereits belegte Ziele, fehlende Quellen oder abweichende Quellrevisionen
+nutzen denselben einzigen Struktur-/Ankerrepair mit geschlossenem Fehlercode.
+Der Core ersetzt keine Operation, Pfade oder Hashes und führt dabei keine Tools aus.
+Ein gültiger korrigierter Lesevorschlag nutzt den normalen Read-Pfad; ein erneut
+ungültiger Patch bleibt terminal. Live-Dateisystem-, Freigabe-, Policy- und
+Reconciliation-Prüfungen an der eigentlichen Mutationsgrenze bleiben unverändert.

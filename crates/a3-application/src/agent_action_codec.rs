@@ -278,6 +278,64 @@ impl DecodeAgentAction {
             public_note,
         })
     }
+
+    pub(crate) fn decode_envelope_in_snapshot(
+        self,
+        raw: &str,
+        published: Option<&a3_domain::PublishedIndex>,
+    ) -> Result<DecodedAgentAction, AgentActionDecodeError> {
+        let decoded = self.decode_envelope(raw)?;
+        if let Some(published) = published
+            && let AgentAction::ApplyPatch(patch) = decoded.action()
+        {
+            validate_patch_snapshot(patch, published)?;
+        }
+        Ok(decoded)
+    }
+}
+
+fn validate_patch_snapshot(
+    patch: &PatchAction,
+    published: &a3_domain::PublishedIndex,
+) -> Result<(), AgentActionDecodeError> {
+    if patch.snapshot_id() != published.run().snapshot_id() {
+        return Err(AgentActionDecodeError::AnchorMismatch);
+    }
+    let files = published.publication().graph().files();
+    let require_absence = |path: &RepositoryPath| {
+        if files.binary_search_by(|file| file.path().cmp(path)).is_ok() {
+            Err(AgentActionDecodeError::PatchConflict(
+                crate::PatchConflictKind::TargetAlreadyExists,
+            ))
+        } else {
+            Ok(())
+        }
+    };
+    let require_revision = |expected: &FileRevision| {
+        let position = files
+            .binary_search_by(|file| file.path().cmp(expected.path()))
+            .map_err(|_| {
+                AgentActionDecodeError::PatchConflict(crate::PatchConflictKind::SourceNotIndexed)
+            })?;
+        if &files[position] != expected {
+            return Err(AgentActionDecodeError::PatchConflict(
+                crate::PatchConflictKind::SourceRevisionChanged,
+            ));
+        }
+        Ok(())
+    };
+    for operation in patch.operations() {
+        match operation {
+            PatchOperation::Add(add) => require_absence(add.path())?,
+            PatchOperation::Update(update) => require_revision(update.expected())?,
+            PatchOperation::Move(movement) => {
+                require_revision(movement.expected())?;
+                require_absence(movement.destination())?;
+            }
+            PatchOperation::Delete(expected) => require_revision(expected)?,
+        }
+    }
+    Ok(())
 }
 
 /// Strictly decoded executable action plus optional presentation-only work note.
@@ -737,6 +795,8 @@ pub enum AgentActionDecodeError {
     InvalidPublicNote,
     /// Model-supplied action identities differ from the verified current controller turn.
     AnchorMismatch,
+    /// A structurally valid patch disagrees with the exact published file snapshot.
+    PatchConflict(crate::PatchConflictKind),
 }
 
 impl AgentActionDecodeError {
@@ -760,6 +820,7 @@ impl AgentActionDecodeError {
             }
             Self::InvalidPublicNote => "invalid_public_note",
             Self::AnchorMismatch => "anchor_mismatch",
+            Self::PatchConflict(kind) => kind.repair_code(),
         }
     }
 }
@@ -785,6 +846,7 @@ impl fmt::Display for AgentActionDecodeError {
             }
             Self::InvalidPublicNote => "AgentAction presentation note violates its contract",
             Self::AnchorMismatch => "AgentAction identities differ from the current turn",
+            Self::PatchConflict(_) => "AgentAction patch conflicts with the published source state",
         })
     }
 }

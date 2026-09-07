@@ -109,6 +109,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0082](0082-aktuelle-aktionsanker-innerhalb-des-einzelrepairs.md) | Aktuelle Aktionsanker innerhalb des Einzelrepairs |
 | [0083](0083-bekannte-schrittidentitaeten-als-schemakonstanten.md) | Bekannte Schrittidentitäten als Schemakonstanten |
 | [0084](0084-ergebnisnotizen-fordern-operationale-verifikation-an.md) | Ergebnisnotizen fordern operationale Verifikation an |
+| [0085](0085-patch-snapshotkonflikte-im-einzelrepair.md) | Patch-Snapshotkonflikte im Einzelrepair |
 
 ## Neue ADRs
 

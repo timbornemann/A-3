@@ -169,6 +169,20 @@ pub enum PatchConflictKind {
     SourceChangedOnDisk,
 }
 
+impl PatchConflictKind {
+    /// Returns a closed correction category without source paths, values or OS diagnostics.
+    #[must_use]
+    pub const fn repair_code(self) -> &'static str {
+        match self {
+            Self::SourceNotIndexed => "patch_source_not_indexed",
+            Self::SourceRevisionChanged => "patch_source_revision_changed",
+            Self::TargetAlreadyExists => "patch_target_already_exists",
+            Self::SourceNotRegularFile => "patch_source_not_regular_file",
+            Self::SourceChangedOnDisk => "patch_source_changed_on_disk",
+        }
+    }
+}
+
 /// Stable preview failure without paths, file content, or OS diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PatchPreviewFailure {

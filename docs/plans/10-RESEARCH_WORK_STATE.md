@@ -40,6 +40,12 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Bereits im aktuellen Index erkennbare Patchkonflikte im bestehenden Einzelrepair
+      abfangen; Live-Schreibgrenzen unverändert erhalten und Qwen erneut prüfen
+      ([ADR-0085](../adrs/0085-patch-snapshotkonflikte-im-einzelrepair.md)).
+      30 Konflikt-/Korrekturkombinationen, vollständige lokale Gates und Luna-Done
+      bestehen. Qwen wiederholt den Konflikt im Repair und bleibt gesondert offen.
+
 - [x] `record_result` bei operationalen Specs wie eine konkrete Prüfanforderung führen;
       Read-Evidence darf keinen operationalen Verifying-Schritt erzeugen
       ([ADR-0084](../adrs/0084-ergebnisnotizen-fordern-operationale-verifikation-an.md)).

@@ -475,7 +475,15 @@ impl DecodeAgentActionTurn {
     /// Decodes the primary output without ever returning an invalid executable action.
     #[must_use]
     pub fn decode_primary(self, raw: &str) -> AgentActionPrimaryOutcome {
-        match self.decoder.decode_envelope(raw) {
+        self.decode_primary_in_snapshot(raw, None)
+    }
+
+    pub(crate) fn decode_primary_in_snapshot(
+        self,
+        raw: &str,
+        published: Option<&a3_domain::PublishedIndex>,
+    ) -> AgentActionPrimaryOutcome {
+        match self.decoder.decode_envelope_in_snapshot(raw, published) {
             Ok(action) => AgentActionPrimaryOutcome::Accepted(action),
             Err(error) => AgentActionPrimaryOutcome::RepairRequired(AgentActionRepair {
                 decoder: self.decoder,
@@ -540,8 +548,16 @@ impl PreparedAgentActionRepair {
 
     /// Consumes the issued repair and either returns one valid action or terminal failure.
     pub fn decode(self, raw: &str) -> Result<DecodedAgentAction, AgentActionRepairFailure> {
+        self.decode_in_snapshot(raw, None)
+    }
+
+    pub(crate) fn decode_in_snapshot(
+        self,
+        raw: &str,
+        published: Option<&a3_domain::PublishedIndex>,
+    ) -> Result<DecodedAgentAction, AgentActionRepairFailure> {
         self.decoder
-            .decode_envelope(raw)
+            .decode_envelope_in_snapshot(raw, published)
             .map_err(|error| AgentActionRepairFailure { error })
     }
 }

@@ -1563,3 +1563,37 @@ Builds verwenden die oben dokumentierten prozesslokalen Debug-/Incremental-Einst
 der Nutzer erlaubt inzwischen ausdrücklich erneutes Wachstum von `target`. Kein
 Testumfang oder Sicherheitscheck wurde dafür reduziert. Alle Befunde zu den anderen
 Modellen, Vorschaufehlern und fortgesetzter Rechercheabnahme bleiben offen.
+
+### Reine Patch-Snapshotzulassung (ADR-0085)
+
+Der zuerst rote Konfliktfall besteht nach Bindung derselben immutable Publikation
+an Primär- und Repairdecoder. 71 gezielte Agententests bestehen, darin 30 Kombinationen
+aus fünf bekannten Konflikten und wiederholt falscher Antwort, gültigem Update,
+Add, Move, Delete oder Inspect. Genau zwei Antworten werden verbraucht; abgewiesene
+Patches führen kein Tool aus. Nur der gültige Inspect-Korrekturvorschlag erzeugt
+genau einen journalisierten Read. Falscher Snapshot oder Index-Run stoppt bereits
+vor dem Provider. Schema-only-Replay bleibt unverändert.
+
+Eingefrorenes Binary `agent-patch-snapshot-20260907/agent-tests.exe`, SHA-256
+`7edbbd473b08ea706ccf20c010f5d503c92f6e7bc9264bd36c3833808a4f66d8`:
+
+- Qwen: 179,06 s einschließlich Probe, Failed Sequenz 6. Der Einzelrepair endet
+  mit `PatchConflict(TargetAlreadyExists)`; kein Patch wird ausgeführt, unabhängige
+  Prüfung weiter rot, geschützte Dateien unverändert. Der Schutz wirkt, aber der
+  geschlossene Code allein ermöglicht diesem Modell noch keine erfolgreiche Korrektur.
+- Luna: 17,92 s, Done Sequenz 23, tatsächlicher Test Exit 0, Completed/verified,
+  unabhängige physische Prüfung grün und geschützte Dateien/Settings unverändert.
+
+Logs desselben Verzeichnisses, SHA-256:
+`qwen-live-1.log` = `aa962c9238a819d43323670733331687a55a2f27e5366a286d194c1f3f12afa9`,
+`luna-live-1.log` = `93eddbee1deaa694aaf38bb0a6e2a2fcb289bbaf4f3986f0645b320946b94045`.
+Dies ist keine Abnahme der gesamten Modellmatrix. Insbesondere Qwens wiederholte
+falsche Operation und Googles noch nicht lokalisierte Ablehnung bleiben offen.
+
+Vollständige Gates auf diesem Stand erfolgreich: `cargo test --workspace --all-features
+--offline --locked --jobs 2`, `cargo clippy --workspace --all-targets --all-features
+--offline --locked --jobs 2 -- -D warnings`, `cargo fmt --all --check`,
+`node scripts/check-markdown-links.mjs` (129 Dateien/506 lokale Links) und
+`git diff --check`. Test-/Clippylogs: `agent-patch-snapshot-workspace.log` und
+`agent-patch-snapshot-clippy.log`. Dieselben prozesslokalen kompakten Buildprofile;
+keine neuen Abhängigkeiten, Frontend-, Settings- oder Datenbankschemaänderungen.
