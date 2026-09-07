@@ -535,10 +535,14 @@ impl AgentActionRepair {
 
     /// Consumes this sole capability while preparing one content-free correction request.
     pub fn prepare(self) -> Result<PreparedAgentActionRepair, ModelMessageError> {
-        let hint = if self.error == AgentActionDecodeError::RepeatedReplanRead {
-            " This read already has a durable attempt. Choose a different relevant search or inspect target; repeating it is not new evidence."
-        } else {
-            ""
+        let hint = match self.error {
+            AgentActionDecodeError::RepeatedReplanRead => {
+                " This read already has a durable attempt. Choose a different relevant search or inspect target; repeating it is not new evidence."
+            }
+            AgentActionDecodeError::AmbiguousLegacyReplanClaim => {
+                " A historical claim receipt cannot identify its target. Do not request another claim ID. Choose a different relevant read-only access, such as an original file."
+            }
+            _ => "",
         };
         let instruction = ModelMessage::try_from_string(
             ModelMessageRole::User,

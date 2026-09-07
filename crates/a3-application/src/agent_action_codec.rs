@@ -324,14 +324,16 @@ impl DecodeAgentAction {
         replan: Option<&crate::ReplanResearchCheckpoint>,
     ) -> Result<DecodedAgentAction, AgentActionDecodeError> {
         let decoded = self.decode_envelope_in_snapshot(raw, published)?;
-        if replan
-            .filter(|state| !state.work.ready_to_finish())
-            .is_some_and(|state| {
-                state.validate_read(decoded.action())
-                    == Err(crate::ReplanReadRejection::RepeatedRead)
-            })
-        {
-            return Err(AgentActionDecodeError::RepeatedReplanRead);
+        if let Some(state) = replan.filter(|state| !state.work.ready_to_finish()) {
+            match state.validate_read(decoded.action()) {
+                Err(crate::ReplanReadRejection::RepeatedRead) => {
+                    return Err(AgentActionDecodeError::RepeatedReplanRead);
+                }
+                Err(crate::ReplanReadRejection::AmbiguousLegacyClaim) => {
+                    return Err(AgentActionDecodeError::AmbiguousLegacyReplanClaim);
+                }
+                _ => {}
+            }
         }
         Ok(decoded)
     }
@@ -842,6 +844,8 @@ pub enum AgentActionDecodeError {
     PatchConflict(crate::PatchConflictKind),
     /// An open replan already attempted this exact read; no tool has been called.
     RepeatedReplanRead,
+    /// A retained historical claim receipt cannot identify the already attempted claim.
+    AmbiguousLegacyReplanClaim,
 }
 
 impl AgentActionDecodeError {
@@ -867,6 +871,7 @@ impl AgentActionDecodeError {
             Self::AnchorMismatch => "anchor_mismatch",
             Self::PatchConflict(kind) => kind.repair_code(),
             Self::RepeatedReplanRead => "replan_read_repeated",
+            Self::AmbiguousLegacyReplanClaim => "replan_claim_history_ambiguous",
         }
     }
 }
@@ -894,6 +899,9 @@ impl fmt::Display for AgentActionDecodeError {
             Self::AnchorMismatch => "AgentAction identities differ from the current turn",
             Self::PatchConflict(_) => "AgentAction patch conflicts with the published source state",
             Self::RepeatedReplanRead => "AgentAction repeats an already attempted replan read",
+            Self::AmbiguousLegacyReplanClaim => {
+                "AgentAction claim read has ambiguous historical ownership"
+            }
         })
     }
 }

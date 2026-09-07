@@ -425,6 +425,84 @@ where
             .await
             .is_err()
     );
+    // A frozen V1 receipt represents the historical redacted Claim fingerprint.
+    // The actual target is deliberately unavailable; reopening must not invent it.
+    let legacy_key = ContentHash::from_bytes([
+        18, 79, 185, 233, 35, 87, 189, 125, 76, 18, 171, 25, 133, 88, 204, 218, 182, 192, 48, 149,
+        42, 137, 188, 91, 68, 28, 46, 231, 168, 124, 245, 172,
+    ]);
+    let scope = ContentHash::from_bytes(*snapshot_id.as_bytes());
+    checkpoint.work.begin_access(
+        a3_domain::ResearchQuestionId::FIRST,
+        scope,
+        legacy_key,
+        a3_domain::ResearchAccessKind::Inspect,
+    )?;
+    checkpoint.work.finish_access(
+        a3_domain::ResearchQuestionId::FIRST,
+        scope,
+        legacy_key,
+        a3_domain::ResearchAccessOutcome::Completed,
+    )?;
+    let before_legacy = current.last_event_sequence();
+    let legacy_tool = ToolRunId::from_bytes([184; 32]);
+    reopened
+        .begin_agent_tool_attempt(
+            &first,
+            run_id,
+            snapshot_id,
+            legacy_tool,
+            AgentRunTimestamp::from_unix_millis(2_009)?,
+        )
+        .await?;
+    let legacy_preview = "historical claim navigation";
+    let legacy_read = AgentReadResult::new(
+        legacy_tool,
+        ContextToolResultStatus::Succeeded,
+        ContextToolResultPreview::try_from_string(legacy_preview.to_owned())?,
+        ContextToolResultDigest::from_bytes([185; 32]),
+        false,
+        snapshot_id,
+        AgentToolEvidenceSet::new(snapshot_id, Vec::new())?,
+        u64::try_from(legacy_preview.len())?,
+    )?
+    .record(
+        &mut current,
+        RunEventId::from_bytes([186; 32]),
+        AgentRunTimestamp::from_unix_millis(2_009)?,
+    )?
+    .with_replan(checkpoint.clone());
+    reopened
+        .append_agent_read(&first, before_legacy, &current, &legacy_read)
+        .await?;
+    let later_open = factory.open(&app_data_root).await?;
+    let legacy_restored = later_open
+        .load_replan_research(&first, run_id, checkpoint.step_id)
+        .await?
+        .ok_or("legacy replan checkpoint disappeared")?;
+    assert_eq!(legacy_restored, checkpoint);
+    assert_eq!(legacy_restored.reads(), 2);
+    assert_eq!(
+        legacy_restored.validate_read(&original_read),
+        Err(a3_application::ReplanReadRejection::RepeatedRead)
+    );
+    for id in [187, 188] {
+        let claim = a3_domain::AgentAction::Inspect(a3_domain::AgentInspectAction::new(
+            a3_domain::AgentInspectTarget::Claim(a3_domain::ModuleCardClaimId::from_bytes(
+                [id; 32],
+            )),
+        ));
+        assert_eq!(
+            legacy_restored.validate_read(&claim),
+            Err(a3_application::ReplanReadRejection::AmbiguousLegacyClaim)
+        );
+    }
+    let alternative = a3_domain::AgentAction::Search(a3_domain::AgentSearchAction::new(
+        a3_domain::AgentSearchQuery::try_from_string("original serializer".to_owned())?,
+        a3_domain::AgentSearchLimit::new(5)?,
+    ));
+    assert!(legacy_restored.permits(&alternative));
+    crate::release_contract_store(later_open);
     // Unsupported evidence must roll back both the charged event and checkpoint. A valid
     // original span then commits both; none of this verifies the implementation step.
     for case in 0..3 {

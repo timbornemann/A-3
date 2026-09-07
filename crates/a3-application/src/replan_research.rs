@@ -26,6 +26,8 @@ pub enum ReplanReadRejection {
     NotReadAction,
     /// The same canonical action value already has an access attempt.
     RepeatedRead,
+    /// A retained V1 claim receipt lost its target identity through Debug redaction.
+    AmbiguousLegacyClaim,
 }
 
 impl ReplanResearchCheckpoint {
@@ -81,6 +83,15 @@ impl ReplanResearchCheckpoint {
         if !matches!(action, AgentAction::Search(_) | AgentAction::Inspect(_)) {
             return Err(ReplanReadRejection::NotReadAction);
         }
+        if matches!(action, AgentAction::Inspect(inspect) if matches!(inspect.target(), a3_domain::AgentInspectTarget::Claim(_)))
+            && self
+                .work
+                .accesses()
+                .iter()
+                .any(|a| a.key == legacy_claim_read_key_v1())
+        {
+            return Err(ReplanReadRejection::AmbiguousLegacyClaim);
+        }
         if self
             .work
             .accesses()
@@ -122,6 +133,13 @@ impl ReplanResearchCheckpoint {
 }
 
 fn read_key(action: &AgentAction) -> ContentHash {
+    if let AgentAction::Inspect(inspect) = action
+        && let a3_domain::AgentInspectTarget::Claim(id) = inspect.target()
+    {
+        let mut hash = blake3::Hasher::new_derive_key("a3.replan-claim-read.v2");
+        hash.update(id.as_bytes());
+        return ContentHash::from_bytes(*hash.finalize().as_bytes());
+    }
     let mut hash = blake3::Hasher::new_derive_key("a3.replan-read.v1");
     match action {
         AgentAction::Search(search) => {
@@ -148,6 +166,13 @@ fn read_key(action: &AgentAction) -> ContentHash {
             hash.update(b"non-read");
         }
     }
+    ContentHash::from_bytes(*hash.finalize().as_bytes())
+}
+
+/// Frozen historical fingerprint, not a currently recoverable claim identity.
+pub(crate) fn legacy_claim_read_key_v1() -> ContentHash {
+    let mut hash = blake3::Hasher::new_derive_key("a3.replan-read.v1");
+    hash.update(b"Claim(ModuleCardClaimId(redacted))");
     ContentHash::from_bytes(*hash.finalize().as_bytes())
 }
 
@@ -268,6 +293,99 @@ impl ReplanResearchContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn replan_distinct_claims_do_not_share_a_redacted_debug_read_key()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let claim = |id| {
+            AgentAction::Inspect(a3_domain::AgentInspectAction::new(
+                a3_domain::AgentInspectTarget::Claim(a3_domain::ModuleCardClaimId::from_bytes(
+                    [id; 32],
+                )),
+            ))
+        };
+        assert_ne!(
+            read_key(&claim(1)),
+            read_key(&claim(2)),
+            "different claim identities collided"
+        );
+        let mut checkpoint = ReplanResearchCheckpoint::new(
+            TaskStepId::from_bytes([1; 32]),
+            SnapshotId::from_bytes([2; 32]),
+            &TaskReplanReason::try_from_string("find the relevant claim".to_owned())?,
+            "locate supporting original",
+        )?;
+        for id in 1..=4 {
+            let action = claim(id);
+            assert!(checkpoint.permits(&action));
+            checkpoint.record_read(&action, id != 2)?;
+            assert!(!checkpoint.permits(&action));
+        }
+        assert_eq!(checkpoint.reads(), 4);
+        assert_eq!(
+            checkpoint.validate_read(&claim(5)),
+            Err(ReplanReadRejection::BudgetExhausted)
+        );
+        assert!(!checkpoint.work.ready_to_finish());
+        Ok(())
+    }
+
+    #[test]
+    fn replan_legacy_claim_receipts_keep_their_slots_and_do_not_invent_target_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let key = ContentHash::from_bytes([
+            18, 79, 185, 233, 35, 87, 189, 125, 76, 18, 171, 25, 133, 88, 204, 218, 182, 192, 48,
+            149, 42, 137, 188, 91, 68, 28, 46, 231, 168, 124, 245, 172,
+        ]);
+        assert_eq!(legacy_claim_read_key_v1(), key);
+        for outcome in [
+            None,
+            Some(ResearchAccessOutcome::Completed),
+            Some(ResearchAccessOutcome::Unavailable),
+        ] {
+            let mut state = ReplanResearchCheckpoint::new(
+                TaskStepId::from_bytes([1; 32]),
+                SnapshotId::from_bytes([2; 32]),
+                &TaskReplanReason::try_from_string("historical claim".to_owned())?,
+                "find original",
+            )?;
+            state.work =
+                state
+                    .work
+                    .with_restored_accesses(vec![a3_domain::ResearchAccessAttempt {
+                        question: ResearchQuestionId::FIRST,
+                        scope: ContentHash::from_bytes([2; 32]),
+                        key,
+                        kind: ResearchAccessKind::Inspect,
+                        starts: 1,
+                        outcome,
+                    }])?;
+            for id in [1, 2, 3] {
+                let action = AgentAction::Inspect(a3_domain::AgentInspectAction::new(
+                    a3_domain::AgentInspectTarget::Claim(a3_domain::ModuleCardClaimId::from_bytes(
+                        [id; 32],
+                    )),
+                ));
+                assert_eq!(
+                    state.validate_read(&action),
+                    Err(ReplanReadRejection::AmbiguousLegacyClaim)
+                );
+            }
+            for query in ["original", "caller", "callee"] {
+                let action = AgentAction::Search(a3_domain::AgentSearchAction::new(
+                    a3_domain::AgentSearchQuery::try_from_string(query.to_owned())?,
+                    a3_domain::AgentSearchLimit::new(5)?,
+                ));
+                assert!(state.permits(&action));
+                state.record_read(&action, true)?;
+            }
+            assert_eq!(state.reads(), 4);
+            assert_eq!(state.work.accesses()[0].key, key);
+            assert_eq!(state.work.accesses()[0].starts, 1);
+            assert!(!state.work.ready_to_finish());
+        }
+        Ok(())
+    }
+
     #[test]
     fn replan_reads_use_values_not_redacted_debug_lengths_and_keep_the_outer_limit()
     -> Result<(), Box<dyn std::error::Error>> {

@@ -930,6 +930,17 @@ Vier-Read-/Duplikatgrenze bleibt zusätzlich bestehen; fertige Replan-Untersuchu
 und normale Agentturns werden nicht erneut als Lokalisierung gefiltert. Zugelassene
 Lesevorschläge erben weder Faktenstatus noch Freigabe noch Implementierungsverifikation.
 
+Nach [ADR-0090](adrs/0090-wertgebundene-claim-leseidentitaeten.md) werden neue Claim-
+Inspektionen mit `a3.replan-claim-read.v2` aus der kanonischen binären Claim-ID
+abgeleitet, nicht aus deren redigierter Debug-Ausgabe. Andere Readschlüssel bleiben
+unverändert. Enthält ein altes Checkpoint den früheren konstanten Claim-Schlüssel,
+ist dessen tatsächliches Ziel nicht mehr rekonstruierbar. Alle weiteren Claim-
+Vorschläge bleiben dort als `AmbiguousLegacyClaim` gesperrt, der verbrauchte Readplatz
+bleibt erhalten. Der bestehende Einzelrepair darf einen anderen relevanten Readtyp
+anfordern; eine andere Claim-ID hebt die Sperre nicht auf. Budgeterschöpfung öffnet
+auch dafür keinen neuen Versuch. Neustart, Speicherung und Export erfinden weder
+die verlorene ID noch neue Kapazität und legen keine private ID im Fehlertext offen.
+
 Die feste Q1-Planbestandsaufnahme verwendet nach
 [ADR-0054](adrs/0054-vollstaendig-gelieferte-planbestandsaufnahme.md) ausschließlich
 bei nachweislich vollständig gelesenen **und aktuell vollständig als E-Fenster

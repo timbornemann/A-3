@@ -55,9 +55,12 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
       Primär-/Repair-/Wiederanlauf-Grenzen und vollständige lokale Gates bestehen.
       Luna ist live verifiziert; Granite wiederholt später erneut einen Read und
       Qwen scheitert vor der Mutation. Diese Modellabnahme bleibt gesondert offen.
-- [ ] Claim-Leseidentitäten von redigierter Debug-Darstellung lösen: unterschiedliche
-      `ModuleCardClaimId`-Werte haben derzeit denselben Replan-Accesskey. Alte
-      mehrdeutige Quittungen dürfen weder gelöscht noch als neuer Leseplatz behandelt werden.
+- [x] Claim-Leseidentitäten von redigierter Debug-Darstellung lösen: unterschiedliche
+      `ModuleCardClaimId`-Werte hatten denselben Replan-Accesskey. Alte
+      mehrdeutige Quittungen dürfen weder gelöscht noch als neuer Leseplatz behandelt werden
+      ([ADR-0090](../adrs/0090-wertgebundene-claim-leseidentitaeten.md)).
+      Rot→Grün, Legacy-/Reopen-/Einzelrepairtests und vollständige lokale Gates bestehen.
+      Luna erreicht live Done; die getrennten lokalen Implementierungsfehler bleiben offen.
 
 - [x] Ausgeführte Mutationen aus dauerhaftem Journal und Recovery-Attempt im
       nächsten normalen und Post-Mutations-Kontext rekonstruieren; Freshness,

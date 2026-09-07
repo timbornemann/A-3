@@ -1813,10 +1813,23 @@ mod tests {
             "public_note":{"goal":"Localize","finding_kind":"hypothesis","finding":"Source needed","finding_source_refs":[],"gap":"Cause","next_step":"Inspect"},
             "action":{"kind":"search","query":query,"limit":5}}).to_string()
         };
-        for (primary, correction, succeeds) in [
-            (read("controller"), read("serializer"), true),
-            (read("controller"), read("controller"), false),
-            ("invalid".to_owned(), read("controller"), false),
+        let claim = |id: &str| {
+            serde_json::json!({"schema_version":4,
+            "public_note":{"goal":"Localize","finding_kind":"hypothesis","finding":"Source needed","finding_source_refs":[],"gap":"Cause","next_step":"Inspect"},
+            "action":{"kind":"inspect","target":{"kind":"claim","claim_id":id}}}).to_string()
+        };
+        for (primary, correction, succeeds, legacy) in [
+            (read("controller"), read("serializer"), true, false),
+            (read("controller"), read("controller"), false, false),
+            ("invalid".to_owned(), read("controller"), false, false),
+            (claim(&"11".repeat(32)), read("serializer"), true, true),
+            (
+                claim(&"11".repeat(32)),
+                claim(&"22".repeat(32)),
+                false,
+                true,
+            ),
+            ("invalid".to_owned(), claim(&"22".repeat(32)), false, true),
         ] {
             let mut fixture = turn_fixture(vec![
                 provider_response(&primary)?,
@@ -1831,13 +1844,35 @@ mod tests {
                 &reason,
                 "preserve title",
             )?;
-            checkpoint.record_read(
-                &AgentAction::Search(AgentSearchAction::new(
-                    a3_domain::AgentSearchQuery::try_from_string("controller".to_owned())?,
-                    a3_domain::AgentSearchLimit::new(5)?,
-                )),
-                true,
-            )?;
+            if legacy {
+                let key = crate::replan_research::legacy_claim_read_key_v1();
+                let scope = a3_domain::ContentHash::from_bytes(*snapshot().as_bytes());
+                checkpoint.work.begin_access(
+                    a3_domain::ResearchQuestionId::FIRST,
+                    scope,
+                    key,
+                    a3_domain::ResearchAccessKind::Inspect,
+                )?;
+                checkpoint.work.finish_access(
+                    a3_domain::ResearchQuestionId::FIRST,
+                    scope,
+                    key,
+                    a3_domain::ResearchAccessOutcome::Completed,
+                )?;
+            } else {
+                checkpoint.record_read(
+                    &AgentAction::Search(AgentSearchAction::new(
+                        a3_domain::AgentSearchQuery::try_from_string("controller".to_owned())?,
+                        a3_domain::AgentSearchLimit::new(5)?,
+                    )),
+                    true,
+                )?;
+            }
+            let expected_code = if legacy {
+                "replan_claim_history_ambiguous"
+            } else {
+                "replan_read_repeated"
+            };
             let input = fixture
                 .input
                 .with_replan_localization(reason)
@@ -1872,11 +1907,17 @@ mod tests {
                 let requests = provider.requests.lock().map_err(|_| "requests")?;
                 let messages = requests[1].messages();
                 let feedback = messages.last().ok_or("repair feedback")?.content();
-                assert!(feedback.contains("replan_read_repeated"));
-                assert!(feedback.contains("different relevant search or inspect target"));
+                assert!(feedback.contains(expected_code));
+                assert!(feedback.contains(if legacy {
+                    "Do not request another claim ID"
+                } else {
+                    "different relevant search or inspect target"
+                }));
                 assert!(feedback.len() <= 512);
                 assert!(!feedback.contains("controller"));
                 assert!(!feedback.contains("serializer"));
+                assert!(!feedback.contains(&"11".repeat(32)));
+                assert!(!feedback.contains(&"22".repeat(32)));
                 assert_eq!(&messages[..messages.len() - 1], requests[0].messages());
                 assert_eq!(
                     requests[0].structured_output(),
@@ -1907,7 +1948,7 @@ mod tests {
                     else {
                         return Err("duplicate must remain a sole-repair admission failure".into());
                     };
-                    assert_eq!(failure.repair_code(), "replan_read_repeated");
+                    assert_eq!(failure.repair_code(), expected_code);
                 }
                 _ => return Err("incorrect duplicate-read recovery".into()),
             }

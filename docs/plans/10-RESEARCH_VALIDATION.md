@@ -1980,3 +1980,55 @@ Logs `replan-duplicate-repair-final-targeted.log`, `replan-duplicate-repair-clip
 und `replan-duplicate-repair-workspace.log`. Die finale Serie wurde nach der letzten
 Unit-Testergänzung vollständig neu gebaut und seriell geprüft. Keine plattformfremde
 oder allgemeine Modellabnahme wird daraus abgeleitet.
+
+### ADR-0090: Wertgebundene Claim-Leseidentitäten
+
+Der neue Regressionstest scheitert zunächst an zwei verschiedenen Claim-IDs mit
+demselben bisherigen Debug-basierten Hash (`replan-claim-key-red.log`). Neue
+Claim-Reads verwenden nun die kanonischen ID-Bytes in einer getrennten Hashdomäne.
+Vier verschiedene IDs sind vier echte Reads; dieselbe ID bleibt auch nach einem
+erfolglosen Read gesperrt. Andere Readschlüssel ändern sich nicht.
+
+Eine eingefrorene V1-Quittung prüft die verlorene historische Zielidentität unabhängig
+vom heutigen Debug-Format. Laufende, erfolgreiche und erfolglose alte Versuche behalten
+ihren Platz. Ein anderer Readtyp ist innerhalb des vorhandenen Limits möglich;
+eine weitere Claim-ID ist kein Umgehen der Mehrdeutigkeit. Der echte gemeinsame
+libSQL-Vertrag speichert die alte Quittung zusätzlich zu einem File-Read, öffnet einen
+weiteren Store und prüft beide Einschränkungen bei unverändertem Zähler zwei.
+Der erste neue Storage-Test vergaß den erforderlichen `begin_agent_tool_attempt`.
+Die korrekte Ablehnung wurde nicht gelockert; nach Vervollständigung des Test-Lifecycles
+besteht `replan-claim-key-storage-corrected.log`. Die früheren Fehlberichte bleiben erhalten.
+
+Primär-/Repairtests prüfen Legacy-Claim→Search, Legacy-Claim→andere Claim-ID und
+Strukturfehler→Legacy-Claim: jeweils genau ein Repair, höchstens ein tatsächlich
+zugelassener Toolaufruf, keine dritte Modellantwort und keine privaten IDs im Hinweis.
+Die gezielte Replan-Serie steht in `replan-claim-key-targeted.log`.
+
+Eingefrorenes Binary `replan-claim-key-20260907/agent-tests.exe`, SHA-256
+`1902d805aa6f0bd7343efa8ee4d17e026b17c59e3d08e6d99c944123c4120d01`.
+Es enthält den finalen Produktionscode; danach wurde nur der Storage-Testaufbau korrigiert.
+
+| Modell | Dauer | Tatsächliches Ergebnis |
+| --- | --- | --- |
+| Luna | 13,31 s | Done 21, Test Exit 0, Completed/verified, unabhängige Prüfung grün |
+| Granite 8B | 22,98 s | Zwei Tests Exit 1, WrongDecision nach Replan-Einzelrepair, Failed 23 |
+| Qwen 8k | 39,77 s | TargetAlreadyExists nach Einzelrepair, Failed 6 |
+
+Lokale Modelle liefen nacheinander. Geschützte Dateien sind bytegleich; Luna bestätigt
+zusätzlich unveränderte native Settings. Diese Coding-Fixture enthält keinen
+nachgewiesenen Claim-Read: Sie prüft mögliche Nebenwirkungen, nicht die Claim-Korrektur
+selbst. Die beiden lokalen Implementierungsfehler bleiben offen.
+
+SHA-256 im selben Verzeichnis:
+
+- `luna-live.log`: `cfd83950ebe92d2d32c79363bb7f170efbc2f17c0fbfac5748e73308a2f1d6f6`
+- `granite-live.log`: `dcc259a11807f584ac6da0ca7f274d1a745031b9800f139fc6aab1fe76722fe4`
+- `qwen-live.log`: `9a50a1abe45d73aae722d3847569c191dcfc4b9daf9dd602a05c066f4a8be0b6`
+
+Finale Gates bestanden: `cargo fmt --all --check`, `cargo clippy --workspace
+--all-targets --all-features --offline --locked --jobs 2 -- -D warnings` und
+`cargo test --workspace --all-features --offline --locked --jobs 2 -- --test-threads=1`.
+Clippy und Tests enden jeweils mit Exit 0 (`replan-claim-key-clippy.log`,
+`replan-claim-key-workspace.log`), einschließlich des echten Storage-Vertrags.
+Lokale Markdown-Links und `git diff --check` bestehen ebenfalls. Keine neue
+Abhängigkeit, Migration, Profiländerung oder zusätzliche Reparaturrunde.
