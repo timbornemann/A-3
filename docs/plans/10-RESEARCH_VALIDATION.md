@@ -2297,3 +2297,83 @@ SHA-256 der Logs im selben Verzeichnis:
 - `ornith-live.log`: `57b712535f2ac9fef088f140d9abad81d177099bef37fcfefc3ff90262f6a570`
 - `qwen-live.log`: `cb6d011040d3f55a1a2f6c0f406efc7795ce596b7e830cdb4e691241f1f4440b`
 - `qwen-live-2.log`: `a2b011d7c3aadf1149a9657fbd5b63aa0f0d22ec370c710af8dadc1b53f5a30a`
+
+### Kontrollierter nicht ausführender Vergleich der Agent-Aktionsform
+
+Der neue opt-in Wirevergleich verwendet ausschließlich öffentliche Konstanten:
+eine vorhandene zweizeilige `increment.py`, tatsächlicher BLAKE3-Hash, feste
+gültige Identitäten und das bekannte Sollverhalten. Derselbe 832-Byte-Auftrag
+und dieselben beiden Nachrichten werden für beide Formen verwendet. Normale
+Agent-Kontextpakete und wiederholtes Prompt-Schema werden hier bewusst nicht
+simuliert. Der bestehende volle V5-Aktionsumfang einschließlich aller vier
+Patchoperationen bleibt in beiden Schemaformen erhalten. Identitäten werden in
+beiden gleich eingeschränkt; weder Update noch überhaupt ein Patch wird erzwungen.
+
+Die experimentelle Form verlagert nur Aktions- und Operationsparameter unter
+`parameters`, nach dem gemeinsamen `kind`. Der Produktionsvertrag bleibt unverändert.
+Eine ausschließlich testlokale strikte Entpackung weist gemischte/zusätzliche
+Umschläge zurück; anschließend prüft der bestehende vollständige V5-Decoder.
+Kein normalisiertes Dokument erreicht einen Executor, Freigabepfad oder Prozess.
+`current_in_place_update` verlangt Update, genau eine Operation, korrekten Pfad,
+Hash und alle aktuellen Identitäten; es beweist ausdrücklich nicht die Semantik
+des neuen Inhalts oder erfolgreiche Implementierung. Rohantworten werden nicht geloggt.
+
+Die Sequenz ist AB/BA/AB mit sechs Vergleichsaufrufen nach der vorhandenen
+Fähigkeitsprüfung, ohne Retry/Repair. Ein Modell läuft höchstens 300 s, jeder
+Aufruf hat 30 s Providertimeout und 35 s äußere besitzende Deadline; das maximale
+gesammelte Ergebnis beträgt 16 KiB. Lokale Modelle liefen nacheinander. Ein
+bestandener Diagnosetest bedeutet vollständige Beobachtung, nicht Modell- oder
+Task-Erfolg. Der finale Logmarker stellt diese Trennung ausdrücklich klar.
+
+Die Schema-/Entpackungs-/Redaktionsprüfungen einschließlich aller Patchoperationen
+bestehen (`agent-action-shape-final-targeted.log`). Gegenüber dem flachen Schema
+mit 6.393 Bytes benötigt die verschachtelte Form 7.876 Bytes. Keines der Profile
+wurde dafür vergrößert. Der initiale Stand besteht vollständiges Clippy und die
+Workspace-Suite (`agent-action-shape-clippy.log`, `agent-action-shape-workspace.log`).
+
+Eingefrorenes Binary `agent-action-shape-20260907/agent-tests.exe`, SHA-256
+`bb1825838fb1b9d334b90d940d644cc1f268225824bbd6539cec6fc9f5780f43`.
+
+| Modell | Flach | Kind zuerst | Beobachtung |
+| --- | --- | --- | --- |
+| Luna | 3/3 aktuelle Updates | 3/3 aktuelle Updates | Reguläres Stop, strikter V5-Decode nach jeweiliger Entpackung |
+| Ornith | 3/3 aktuelle Updates | 3/3 aktuelle Updates | Reguläres Stop, gleiche beschränkte Aktionsmetrik |
+| Qwen | 3/3 Provider-/Ausgabegrenzfehler | 3/3 Provider-/Ausgabegrenzfehler | Kein auswertbares vollständiges Dokument |
+
+Gesamtdauern der Testprozesse einschließlich Probe: Luna 20,70 s, Ornith 44,65 s,
+Qwen 20,02 s. Die drei Beobachtungen je Form erlauben keine allgemeine
+Zuverlässigkeitsgarantie. Dieser Vergleich liefert insbesondere **keinen** Nachweis,
+dass ein größerer Kind-zuerst-Vertrag die Fehler des echten Agenten behebt. Deshalb
+wird weder ein produktives AgentAction V6 noch eine großzügigere Zulassung eingeführt.
+
+SHA-256 der initialen Logs im selben Verzeichnis:
+
+- `luna-wire.log`: `513171df391ebd35e724571c89f3b2aeb7262cf2a885bd439e36c30093edfd3b`
+- `ornith-wire.log`: `11bdf1efa86a8cb79f6bac14a03bfe02642c3efc1bd33673a428c638dcd90143`
+- `qwen-wire.log`: `5866f1895159e7a01fb0eb6d63fe81ba11431a5ec1c49abe18488210a52a1d83`
+
+Weil die initiale Probe den Qwen-Fehler zu grob zusammenfasste, wurde die Diagnose
+um geschlossene Provider-/Ausgabebound-Codes ergänzt. Der gezielte finale Test
+besteht (`agent-action-shape-classified-targeted.log`). Derselbe Qwen-Vergleich
+bestätigt in allen sechs Aufrufen konkret `provider_InvalidResponse`, ohne
+verwertbares Dokument; kein Timeout oder Kontextlimit ist damit bewiesen.
+Das operative Ollama-Kontextminimum beträgt 16.384, begrenzt durch das Profil:
+Qwens 8.192 werden in diesem Pfad also nicht auf 4.096 verkleinert.
+
+Finales Binary `agent-action-shape-classified-20260907/agent-tests.exe`, SHA-256
+`375ddd8079d94fe09065498e31384d0a4c7ad6154efaa266f9e17353dda61859`;
+Qwen-Nachtest 25,29 s, Log `qwen-wire.log` im selben Verzeichnis, SHA-256
+`26694ad8ce129822775dfc5dbc616d3384419083274b1251fd37ceeb3c63c6eb`.
+
+Auch der abschließend klassifizierte Stand besteht Formatierung, vollständiges
+Workspace-Clippy mit `-D warnings` und die gesamte Workspace-Testsuite, jeweils
+`--all-features --offline --locked --jobs 2`, Tests zusätzlich `--test-threads=1`.
+Logs `agent-action-shape-classified-clippy.log` und
+`agent-action-shape-classified-workspace.log`, Exit 0. Link- und Diff-Prüfung bestehen.
+
+Nächster Untersuchungsgegenstand ist die Quelle des InvalidResponse und der
+Unterschied zum produktiven Kontext. `render_lens_entry` liefert für File/Span
+lediglich Pfad, Hash und Range, `render_symbol` Signaturen: solche Metadaten
+ersetzen keine Originalbytes. Die Toy-Fixture liefert dagegen den ganzen
+Funktionskörper. Dieser Unterschied ist belegt, aber allein noch kein kausaler
+Nachweis für die im echten Agenten beobachtete falsche Patchwahl.

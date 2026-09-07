@@ -1,4 +1,6 @@
 //! Explicitly opted-in model smoke. No desktop configuration or original repository is changed.
+#[path = "agent_action_wire_probe.rs"]
+mod action_wire_probe;
 #[path = "agent_live_coding_fixture.rs"]
 mod coding;
 

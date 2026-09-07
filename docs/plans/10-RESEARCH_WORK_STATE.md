@@ -40,6 +40,15 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Falsche Aktions-/Patchwahl anhand eines öffentlichen, nicht ausführenden
+      Wirevergleichs von flachen und Kind-zuerst-Umschlägen untersuchen. Identische
+      Auswahl und Anker, begrenzte gegenbalancierte Aufrufe, keine Repairs oder
+      Änderung des produktiven AgentAction-Vertrags ohne eigene Entscheidung.
+      Vollständige Gates und Vergleich bestehen: Luna/Ornith je 3/3 Updates in
+      beiden Formen, Qwen je 3/3 InvalidResponse. Kein Beleg für einen pauschalen
+      produktiven Schema-Umbau; Quelle des Providerfehlers und Originalversorgung
+      im echten Kontext bleiben getrennte nächste Untersuchungen.
+
 - [x] Live-Coding-Berichte um begrenzte dauerhafte Mutationsquittungen, aktiven
       Schritt, physische Änderungsbits und die betroffene Einzelrepairphase erweitern.
       Prozessanwendung darf nicht als Test- oder Patch-Erfolg erscheinen. Danach
