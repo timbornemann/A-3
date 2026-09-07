@@ -190,11 +190,16 @@ impl AgentPromptContract {
             .token_counting()
             .count_text(system)
             .map_err(AgentPromptPrepareError::TokenCount)?;
-        let schema = crate::research_work_phase_schema(
+        let mut schema = crate::research_work_phase_schema(
             crate::ResearchOutputPhase::Analyze(a3_domain::ResearchQuestionId::FIRST),
             false,
         )
         .map_err(|_| AgentPromptPrepareError::SchemaEncoding)?;
+        // The shared Ask/Plan phase permits consequential questions; this owned
+        // replan phase already rejects them independently in replan_analysis::admit.
+        schema["properties"]["decision"] = serde_json::json!({"$ref":"#/$defs/progress"});
+        crate::schema_projection::prune_definitions(&mut schema)
+            .ok_or(AgentPromptPrepareError::SchemaEncoding)?;
         prepared.schema_grounding = if profile.settings().schema_grounding()
             == ModelPromptSchemaGrounding::RepeatSchemaInPrompt
         {
@@ -700,6 +705,72 @@ mod tests {
                 repeated.is_some(),
                 grounding == ModelPromptSchemaGrounding::RepeatSchemaInPrompt
             );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn replan_analysis_schema_matches_progress_only_admission_without_removing_other_questions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for grounding in [
+            ModelPromptSchemaGrounding::FormatFieldOnly,
+            ModelPromptSchemaGrounding::RepeatSchemaInPrompt,
+        ] {
+            let prepared = AgentPromptContract::current().prepare_replan_analysis(&profile(
+                ModelStructuredOutputCapability::Verified,
+                grounding,
+            )?)?;
+            let schema = prepared.structured_output().value();
+            println!(
+                "A3_REPLAN_ANALYSIS_SCHEMA bytes={}",
+                schema.to_string().len()
+            );
+            assert_eq!(schema["properties"]["schema_version"]["const"], 5);
+            assert_eq!(
+                schema["properties"]["decision"],
+                serde_json::json!({"$ref":"#/$defs/progress"}),
+                "the schema must not offer decisions the replan controller rejects"
+            );
+            for forbidden in ["questionDecision", "planDecision", "research", "applyPatch"] {
+                assert!(schema["$defs"].get(forbidden).is_none());
+            }
+            assert_eq!(
+                schema["$defs"]["progress"]["properties"]["kind"]["const"],
+                "progress"
+            );
+            assert_eq!(
+                schema["$defs"]["result"]["properties"]["question_id"]["const"],
+                1
+            );
+            assert_eq!(
+                schema["$defs"]["result"]["properties"]["kind"]["const"],
+                "interpretation"
+            );
+            let results = &schema["$defs"]["work"]["properties"]["results"];
+            assert_eq!(results["maxItems"], 1);
+            assert!(results["minItems"].as_u64().unwrap_or(0) == 0);
+            assert_eq!(
+                prepared.schema_grounding_message().is_some(),
+                grounding == ModelPromptSchemaGrounding::RepeatSchemaInPrompt
+            );
+            if let Some(message) = prepared.schema_grounding_message() {
+                let grounded = message
+                    .content()
+                    .strip_prefix("Research V5 JSON Schema: ")
+                    .ok_or("grounding")?;
+                assert_eq!(
+                    &serde_json::from_str::<serde_json::Value>(grounded)?,
+                    schema
+                );
+            }
+        }
+        for phase in [
+            crate::ResearchOutputPhase::Analyze(a3_domain::ResearchQuestionId::FIRST),
+            crate::ResearchOutputPhase::Design(a3_domain::ResearchQuestionId::FIRST),
+        ] {
+            let schema = crate::research_work_phase_schema(phase, false)?;
+            assert!(schema["properties"]["decision"]["oneOf"].is_array());
+            assert!(schema["$defs"].get("questionDecision").is_some());
         }
         Ok(())
     }

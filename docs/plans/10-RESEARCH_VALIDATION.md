@@ -2032,3 +2032,72 @@ Clippy und Tests enden jeweils mit Exit 0 (`replan-claim-key-clippy.log`,
 `replan-claim-key-workspace.log`), einschließlich des echten Storage-Vertrags.
 Lokale Markdown-Links und `git diff --check` bestehen ebenfalls. Keine neue
 Abhängigkeit, Migration, Profiländerung oder zusätzliche Reparaturrunde.
+
+### Replan-Schema ohne anschließend verbotene Nutzerfragen
+
+Nach ADR-0090 lieferte Granite `WrongDecision`. Die separate Codeprüfung belegt:
+`prepare_replan_analysis` verbietet Nutzerfragen im Systemtext, verwendet aber das
+allgemeine V5-Analyze-Schema mit `questionDecision`, den `replan_analysis::admit`
+anschließend unabhängig abweist. Die konkrete damalige Modellentscheidung wurde
+nicht aufgezeichnet; sie wird deshalb nicht rückwirkend als Nutzerfrage ausgegeben.
+
+Der neue Test ist zunächst rot (`replan-analysis-schema-red.log`). Nur der aktuelle
+Replan-Request beschränkt jetzt `decision` auf Progress und entfernt unbenutzte
+Definitionen. Die unveränderten allgemeinen Analyze-/Design-Schemata behalten echte
+Nutzerfragen. Das kanonische Replan-Schema sinkt von 2.215 auf 1.923 UTF-8-Bytes;
+dies ist eine Größenmessung derselben Fixture, kein Geschwindigkeitsnachweis.
+Ein leeres Ergebnis bei fehlenden Originalen kann weiterhin nicht abschließen.
+
+Die gezielte Serie besteht: 14 Application-, drei Context-, drei Desktop-, ein Domain-,
+ein echter Gemini-HTTP- und ein libSQL-Migrationstest. Der neue HTTP-Vertrag besitzt
+beide Futures mit fünf Sekunden Deadline und bestätigt, dass der unzulässige Frage-Arm
+auch nach Providerübersetzung fehlt. Der echte Context-Compile erhält dieselbe
+Projektion, Originalfenster, Tokenabrechnung und deterministischen Digest.
+Der Turnvertrag liefert absichtlich eine im allgemeinen Ask gültige Frage trotz engerem
+Replan-Schema: einmalige Korrektur oder terminale Ablehnung, null Toolwirkung, kein
+Rohtext im Feedback. Die bisherigen Quellen- und Leerergebnisfälle bleiben bestehen.
+
+Der erste umfassendere Build scheiterte an einem neuen Context-Test, der direkt ein
+Macro einer dort nicht vorhandenen Abhängigkeit verwendete. Nach Prüfung über die
+bereits vorhandene Value-API besteht `replan-analysis-schema-final-targeted.log`.
+Keine Abhängigkeit wurde ergänzt. Danach bestehen erneut Formatierung, vollständiges
+Workspace-Clippy mit `-D warnings` und die gesamte Workspace-Testsuite, jeweils mit
+`--all-features --offline --locked --jobs 2`, Tests seriell mit `--test-threads=1`.
+Logs: `replan-analysis-schema-clippy.log`, `replan-analysis-schema-workspace.log`.
+Lokale Markdown-Link- und Diff-Prüfungen bestehen ebenfalls.
+
+Eingefrorenes Binary `replan-analysis-schema-20260907/agent-tests.exe`, SHA-256
+`4d5f7ef371534236dd0585cf29e87a8fd9af981589979380e38de1c486e97d72`.
+
+| Modell | Dauer | Tatsächliches Coding-Ergebnis |
+| --- | --- | --- |
+| Luna | 16,21 s | Done 23, Test Exit 0, Completed/verified, unabhängige Prüfung grün |
+| Google Gemma | 14,97 s | ModelFailed(Unavailable), Failed 16 |
+| Granite 8B | 27,64 s | Zwei Tests Exit 1, RepeatedReplanRead nach Einzelrepair, Failed 26 |
+| Ornith 9B | 26,98 s | Test Exit 1, SameMovePath nach Einzelrepair, Failed 12 |
+| GPT-OSS 20B | 21,28 s | Test Exit 1, ModelFailed(InvalidResponse), Failed 12 |
+| Qwen 8k | 38,37 s | TargetAlreadyExists nach Einzelrepair, Failed 6 |
+
+Alle lokalen Modelle liefen nacheinander. Geschützte Dateien bleiben bytegleich;
+Luna bestätigt zusätzlich unveränderte native Settings. Andere terminale Pfade sind
+weder Implementierungserfolg noch Ursachenbeweis für die früheren Modellfehler.
+
+SHA-256 der Logs im selben Verzeichnis:
+
+- `luna-live.log`: `1a25230c80d3ced8a0386f5a9ff7f628c1f176da3b8b339b835aed9647405400`
+- `google-live.log`: `61f91f7e19bcf4589f8703a02988dc6c5eba4c789dc7c36a47b0b4433a68c4fe`
+- `granite-live.log`: `35a6252f27478e8c4f3488fed59b9dcca6d4350d1e1eb1822599f98c5f991bd9`
+- `ornith-live.log`: `ddeabd813605949b213ad631cb2143fa751083aacb1bea447ab3b5960d089042`
+- `gpt-oss-live.log`: `8ccce5d9e07fa7255d79b096690d412904e1de10b39c32ca34b9671d0baf0672`
+- `qwen-live.log`: `0fb766a7f216c01d9798432c168f146abc709c8dc80126b4701d6261245b2a4b`
+
+Die vollständige Luna-Research-Matrix endet nach 159,44 s mit zwölf abgeschlossenen,
+arbeitsstandbereiten Fällen ohne Nutzerhalt oder adaptive Reads. Rubrik v3 besteht
+10/12; in Audit 1:1 und 1:2 fehlt weiterhin `write`. Die Sichtprüfung bestätigt in
+1:2 erneut die falsche Gleichsetzung von Writer und `open`-Kontextmanager, in 1:1
+die nicht durch den Callee belegte Speicherung der Aufgaben. Die Fragen und Originale
+blieben unverändert. Dieser Inhaltsbefund wird nicht durch den Ablaufabschluss ersetzt.
+Bericht `eval-1788799066038.jsonl`, SHA-256
+`59feb56047e7673d35306257a6008cfc329feb5681339f9dd5a9879d9f513200`;
+Log `replan-analysis-schema-20260907/luna-research-matrix.log`, SHA-256
+`397a8c1469814acd74a5f6c098d278e09062fda073b9ba58bb8415462a692078`.

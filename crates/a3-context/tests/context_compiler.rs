@@ -150,6 +150,17 @@ fn replan_shared_analysis_packs_actual_originals_and_v5_without_mutation_schema(
             pages: vec![page],
         })?;
     let compiled = block_on(compiler.compile(&input, &RecordingControl::default()))?;
+    let schema = compiled
+        .request()
+        .structured_output()
+        .ok_or("schema")?
+        .value();
+    let decision = schema["properties"]["decision"]
+        .as_object()
+        .ok_or("decision")?;
+    assert_eq!(decision.len(), 1);
+    assert_eq!(decision["$ref"], "#/$defs/progress");
+    assert!(schema["$defs"].get("questionDecision").is_none());
     assert_eq!(
         compiled
             .request()

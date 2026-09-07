@@ -2283,20 +2283,49 @@ mod tests {
             AgentFileStartLine, ContentHash, FileRevision, RepositoryPath, ResearchResultKind,
             SourcePosition, SourceRange,
         };
-        for (valid, null_result, corrected) in [
-            (true, false, false),
-            (true, true, false),
-            (false, false, false),
-            (false, false, true),
+        for (valid, null_result, corrected, question) in [
+            (true, false, false, false),
+            (true, true, false, false),
+            (false, false, false, false),
+            (false, false, true, false),
+            (false, false, false, true),
+            (false, false, true, true),
         ] {
-            let raw = serde_json::json!({"schema_version":5,
+            let document = serde_json::json!({"schema_version":5,
                 "decision":{"kind":"progress","note":{"goal":"Cause","finding_kind":"hypothesis","finding":"Current evidence","finding_source_refs":[],"gap":"Check serializer","next_step":"Resolve cause"}},
-                "work":{"questions":[],"results":if null_result { serde_json::json!([]) } else { serde_json::json!([{"question_id":1,"kind":"interpretation","text":"The serializer drops the title; preserve it and verify a round trip.","evidence":[{"anchor_ref":if valid {"E1"} else {"E8"}}]}]) }}}).to_string();
+                "work":{"questions":[],"results":if null_result { serde_json::json!([]) } else { serde_json::json!([{"question_id":1,"kind":"interpretation","text":"The serializer drops the title; preserve it and verify a round trip.","evidence":[{"anchor_ref":if valid {"E1"} else {"E8"}}]}]) }}});
+            let raw = if question {
+                let mut asked = document.clone();
+                asked["decision"]["kind"] = serde_json::json!("question");
+                asked["decision"]["message"] =
+                    serde_json::json!("Please confirm the private serializer choice");
+                asked["work"]["results"] = serde_json::json!([]);
+                // A valid shared Ask/Plan question must still be rejected by Replan,
+                // even when a provider ignores the narrowed phase schema.
+                assert!(
+                    crate::DecodeAskResearchDecision
+                        .decode_phase(
+                            &asked.to_string(),
+                            crate::ResearchOutputPhase::Analyze(
+                                a3_domain::ResearchQuestionId::FIRST
+                            )
+                        )
+                        .is_ok()
+                );
+                asked.to_string()
+            } else {
+                document.to_string()
+            };
+            let failure = if question {
+                "WrongDecision"
+            } else {
+                "Admission(UndeliveredQuote)"
+            };
             let mut fixture = turn_fixture(if valid {
                 vec![provider_response(&raw)?]
             } else {
                 let repair = if corrected {
-                    raw.replace("E8", "E1")
+                    document.to_string().replace("E8", "E1")
                 } else {
                     raw.clone()
                 };
@@ -2367,11 +2396,12 @@ mod tests {
                 let messages = requests[1].messages();
                 assert_eq!(&messages[..messages.len() - 1], requests[0].messages());
                 let feedback = messages.last().ok_or("repair feedback")?.content();
-                assert!(feedback.contains("Admission(UndeliveredQuote)"));
+                assert!(feedback.contains(failure));
                 assert!(feedback.len() <= 512);
                 assert!(!feedback.contains("serializer.py"));
                 assert!(!feedback.contains("E8"));
                 assert!(!feedback.contains("return 0"));
+                assert!(!feedback.contains("private serializer choice"));
             }
             assert!(
                 checkpoint.work.questions()[0].attempts().is_empty(),
@@ -2397,7 +2427,7 @@ mod tests {
                 AgentTurnOutcome::Rejected(rejected) if !valid => {
                     assert_eq!(
                         format!("{:?}", rejected.reason()),
-                        "InvalidReplanAnalysisAfterRepair(Admission(UndeliveredQuote))",
+                        format!("InvalidReplanAnalysisAfterRepair({failure})"),
                         "replan must retain the actual content-free admission failure"
                     );
                 }

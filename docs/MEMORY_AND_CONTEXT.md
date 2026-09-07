@@ -905,6 +905,14 @@ erneute automatische Replan-Kette eröffnen; der Core prüft dafür die dauerhaf
 begrenzt und cancellation-fähig. Es entsteht kein zweiter mutierender Controller.
 Abnahmeumfang und noch offene Schnitte stehen in [Plan 10](plans/10-RESEARCH_WORK_STATE.md).
 
+Das Replan-Analyseschema bietet nur `decision.kind=progress` an und entfernt den
+hier unerreichbaren Nutzerfrage-Arm samt Definitionen. Primärantwort und Einzelrepair
+verwenden dieselbe Projektion, auch bei wiederholtem Schema im Prompt. Der unabhängige
+Core weist eine trotzdem gelieferte Frage weiterhin zurück. Die allgemeinen V5-
+Ask-/Plan-Phasen behalten ihre Nutzerfragen für tatsächlich fehlende Entscheidungen.
+Fehlende Originalbelege dürfen im Replan weiterhin ein leeres, nicht abschließendes
+Ergebnis erzeugen; die Schemaeingrenzung erfindet weder eine Ursache noch Fakten.
+
 Die Replan-Analyse erhält im einzigen Repair die konkrete inhaltsfreie Fehlerklasse
 aus dem strikten Decoder beziehungsweise der Originalzulassung. JSON-/Feldfehler,
 unzulässige Entscheidungen, Packetzustand und nicht ausgelieferte Quellen werden

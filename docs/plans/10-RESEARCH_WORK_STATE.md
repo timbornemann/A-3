@@ -40,6 +40,16 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Replan-Analyseschema an die bereits erzwungene reine V5-Progress-Zulassung
+      angleichen: keine dort anschließend verbotene Nutzerfrage anbieten. Normale
+      Ask-/Plan-Fragen, Einzelrepair, Originalpflichten und fehlende Belege erhalten.
+      Schema-/Context-/Turnregressionen, vollständige Gates und unveränderte Lives prüfen.
+      Das korrigiert den bestehenden ADR-0048-Vertrag, ohne eine neue Entscheidung,
+      Version, Storage-Migration oder neue Budget-/Berechtigungsgrenze einzuführen.
+      Rot→Grün, echter HTTP-/Context-/Turnvertrag und vollständige lokale Gates bestehen.
+      Alle sechs Modelle nachgetestet; nur Luna besteht die Coding-Fixture. Seine
+      Ask-/Plan-Matrix endet 12/12, die Inhaltsrubrik bleibt bei 10/12 offen.
+
 - [x] Replan-Analysefehler nicht mehr zu einem unbestimmten Leerwert reduzieren:
       bestehende Decoder-/Belegfehler inhaltsfrei klassifizieren und im einzigen
       Repair konkret zurückmelden; keine Rohantwort, neue Freigabe oder zusätzliche
