@@ -266,7 +266,7 @@ impl AgentTurnOutcome {
                     AgentTurnRejectionReason::InvalidAfterRepair
                     | AgentTurnRejectionReason::InvalidActionAfterRepair(_)
                     | AgentTurnRejectionReason::InvalidReplanAnalysisAfterRepair(_)
-                    | AgentTurnRejectionReason::IncompleteModelOutput => {
+                    | AgentTurnRejectionReason::IncompleteModelOutput(_) => {
                         (RunEventCode::InvalidModelOutput, RunEventOutcome::Failed)
                     }
                     AgentTurnRejectionReason::StepMismatch => {
@@ -330,7 +330,7 @@ pub enum AgentTurnRejectionReason {
     /// The sole replan analysis repair failed with a content-free admission classification.
     InvalidReplanAnalysisAfterRepair(crate::ReplanAnalysisFailure),
     /// Provider did not report a normal stop, so potentially incomplete JSON was never decoded.
-    IncompleteModelOutput,
+    IncompleteModelOutput(ModelFinishReason),
     /// A Ledger update named a step other than the current anchored step.
     StepMismatch,
     /// Cancellation arrived after generation and before action execution.
@@ -802,7 +802,7 @@ impl CompletedModelRequest {
             .map(AgentTurnRejectionReason::ModelFailed)
             .or_else(|| {
                 (self.reason != ModelFinishReason::Stop)
-                    .then_some(AgentTurnRejectionReason::IncompleteModelOutput)
+                    .then_some(AgentTurnRejectionReason::IncompleteModelOutput(self.reason))
             })
     }
 }
@@ -1557,6 +1557,65 @@ mod tests {
             assert_eq!(fixture.run.usage().action_count(), 0);
             assert_eq!(fixture.run.usage().repair_count(), 1);
             assert_eq!(event.payload().code(), RunEventCode::InvalidModelOutput);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn non_stop_model_output_retains_termination_without_executing_complete_looking_json()
+    -> Result<(), Box<dyn Error>> {
+        for reason in [ModelFinishReason::OutputLimit, ModelFinishReason::Other] {
+            for during_repair in [false, true] {
+                let raw = r#"{"schema_version":5,"action":{"kind":"search","query":"private fixture query","limit":5}}"#;
+                let mut events = provider_response(raw)?;
+                *events.last_mut().ok_or("completion")? =
+                    ProviderEvent::Completed(crate::ModelProviderCompletion::new(
+                        reason,
+                        crate::ModelProviderUsage::new(Some(100), Some(10)),
+                    ));
+                let mut responses = Vec::new();
+                if during_repair {
+                    responses.push(provider_response("invalid")?);
+                }
+                responses.push(events);
+                responses.push(provider_response("must not be used")?);
+                let mut fixture = turn_fixture(responses)?;
+                let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
+                let provider = ScriptedProvider {
+                    provider_id: fixture.profile.provider_id().clone(),
+                    responses: Mutex::new(fixture.responses),
+                };
+                let tools = CountingReadTools {
+                    calls: AtomicUsize::new(0),
+                };
+                let recovery = TestRecoveryStore::default();
+                let outcome = futures::executor::block_on(
+                    ExecuteAgentTurn::new(&compiler, &provider, &tools, &recovery).execute(
+                        &fixture.run,
+                        &fixture.input,
+                        timestamp(5)?,
+                        &TestControl,
+                    ),
+                )?;
+                let event = outcome.record(&mut fixture.run, event_id(20), timestamp(5)?)?;
+                let AgentTurnOutcome::Rejected(rejected) = outcome else {
+                    return Err("non-stop completion cannot execute an action".into());
+                };
+                assert_eq!(
+                    format!("{:?}", rejected.reason()),
+                    format!("IncompleteModelOutput({reason:?})")
+                );
+                assert_eq!(event.payload().code(), RunEventCode::InvalidModelOutput);
+                assert_eq!(fixture.run.usage().turn_count(), 1);
+                assert_eq!(fixture.run.usage().action_count(), 0);
+                assert_eq!(fixture.run.usage().repair_count(), u32::from(during_repair));
+                assert!(fixture.run.usage().prompt_tokens() >= 100);
+                assert!(fixture.run.usage().output_tokens() >= 10);
+                assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
+                assert_eq!(recovery.begins.load(Ordering::SeqCst), 0);
+                assert_eq!(provider.responses.lock().map_err(|_| "responses")?.len(), 1);
+                assert!(!format!("{:?}", rejected.reason()).contains("private fixture query"));
+            }
         }
         Ok(())
     }

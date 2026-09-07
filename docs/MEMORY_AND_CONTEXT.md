@@ -352,6 +352,13 @@ Er enthält keine Rohantwort, Pfade oder Dateiinhalte, bleibt insgesamt innerhal
 512 Bytes und ändert weder Operationsart noch Modellwerte automatisch. Auch eine
 danach zulässige Patchaktion benötigt weiterhin die normale Vorschau und Freigabe.
 
+Eine nicht regulär beendete Agentantwort behält in der inhaltsfreien Ablehnungsursache
+den bereits normalisierten Providergrund `OutputLimit` oder `Other`. Scheinbar
+vollständiges JSON aus einem solchen Abschluss wird weder primär noch im Repair
+ausgeführt. Die Turnabrechnung und der bestehende redigierte `InvalidModelOutput`-
+Journalevent bleiben unverändert; aus dem Grund wird keine zusätzliche Wiederholung
+oder private Diagnose abgeleitet.
+
 Neue normale Agentturns verwenden nach
 [ADR-0087](adrs/0087-agentaktionen-ohne-modellstatusnotiz.md) das AgentAction-V5-
 Schema ohne modellgenerierten Statusblock. Das ausführbare Aktionsschema bleibt

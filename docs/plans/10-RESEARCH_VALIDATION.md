@@ -2155,3 +2155,42 @@ SHA-256 der Logs im selben Verzeichnis:
 - `qwen-live-3.log`: `d8625463ae4cd6752401f6ab00cb327307ea393032a7f5fa42135c4039fdeec2`
 - `ornith-live.log`: `199d8ad581b4af01d030b70f10150dfa04bd966d7b1f9766c3158136407625d0`
 - `luna-live.log`: `09e26dcd8f3ff6c59daadcb74c3734b965d445fc98e0f74dc85ea2b0cafc8fec`
+
+### Geschlossener Beendigungsgrund statt ununterscheidbarem Modellabbruch
+
+`IncompleteModelOutput` behält jetzt den bereits normalisierten Providergrund
+`OutputLimit` beziehungsweise `Other`. Keine Ausführungs-, Reparatur- oder
+Budgetregel wurde geändert. Der Regressionstest ist zunächst rot
+(`model-output-termination-red.log`), danach grün (`model-output-termination-targeted.log`).
+Er prüft beide Gründe im Primär- und Repairrequest, auch bei vollständig aussehendem
+Aktions-JSON: keine Toolwirkung, keine Recoveryanlage, keine weitere Antwort,
+unveränderte Abrechnung und redigierter Journalevent. Private Querybytes bleiben
+außerhalb der Fehlerdiagnose.
+
+Formatierung, Workspace-Clippy mit `-D warnings` und die vollständige Testsuite
+bestehen mit `--all-features --offline --locked --jobs 2`, Tests zusätzlich seriell
+mit `--test-threads=1`. Logs: `model-output-termination-clippy.log` und
+`model-output-termination-workspace.log`, Exit 0. Link- und Diff-Prüfung bestehen.
+
+Eingefrorenes Binary `model-output-termination-20260907/agent-tests.exe`, SHA-256
+`763e9410e4b16b0d42a4d51ac9b1862f821b499e4b9c3cfda24a99892f0f3e1d`.
+
+| Modell / Lauf | Dauer | Tatsächliches Coding-Ergebnis |
+| --- | --- | --- |
+| Qwen 8k / 1 | 94,54 s | InvalidValue nach Einzelrepair, Failed 21, unabhängig rot |
+| Qwen 8k / 2 | 72,84 s | Done 37, zuletzt Test Exit 0, Completed/verified, unabhängig grün |
+| Qwen 8k / 3 | 74,83 s | Done 37, zuletzt Test Exit 0, Completed/verified, unabhängig grün |
+| Luna | 23,23 s | Done 27, Test Exit 0, Completed/verified, unabhängig grün |
+
+Die lokalen Wiederholungen liefen sequenziell. Geschützte Dateien bleiben bytegleich;
+erfolgreiche Läufe bestätigen unveränderte native Settings. Der vorherige unklare
+Modellabbruch wurde hier nicht reproduziert; weder OutputLimit noch Other ist damit
+als dessen Ursache bewiesen. Zwei lokale Erfolge aus drei Läufen sind weiterhin
+keine zuverlässige Modellabnahme und die Diagnose selbst ist kein Verhaltensfix.
+
+SHA-256 der Logs im selben Verzeichnis:
+
+- `qwen-live-1.log`: `d4c9a0a9df65675f302808fc0e0a276709ef93bd0ce2af5b48eabe96db8bf4d1`
+- `qwen-live-2.log`: `f1f19ab28aebedabc964907fe9eff925eae7478fd0c4cc60703818b7aef536cb`
+- `qwen-live-3.log`: `ba6e5f481f9c4d7c5154572f7b241f5f3284dee816f7085c0133392356bdc247`
+- `luna-live.log`: `328d4a0d01bb8fe557fcf00274f3daca060a538d46a2ae38787025eac6c2748e`

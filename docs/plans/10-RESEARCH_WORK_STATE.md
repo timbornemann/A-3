@@ -40,6 +40,12 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Nicht regulär beendete Agentantworten behalten ihren geschlossenen Provider-
+      Beendigungsgrund (`OutputLimit` oder `Other`) statt der bisherigen Sammelmeldung.
+      Auch scheinbar vollständiges JSON darf damit nicht ausführbar werden; Primär-
+      und Repairgrenze, Abrechnung und Journalredaktion unabhängig prüfen. Diese
+      Diagnose dient der gezielten Korrektur des noch unzuverlässigen lokalen Ablaufs.
+
 - [x] Die live belegten Patchfehler `TargetAlreadyExists` und `SameMovePath` im
       vorhandenen Einzelrepair durch feste inhaltsfreie Operationshinweise erläutern.
       Keine automatische Operationswahl, kein Ausweichen durch Löschen, keine neuen
