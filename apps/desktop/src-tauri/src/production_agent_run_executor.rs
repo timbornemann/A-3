@@ -73,6 +73,8 @@ pub(crate) struct ProductionAgentRunExecutor {
     coordinator: WorktreeMutationCoordinator,
     pending_mutations: Mutex<BTreeMap<TaskId, AgentAction>>,
     process_environment: ProcessHostEnvironment,
+    #[cfg(test)]
+    generation_probe: Option<a3_application::AgentActionGeneration>,
 }
 
 impl ProductionAgentRunExecutor {
@@ -99,7 +101,18 @@ impl ProductionAgentRunExecutor {
             coordinator: WorktreeMutationCoordinator::new(),
             pending_mutations: Mutex::new(BTreeMap::new()),
             process_environment,
+            #[cfg(test)]
+            generation_probe: None,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_generation_probe(
+        mut self,
+        generation: a3_application::AgentActionGeneration,
+    ) -> Self {
+        self.generation_probe = Some(generation);
+        self
     }
 
     async fn execute_inner(
@@ -153,6 +166,8 @@ impl ProductionAgentRunExecutor {
             .execution_model()
             .await
             .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+        #[cfg(test)]
+        let provider = generation_probe::observe(provider, self.generation_probe.is_some());
         let initial_research_handoff = match &self.ports.research {
             Some(store) => store
                 .load_handoff_for_task(project, request.task_id())
@@ -461,22 +476,25 @@ impl ProductionAgentRunExecutor {
             let observed_at = timestamp()?;
             let turn_index =
                 current_index(self.ports.index.as_ref(), project, &attempt_control).await?;
-            let turn_outcome = ExecuteAgentTurn::new(
+            let turn = ExecuteAgentTurn::new(
                 &context_compiler,
                 provider.as_ref(),
                 &read_tools,
                 self.ports.recovery.as_ref(),
             )
-            .with_patch_snapshot(&turn_index)
-            .execute(&run, &input, observed_at, &attempt_control)
-            .await
-            .map_err(|error| {
-                // Test-only neutral classifications; never log provider payloads or source text.
-                #[cfg(test)]
-                eprintln!("A3_AGENT_TURN_FAILURE {error:?}");
-                let _classification = error;
-                AgentRunExecutionFailure::Unavailable
-            })?;
+            .with_patch_snapshot(&turn_index);
+            #[cfg(test)]
+            let turn = turn.with_action_generation(self.generation_probe.unwrap_or_default());
+            let turn_outcome = turn
+                .execute(&run, &input, observed_at, &attempt_control)
+                .await
+                .map_err(|error| {
+                    // Test-only neutral classifications; never log provider payloads or source text.
+                    #[cfg(test)]
+                    eprintln!("A3_AGENT_TURN_FAILURE {error:?}");
+                    let _classification = error;
+                    AgentRunExecutionFailure::Unavailable
+                })?;
             let expected_sequence = run.last_event_sequence();
             let event = turn_outcome
                 .record(&mut run, run_event_id()?, observed_at)
@@ -1106,6 +1124,10 @@ impl ProductionAgentRunExecutor {
             .await;
     }
 }
+
+#[cfg(test)]
+#[path = "agent_generation_probe.rs"]
+mod generation_probe;
 
 fn session_outcome_for_run(
     state: Option<AgentControllerState>,

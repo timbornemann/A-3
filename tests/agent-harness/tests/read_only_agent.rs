@@ -318,6 +318,97 @@ fn read_only_agent_reaches_verified_done_on_all_fixture_languages() -> Result<()
 }
 
 #[test]
+fn staged_real_original_edit_between_model_stages_stops_before_tools() -> Result<(), Box<dyn Error>>
+{
+    run_libsql_test(async {
+        let fixture = IndexedFixture::new(FIXTURES[0]).await?;
+        let durable = DurableRun::new(&fixture).await?;
+        let source = WorkspaceAgentSourceReader;
+        let compiler = DeterministicAgentContextCompiler::new(
+            CompileTaskLens::new(
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+            ),
+            &source,
+        );
+        let tools = CountingReadTools {
+            inner: DeterministicAgentReadTools::new(
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                &source,
+            ),
+            calls: AtomicUsize::new(0),
+        };
+        let provider = EditAfterStagedChoice {
+            fixture: &fixture,
+            inner: StubModelProvider::new(
+                durable.profile.provider_id().clone(),
+                StubModelProviderBehavior::Events(provider_events(
+                    r#"{"version":1,"choice":"inspect_file"}"#,
+                )?),
+            ),
+        };
+        let input = durable.context_input(&fixture, Vec::new())?;
+        let result = a3_application::ExecuteAgentTurn::new(
+            &compiler,
+            &provider,
+            &tools,
+            fixture.store.as_ref(),
+        )
+        .with_action_generation(a3_application::AgentActionGeneration::SelectThenFill)
+        .execute(&durable.run, &input, timestamp(20)?, &ActiveControl)
+        .await?;
+        let a3_application::AgentTurnOutcome::Rejected(rejected) = result else {
+            return Err(test_error("stale source accepted"));
+        };
+        assert_eq!(
+            rejected.reason(),
+            a3_application::AgentTurnRejectionReason::Staged(
+                a3_application::StagedActionFailure::ContextChanged
+            )
+        );
+        assert!(rejected.charge().prompt_tokens().get() > 0);
+        assert_eq!(provider.inner.calls()?.len(), 1);
+        assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
+        Ok(())
+    })
+}
+
+struct EditAfterStagedChoice<'a> {
+    fixture: &'a IndexedFixture,
+    inner: StubModelProvider,
+}
+impl std::fmt::Debug for EditAfterStagedChoice<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EditAfterStagedChoice")
+    }
+}
+impl a3_application::ModelProvider for EditAfterStagedChoice<'_> {
+    fn provider_id(&self) -> &ModelProviderId {
+        a3_application::ModelProvider::provider_id(&self.inner)
+    }
+    fn stream<'a>(
+        &'a self,
+        request: &'a a3_application::ModelProviderRequest,
+        timeout: a3_application::ModelRequestTimeout,
+        control: &'a dyn ModelOperationControl,
+    ) -> a3_application::ModelProviderFuture<'a> {
+        Box::pin(async move {
+            self.fixture
+                .repository
+                .write(
+                    self.fixture.definition.expected_path,
+                    b"// external edit after current source was supplied\n",
+                )
+                .map_err(|_| a3_application::ModelProviderFailure::Unavailable)?;
+            a3_application::ModelProvider::stream(&self.inner, request, timeout, control).await
+        })
+    }
+}
+
+#[test]
 fn invalid_primary_and_repair_never_execute_the_real_read_tools() -> Result<(), Box<dyn Error>> {
     run_libsql_test(async {
         let fixture = IndexedFixture::new(FIXTURES[0]).await?;

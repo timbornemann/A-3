@@ -327,6 +327,12 @@ fn agent_approved_live_coding_fixture() -> Result<(), Box<dyn Error>> {
 }
 
 async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
+    let generation = match std::env::var("A3_LIVE_AGENT_GENERATION").as_deref() {
+        Ok("staged") => AgentActionGeneration::SelectThenFill,
+        Ok("baseline") | Err(std::env::VarError::NotPresent) => AgentActionGeneration::SingleAction,
+        _ => return Err("A3_LIVE_AGENT_GENERATION must be baseline or staged".into()),
+    };
+    println!("A3_LIVE_CODING generation={generation:?}");
     let catalog_path = super::optional_env("A3_LIVE_AGENT_CATALOG")?
         .or(super::optional_env("A3_CONFIGURED_RESEARCH_CATALOG")?)
         .ok_or("live Agent requires an explicit read-only settings catalog")?;
@@ -560,26 +566,29 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
     inspection.activate_project(&project);
     let approvals = Arc::new(AgentApprovalBuffer::new());
     approvals.activate_project(&project);
-    let executor = Arc::new(ProductionAgentRunExecutor::new(
-        ProductionAgentRunPorts {
-            workspace: store.clone(),
-            journal: store.clone(),
-            actions: store.clone(),
-            recovery: store.clone(),
-            policy: store.clone(),
-            evidence: store.clone(),
-            index: store.clone(),
-            lens_index: store.clone(),
-            search: store.clone(),
-            claims: store.clone(),
-            allowlist: store.clone(),
-            research: None,
-        },
-        runtime,
-        inspection.clone(),
-        approvals.clone(),
-        None,
-    )?);
+    let executor = Arc::new(
+        ProductionAgentRunExecutor::new(
+            ProductionAgentRunPorts {
+                workspace: store.clone(),
+                journal: store.clone(),
+                actions: store.clone(),
+                recovery: store.clone(),
+                policy: store.clone(),
+                evidence: store.clone(),
+                index: store.clone(),
+                lens_index: store.clone(),
+                search: store.clone(),
+                claims: store.clone(),
+                allowlist: store.clone(),
+                research: None,
+            },
+            runtime,
+            inspection.clone(),
+            approvals.clone(),
+            None,
+        )?
+        .with_generation_probe(generation),
+    );
     let query = GetAgentApprovalCenter::new(
         store.clone(),
         store.clone(),
@@ -609,6 +618,7 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
             run.state(),
             run.last_event_sequence()
         );
+        println!("A3_LIVE_CODING usage={:?}", run.usage());
         let mutations = store.load_agent_mutation_attempts(&project, run_id).await?;
         // Only durable, content-free receipts; process application is not test success.
         // The store bounds the history, and at most 32 entries are printed per attempt.

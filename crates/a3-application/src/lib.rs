@@ -201,9 +201,10 @@ pub use agent_task_control::{
     AgentTaskRecoveryLoadResult, ControlAgentTaskRun, InspectAgentTaskRecovery,
 };
 pub use agent_turn::{
-    AgentReadAction, AgentReadTimeout, AgentReadTimeoutError, AgentReadToolFailure, AgentReadTools,
-    AgentReadToolsFuture, AgentTurnExecution, AgentTurnOutcome, AgentTurnRejectionReason,
-    ExecuteAgentTurn, ExecuteAgentTurnFailure, ExecuteReadOnlyAgentTurn, RejectedAgentTurn,
+    AgentActionGeneration, AgentReadAction, AgentReadTimeout, AgentReadTimeoutError,
+    AgentReadToolFailure, AgentReadTools, AgentReadToolsFuture, AgentTurnExecution,
+    AgentTurnOutcome, AgentTurnRejectionReason, ExecuteAgentTurn, ExecuteAgentTurnFailure,
+    ExecuteReadOnlyAgentTurn, RejectedAgentTurn, StagedActionFailure,
 };
 pub use ask_research_action_codec::{
     AskResearchAction, AskResearchDecision, AskResearchDecisionDecodeError,

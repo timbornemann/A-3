@@ -20,6 +20,38 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
+mod staged;
+mod staged_contract;
+
+/// Explicit generation strategy. The desktop product keeps the single-call baseline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AgentActionGeneration {
+    /// One complete V5 action and at most its sole repair.
+    #[default]
+    SingleAction,
+    /// Controlled comparison: choose an operation, then fill only its arguments.
+    SelectThenFill,
+}
+
+/// Closed failures of the opt-in two-stage exchange; contains no model/source text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StagedActionFailure {
+    /// Invalid choice after the shared repair was consumed.
+    InvalidChoice,
+    /// Invalid arguments after the shared repair was consumed.
+    InvalidArguments,
+    /// The assembled action failed the independent V5 decoder after the shared repair.
+    InvalidAction(crate::AgentActionDecodeError),
+    /// The current context could not be reproduced between stages.
+    ContextChanged,
+    /// Another inference would exceed the unchanged context or run budget.
+    BudgetExceeded,
+    /// The total exchange deadline expired.
+    Deadline,
+    /// The compiled contract cannot be projected safely.
+    Contract,
+}
+
 const MAX_AGENT_RAW_OUTPUT_BYTES: usize = 64 * 1_024;
 const MAX_AGENT_READ_TIMEOUT_MILLIS: u64 = 120_000;
 
@@ -264,6 +296,12 @@ impl AgentTurnOutcome {
                         _ => (RunEventCode::InvalidModelOutput, RunEventOutcome::Failed),
                     },
                     AgentTurnRejectionReason::InvalidAfterRepair
+                    | AgentTurnRejectionReason::Staged(
+                        StagedActionFailure::InvalidChoice
+                        | StagedActionFailure::InvalidArguments
+                        | StagedActionFailure::InvalidAction(_)
+                        | StagedActionFailure::Contract,
+                    )
                     | AgentTurnRejectionReason::InvalidActionAfterRepair(_)
                     | AgentTurnRejectionReason::InvalidReplanAnalysisAfterRepair(_)
                     | AgentTurnRejectionReason::IncompleteModelOutput(_) => {
@@ -272,6 +310,12 @@ impl AgentTurnOutcome {
                     AgentTurnRejectionReason::StepMismatch => {
                         (RunEventCode::PolicyDecision, RunEventOutcome::Denied)
                     }
+                    AgentTurnRejectionReason::Staged(StagedActionFailure::Deadline) => {
+                        (RunEventCode::Timeout, RunEventOutcome::Failed)
+                    }
+                    AgentTurnRejectionReason::Staged(
+                        StagedActionFailure::ContextChanged | StagedActionFailure::BudgetExceeded,
+                    ) => (RunEventCode::ControllerDecision, RunEventOutcome::Failed),
                     AgentTurnRejectionReason::CancelledBeforeAction => {
                         (RunEventCode::Cancellation, RunEventOutcome::Cancelled)
                     }
@@ -319,6 +363,8 @@ impl AgentTurnOutcome {
 /// Content-free reason a completed turn cannot continue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentTurnRejectionReason {
+    /// An explicitly selected staged exchange failed before any tool effect.
+    Staged(StagedActionFailure),
     /// Provider failure with conservative reserved usage; never an executable result.
     ModelFailed(ModelProviderFailure),
     /// The attempted read failed; the preceding model exchange remains charged.
@@ -352,6 +398,7 @@ pub struct ExecuteAgentTurn<'a> {
     model_timeout: ModelRequestTimeout,
     read_timeout: AgentReadTimeout,
     patch_snapshot: Option<&'a a3_domain::PublishedIndex>,
+    generation: AgentActionGeneration,
 }
 
 impl<'a> ExecuteAgentTurn<'a> {
@@ -371,6 +418,7 @@ impl<'a> ExecuteAgentTurn<'a> {
             model_timeout: ModelRequestTimeout::DEFAULT,
             read_timeout: AgentReadTimeout::DEFAULT,
             patch_snapshot: None,
+            generation: AgentActionGeneration::SingleAction,
         }
     }
 
@@ -379,6 +427,13 @@ impl<'a> ExecuteAgentTurn<'a> {
     #[must_use]
     pub const fn with_patch_snapshot(mut self, published: &'a a3_domain::PublishedIndex) -> Self {
         self.patch_snapshot = Some(published);
+        self
+    }
+
+    /// Selects an explicit comparison strategy; never changes provider, policy or tool rights.
+    #[must_use]
+    pub const fn with_action_generation(mut self, generation: AgentActionGeneration) -> Self {
+        self.generation = generation;
         self
     }
 
@@ -414,119 +469,145 @@ impl<'a> ExecuteAgentTurn<'a> {
         {
             return Err(ExecuteAgentTurnFailure::ContextMismatch);
         }
-        let context_digest = compiled.digest();
+        let mut context_digest = compiled.digest();
         let snapshot_id = compiled.snapshot_id();
         let current_step_id = compiled.current_step_id();
         let request = compiled.into_request();
-        let primary =
-            complete_request(self.provider, &request, self.model_timeout, control).await?;
-        if let Some(reason) = primary.rejection_reason() {
-            return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
-                charge: AgentTurnCharge::new(
-                    primary.prompt_tokens,
-                    primary.output_tokens,
-                    None,
-                    AgentTurnRepairUsage::None,
-                ),
-                reason,
-                snapshot_id,
-                observed_model_output_bytes: usize_to_u64(primary.raw.len())?,
-            }));
-        }
-        if let Some(research) = input.replan_research().filter(|r| r.should_analyze()) {
-            return analyze_replan(
-                self.provider,
+        let (decoded, prompt_tokens, output_tokens, repair, observed_model_output_bytes) = if self
+            .generation
+            == AgentActionGeneration::SelectThenFill
+            && input.replan_localization().is_none()
+            && input.replan_research().is_none()
+        {
+            match staged::generate(
+                self,
+                run,
+                input,
                 &request,
-                primary,
-                research,
-                self.model_timeout,
+                context_digest,
+                observed_at,
                 control,
             )
-            .await;
-        }
-        let current_step = input
-            .task_ledger()
-            .step(current_step_id)
-            .ok_or(ExecuteAgentTurnFailure::InputMismatch)?;
-        let anchors = crate::agent_action_codec::AgentActionTurnAnchors::new(
-            run.id(),
-            input.project().worktree().id(),
-            snapshot_id,
-            current_step_id,
-            current_step.definition().verification_spec().id(),
-        )
-        .with_verification_command(
-            crate::RequestAgentFinish
-                .verification_command(current_step)
-                .map(|command| command.command_id()),
-        );
-        let decoder = if input.replan_localization().is_some() {
-            DecodeAgentActionTurn::for_replan_localization()
+            .await?
+            {
+                Ok((generated, digest)) => {
+                    context_digest = digest;
+                    generated
+                }
+                Err(rejected) => return Ok(AgentTurnOutcome::Rejected(rejected)),
+            }
         } else {
-            DecodeAgentActionTurn::current()
-        }
-        .with_turn_anchors(anchors);
-        let replan = input.replan_research().map(|research| &research.checkpoint);
-        let (decoded, prompt_tokens, output_tokens, repair, observed_model_output_bytes) =
-            match decoder.decode_primary_in_state(&primary.raw, self.patch_snapshot, replan) {
-                AgentActionPrimaryOutcome::Accepted(action) => (
-                    action,
-                    primary.prompt_tokens,
-                    primary.output_tokens,
-                    AgentTurnRepairUsage::None,
-                    usize_to_u64(primary.raw.len())?,
-                ),
-                AgentActionPrimaryOutcome::RepairRequired(repair) => {
-                    if AgentControllerControl::is_cancelled(control) {
-                        return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
-                            charge: AgentTurnCharge::new(
-                                primary.prompt_tokens,
-                                primary.output_tokens,
-                                None,
-                                AgentTurnRepairUsage::None,
-                            ),
-                            reason: AgentTurnRejectionReason::CancelledBeforeAction,
-                            snapshot_id,
-                            observed_model_output_bytes: usize_to_u64(primary.raw.len())?,
-                        }));
-                    }
-                    let prepared = repair.prepare()?;
-                    let mut messages = request.messages().to_vec();
-                    messages.push(prepared.instruction().clone());
-                    let repair_request = ModelProviderRequest::new(
-                        request.profile().clone(),
-                        messages,
-                        request.structured_output().cloned(),
-                    )?;
-                    let corrected = complete_request(
-                        self.provider,
-                        &repair_request,
-                        self.model_timeout,
-                        control,
-                    )
-                    .await?;
-                    let prompt_tokens =
-                        add_token_counts(primary.prompt_tokens, corrected.prompt_tokens)?;
-                    let output_tokens =
-                        add_token_counts(primary.output_tokens, corrected.output_tokens)?;
-                    let observed_model_output_bytes =
-                        combined_output_bytes(primary.raw.len(), corrected.raw.len())?;
-                    if let Some(reason) = corrected.rejection_reason() {
-                        return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
-                            charge: AgentTurnCharge::new(
-                                prompt_tokens,
-                                output_tokens,
-                                None,
-                                AgentTurnRepairUsage::One,
-                            ),
-                            reason,
-                            snapshot_id,
-                            observed_model_output_bytes,
-                        }));
-                    }
-                    let action =
-                        match prepared.decode_in_state(&corrected.raw, self.patch_snapshot, replan)
-                        {
+            let primary =
+                complete_request(self.provider, &request, self.model_timeout, control).await?;
+            if let Some(reason) = primary.rejection_reason() {
+                return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
+                    charge: AgentTurnCharge::new(
+                        primary.prompt_tokens,
+                        primary.output_tokens,
+                        None,
+                        AgentTurnRepairUsage::None,
+                    ),
+                    reason,
+                    snapshot_id,
+                    observed_model_output_bytes: usize_to_u64(primary.raw.len())?,
+                }));
+            }
+            if let Some(research) = input.replan_research().filter(|r| r.should_analyze()) {
+                return analyze_replan(
+                    self.provider,
+                    &request,
+                    primary,
+                    research,
+                    self.model_timeout,
+                    control,
+                )
+                .await;
+            }
+            let current_step = input
+                .task_ledger()
+                .step(current_step_id)
+                .ok_or(ExecuteAgentTurnFailure::InputMismatch)?;
+            let anchors = crate::agent_action_codec::AgentActionTurnAnchors::new(
+                run.id(),
+                input.project().worktree().id(),
+                snapshot_id,
+                current_step_id,
+                current_step.definition().verification_spec().id(),
+            )
+            .with_verification_command(
+                crate::RequestAgentFinish
+                    .verification_command(current_step)
+                    .map(|command| command.command_id()),
+            );
+            let decoder = if input.replan_localization().is_some() {
+                DecodeAgentActionTurn::for_replan_localization()
+            } else {
+                DecodeAgentActionTurn::current()
+            }
+            .with_turn_anchors(anchors);
+            let replan = input.replan_research().map(|research| &research.checkpoint);
+            let (decoded, prompt_tokens, output_tokens, repair, observed_model_output_bytes) =
+                match decoder.decode_primary_in_state(&primary.raw, self.patch_snapshot, replan) {
+                    AgentActionPrimaryOutcome::Accepted(action) => (
+                        action,
+                        primary.prompt_tokens,
+                        primary.output_tokens,
+                        AgentTurnRepairUsage::None,
+                        usize_to_u64(primary.raw.len())?,
+                    ),
+                    AgentActionPrimaryOutcome::RepairRequired(repair) => {
+                        if AgentControllerControl::is_cancelled(control) {
+                            return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
+                                charge: AgentTurnCharge::new(
+                                    primary.prompt_tokens,
+                                    primary.output_tokens,
+                                    None,
+                                    AgentTurnRepairUsage::None,
+                                ),
+                                reason: AgentTurnRejectionReason::CancelledBeforeAction,
+                                snapshot_id,
+                                observed_model_output_bytes: usize_to_u64(primary.raw.len())?,
+                            }));
+                        }
+                        let prepared = repair.prepare()?;
+                        let mut messages = request.messages().to_vec();
+                        messages.push(prepared.instruction().clone());
+                        let repair_request = ModelProviderRequest::new(
+                            request.profile().clone(),
+                            messages,
+                            request.structured_output().cloned(),
+                        )?;
+                        let corrected = complete_request(
+                            self.provider,
+                            &repair_request,
+                            self.model_timeout,
+                            control,
+                        )
+                        .await?;
+                        let prompt_tokens =
+                            add_token_counts(primary.prompt_tokens, corrected.prompt_tokens)?;
+                        let output_tokens =
+                            add_token_counts(primary.output_tokens, corrected.output_tokens)?;
+                        let observed_model_output_bytes =
+                            combined_output_bytes(primary.raw.len(), corrected.raw.len())?;
+                        if let Some(reason) = corrected.rejection_reason() {
+                            return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
+                                charge: AgentTurnCharge::new(
+                                    prompt_tokens,
+                                    output_tokens,
+                                    None,
+                                    AgentTurnRepairUsage::One,
+                                ),
+                                reason,
+                                snapshot_id,
+                                observed_model_output_bytes,
+                            }));
+                        }
+                        let action = match prepared.decode_in_state(
+                            &corrected.raw,
+                            self.patch_snapshot,
+                            replan,
+                        ) {
                             Ok(action) => action,
                             Err(error) => {
                                 return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
@@ -544,15 +625,23 @@ impl<'a> ExecuteAgentTurn<'a> {
                                 }));
                             }
                         };
-                    (
-                        action,
-                        prompt_tokens,
-                        output_tokens,
-                        AgentTurnRepairUsage::One,
-                        observed_model_output_bytes,
-                    )
-                }
-            };
+                        (
+                            action,
+                            prompt_tokens,
+                            output_tokens,
+                            AgentTurnRepairUsage::One,
+                            observed_model_output_bytes,
+                        )
+                    }
+                };
+            (
+                decoded,
+                prompt_tokens,
+                output_tokens,
+                repair,
+                observed_model_output_bytes,
+            )
+        };
         let (action, public_note) = decoded.into_parts();
         let action_class = AgentTurnActionClass::from_action(&action);
         let charge = AgentTurnCharge::new(prompt_tokens, output_tokens, Some(action_class), repair);
@@ -790,6 +879,7 @@ struct CompletedModelRequest {
     raw: String,
     reason: ModelFinishReason,
     prompt_tokens: ModelTokenCount,
+    prompt_usage_reported: bool,
     output_tokens: ModelTokenCount,
     failure: Option<ModelProviderFailure>,
 }
@@ -833,6 +923,7 @@ where
                 raw: String::new(),
                 reason: ModelFinishReason::Other,
                 prompt_tokens: reserved_prompt,
+                prompt_usage_reported: false,
                 output_tokens: ModelTokenCount::new(
                     request.profile().settings().output_limit().get(),
                 ),
@@ -881,6 +972,7 @@ async fn complete_request_stream<C: ModelOperationControl>(
         raw,
         reason: completion.reason(),
         prompt_tokens: reported_or_fallback(completion.usage().prompt_tokens(), fallback_prompt)?,
+        prompt_usage_reported: completion.usage().prompt_tokens().is_some(),
         output_tokens: reported_or_fallback(completion.usage().output_tokens(), fallback_output)?,
     })
 }
@@ -2812,4 +2904,6 @@ mod tests {
     fn timestamp(value: u64) -> Result<AgentRunTimestamp, Box<dyn Error>> {
         Ok(AgentRunTimestamp::from_unix_millis(value)?)
     }
+
+    mod staged;
 }

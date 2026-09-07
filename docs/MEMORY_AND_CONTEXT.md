@@ -1,5 +1,33 @@
 # Memory System und Context Compiler
 
+## Kontrollierter Vergleich: Auswahl vor Argumenten
+
+[ADR-0094](adrs/0094-zweistufige-agentaktionen-im-kontrollierten-vergleich.md)
+ergänzt einen ausschließlich vom nativen Testaufbau aktivierten Application-Pfad.
+ActionChoice V1 liefert nur `version: 1` und eine geschlossene `choice`.
+ActionArguments V1 liefert nur `version: 1` und `parameters` für diese bereits
+festgelegte Operation. Der Core projiziert den aktuellen AgentAction-V5-Arm und
+ergänzt seine bekannten Konstanten; zusätzliche Felder und ein Aktionswechsel
+werden abgewiesen. Die vollständig rekonstruierte V5-Aktion muss weiterhin durch
+den unabhängigen Decoder, Snapshotprüfung, Policy, Approval und Verifikation.
+
+Beide Stufen erhalten denselben fachlichen Kontext. Vor einem Folgeaufruf prüft
+ein echter erneuter Compile den ursprünglichen Digest. Die erfolgreiche
+Turnprojektion trägt einen getrennten `a3-staged-agent-exchange-v1`-Digest über
+den Basiskontext und die tatsächlich geordneten Requests einschließlich Rollen,
+Stufenprompt, Schema und gegebenenfalls festem Repairhinweis. Modellrohausgaben
+werden nicht in Folgeprompts übernommen. Höchstens drei Aufrufe teilen einen
+Repair, eine Anfragefrist und die unveränderten kumulativen Rungrenzen. Die
+zusätzliche reguläre Argumenterzeugung wird nicht als Reparatur gezählt; alle
+Tokenkosten werden auch bei Ablehnung gemeinsam im logischen Turn abgerechnet.
+Fehlt gemeldete Promptnutzung, zählt der Versuch auch das Formatfeldschema.
+
+Das öffentliche Live-Coding-Fixture akzeptiert testseitig
+`A3_LIVE_AGENT_GENERATION=baseline|staged` (Standard `baseline`) und misst
+inhaltsfrei echte Aufrufe, Provider-Usage und Laufzeit. Die App hat keinen neuen
+Schalter und bleibt auf der bisherigen Methode. Ask, Plan und Replan werden
+nicht umgestellt. Selbstbewertungen des Modells sind kein Verifikationsnachweis.
+
 ## Ergänzung: Originalquellen im normalen Agententurn
 
 [ADR-0093](adrs/0093-originalquellen-im-agentenkontext.md) ergänzt Context-Policy V7:

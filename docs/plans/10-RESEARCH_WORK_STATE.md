@@ -40,6 +40,23 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Zweistufige Aktionswahl und enge Argumenterzeugung nach
+      [ADR-0094](../adrs/0094-zweistufige-agentaktionen-im-kontrollierten-vergleich.md)
+      im echten Harness implementieren, Grenzregressionen und gegenbalancierte
+      Modellnachweise auswerten. Bestehenden Produktstandard bis zu belastbarem
+      Nutzenbeleg erhalten; keine Selbstbewertung als Verifikation zulassen.
+      Grenzregressionen, vollständige Gates und 24 gegenbalancierte Liveversuche
+      sind ausgewertet. Qwen erreicht nur gestuft 2/2 Done, Luna in beiden
+      Varianten 2/2. Gemischte übrige Ergebnisse rechtfertigen keine allgemeine
+      Produktumstellung; der kontrollierte Vergleichspfad bleibt erhalten.
+
+- [ ] Aus dem kontrollierten Stufenvergleich die nächste Core-geführte Variante
+      ableiten: produktive Evidenzfrontier statt vieler weiterer Reads und
+      quellen-/quittungsgebundener Übergang von angewendeter Änderung zur geplanten
+      Verifikation. Granites nachgewiesenes `NoContentChange` darf nicht durch
+      Ausführen ungültiger Modellaktionen umgangen werden. Breitere unabhängige
+      Testorakel und echte Planübergaben bleiben Voraussetzung einer Produktübernahme.
+
 - [x] Begrenzte aktuelle Originalversorgung des normalen Agenten nach
       [ADR-0093](../adrs/0093-originalquellen-im-agentenkontext.md) umsetzen und
       mit echtem Safe Reader, vollständigen Gates und Modellnachläufen prüfen;

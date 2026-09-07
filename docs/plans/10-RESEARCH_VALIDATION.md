@@ -1,5 +1,200 @@
 # Plan 10: Verifikationsprotokoll
 
+## 2026-09-07: Auswahl und Argumente getrennt im echten Harness (ADR-0094)
+
+Ausgangspunkt `62b8fb3`. Der neue Application-Vergleichspfad führt zuerst
+ActionChoice V1 und anschließend ausschließlich die Argumente der festgelegten
+Operation aus. Bekannte Controllerkonstanten ergänzt der Core; aktuelle Dateien,
+Hashes, Policy, Approval und tatsächliche Verifikation bleiben unabhängig.
+Ask/Plan/Replan und der Produktstandard wurden nicht umgestellt. Eine optionale
+Modellselbstbewertung wurde nicht als neuer Verifikationsweg eingebaut.
+
+Das unveränderte öffentliche `small-local-bugfix`-Fixture verlangt ausschließlich
+die Korrektur von `increment.py`, unveränderte geschützte Tests und den exakten
+offline ausgeführten Befehl `python -m pytest`. Nach jeder Mutation kontrolliert
+der normale Produktionspfad Publish und Verifikation; die Fixture führt außerdem
+einen unabhängigen physischen Test aus. Das ist weiterhin ein bestätigter
+Ein-Schritt-Plan, **kein** vollständiger Conversation-Plan→Agent-Handoff.
+Der bestehende Test prüft nur `increment(41) == 42`. „Grün“ beziehungsweise
+„physisch richtig“ bezeichnet hier genau diesen unveränderten Fixturetest,
+nicht den Beweis korrekten Verhaltens für sämtliche Eingaben. Vor einer breiten
+Praxisfreigabe sind unabhängige weitere Eingaben und komplexere Aufgaben nötig.
+
+### Gegenbalancierter Vergleich
+
+Je Modell wurden Baseline 1 → Staged 1 → Staged 2 → Baseline 2 auf demselben
+eingefrorenen Binary ausgeführt. Alle lokalen Modelle liefen nacheinander.
+Profile unverändert: Luna 16k/2048 mit Schemawiederholung, Qwen 8k/2048;
+Google Gemma und die übrigen lokalen Modelle 16k/4096 ohne Schemawiederholung.
+Keine native Einstellung wurde für eine Variante umgeschaltet.
+
+| Modell | Baseline: verifiziertes Done | Staged: verifiziertes Done | Zusätzlicher Befund |
+| --- | ---: | ---: | --- |
+| gpt-5.6-luna | 2/2 | 2/2 | Staged halbiert nicht die Aufrufe, sondern verkleinert ihre Verträge |
+| gemma-4-26b-a4b-it | 0/2 Versuche | 0/2 Versuche | Providerfehler; zweiter Baselineversuch scheitert bereits an der Probe |
+| ornith-1.5:9b | 0/2 | 0/2 | Staged korrigiert beide Dateien physisch richtig, aber viele Reads und erneuter Patch statt Abschluss |
+| qwen38-8k:latest | 0/2 | 2/2 | Staged jeweils Patch + erfolgreicher Test + verifiziertes Done ohne Repair |
+| gpt-oss:20b | 0/2 | 0/2 | InvalidResponse auch bei kleiner Auswahl; nicht als pauschaler Alters-/Fähigkeitsbeweis interpretieren |
+| granite4.2:8b | 0/2 | 0/2 | Staged korrigiert beide Dateien physisch richtig, scheitert anschließend am erneuten Patch |
+
+Ein physisch grüner Test bei nicht abgeschlossenem Run zählt ausdrücklich nicht
+als Taskerfolg. In allen 23 Versuchen mit tatsächlichem Coding-Start bleiben die
+geschützten Dateien unverändert. Google Baseline 2 hat keinen Coding-Start und
+keinen solchen Fixture-Nachweis; es ist kein regulärer gepaarter Strategietest.
+Google-Unavailable allein beweist weder einen HTTP-Status noch eine Schemaursache.
+
+| Lauf | Modellaufrufe | Gebuchte Prompt-/Outputtokens | Sekunden | Physischer Test / Done |
+| --- | ---: | ---: | ---: | --- |
+| Luna B1 | 2 | 8238 / 356 | 10,47 | grün / ja |
+| Luna S1 | 4 | 4792 / 153 | 10,52 | grün / ja |
+| Luna S2 | 4 | 4778 / 155 | 9,20 | grün / ja |
+| Luna B2 | 2 | 8255 / 360 | 9,07 | grün / ja |
+| Google B1 | 5 | 21282 / 4248 | 57,27 | rot / nein |
+| Google S1 | 1 | 6931 / 4096 | 2,34 | rot / nein |
+| Google S2 | 6 | 22956 / 4171 | 8,68 | rot / nein |
+| Google B2 | 0 | nicht verfügbar | 0,44 | kein Coding-Start |
+| Ornith B1 | 1 | 3129 / 4096 | 46,95 | rot / nein |
+| Ornith S1 | 83 | 310639 / 3275 | 118,69 | grün / nein |
+| Ornith S2 | 63 | 233897 / 2577 | 96,10 | grün / nein |
+| Ornith B2 | 3 | 9827 / 743 | 19,26 | rot / nein |
+| Qwen B1 | 11 | 26463 / 1426 | 63,98 | rot / nein |
+| Qwen S1 | 4 | 8911 / 247 | 24,32 | grün / ja |
+| Qwen S2 | 4 | 8925 / 248 | 24,35 | grün / ja |
+| Qwen B2 | 8 | 18832 / 1297 | 50,39 | rot / nein |
+| GPT-OSS B1 | 2 | 9264 / 4208 | 20,82 | rot / nein |
+| GPT-OSS S1 | 1 | 6931 / 4096 | 11,98 | rot / nein |
+| GPT-OSS S2 | 1 | 6931 / 4096 | 11,93 | rot / nein |
+| GPT-OSS B2 | 2 | 9252 / 4211 | 14,54 | rot / nein |
+| Granite B1 | 5 | 12508 / 411 | 17,55 | rot / nein |
+| Granite S1 | 5 | 12867 / 549 | 15,92 | grün / nein |
+| Granite S2 | 5 | 12916 / 516 | 15,62 | grün / nein |
+| Granite B2 | 5 | 12417 / 435 | 15,37 | rot / nein |
+
+Modellaufrufe betreffen den Controller einschließlich Replan/Repair, nicht die
+vorherige Capability-Probe. Gebuchte Tokens enthalten bei Streamfehlern die
+konservative Reserve und sind dann keine behauptete Providerabrechnung.
+Sekunden sind der gesamte isolierte Test einschließlich Probe und Vorbereitung;
+inhaltsfreie Completion-Zeilen bewahren daneben die gemeldete Provider-Usage und
+Anfragelaufzeit. Keine parallelen Builds liefen während der Modellmessungen.
+
+Für die zwei erfolgreichen Luna-Paare sinken die gesamten Prompttokens von
+16493 auf 9570 (rund 42 %) und Outputtokens von 716 auf 308 (rund 57 %), bei
+nahezu gleicher Gesamtzeit: 19,54 gegenüber 19,72 Sekunden. Dies ist nur ein
+gemessener Fixturebefund, kein allgemeiner Performance- oder Zuverlässigkeitsclaim.
+Bei Ornith steigen dagegen Aufrufzahl und Verbrauch stark; gültige Struktur
+verhindert keine semantische Lese-/Aktionsschleife. Die Logs belegen viele Reads,
+nicht deren vollständige paarweise inhaltliche Identität.
+
+### Artefakte und Folgerung
+
+Alle 24 Logs liegen unter `target/reports/staged-agent-20260907/`, jeweils
+`{luna,google,ornith,qwen,gptoss,granite}-{baseline,staged}-{1,2}.log`.
+Gemeinsames Binary `agent-tests.exe`, SHA-256
+`637026d9e1cd43ef92f57cba0257d3520a7ecfef0ab29fda5f34fbb2707cda72`.
+Die Variante bleibt als kontrollierter Vergleichspfad erhalten, wird aber
+aufgrund der gemischten Ergebnisse nicht automatisch Produktstandard.
+
+Die Folgearbeit wird anhand dieser tatsächlichen Befunde ausgerichtet:
+
+- bereits gelieferte/erledigte Evidenz und produktive nächste Schritte genauer
+  Core-seitig führen, statt lediglich mehr gültige Auswahlantworten zu erzeugen;
+- den Übergang nach einer angewendeten Änderung zur geplanten Verifikation
+  untersuchen, ohne ungültige Modellaktionen in ausführbare Eingaben umzudeuten;
+- die genaue Post-Patch-Ablehnung inhaltsfrei erhalten; ursprüngliches V1 meldet
+  nur `Staged(InvalidArguments)`, nicht deren genaue Decoderunterursache;
+- Providerfehler von Google/GPT-OSS getrennt untersuchen; nicht durch größere
+  Budgets oder umgangene Sicherheitsprüfungen verdecken;
+- erfolgreiche kleine Fälle auf weitere Aufgaben und echte Planübergaben erweitern.
+
+Der Codebefund zum Post-Patch-Übergang ist enger als ein allgemeines
+„Verifikationsproblem“: `MutatingAgentController` liefert bei einer erfolgreichen
+Änderung mit einer anderen Verifikationsmethode als `DiffInvariant` über
+`request_next_execution` einen frisch kompilierten Kontext zurück.
+`ProductionAgentRunExecutor` startet danach erneut die freie Modell-Aktionswahl.
+Erst ein passender Finish-/Result-Wunsch wird bereits heute durch
+`verification_command_for_request` auf die Core-gebundene geplante Prüfung
+abgebildet. Ein selbständiger Übergang nach gültiger Mutationsquittung ist daher
+ein eigener nächster Schnitt, keine Lockerung des Patchdecoders. Dabei müssen
+unvollständige Mehrdateiänderungen, exakte Freigaben, Freshness, Wiederanlauf und
+bereits verbrauchte Prüfversuche ausdrücklich berücksichtigt werden.
+
+Der initiale vollständige Workspace-Gate und Clippy bestanden. Eine zusätzliche
+panikfreie Prüfung des Compiler-Schemaarms wurde vor der Matrix gezielt geprüft.
+Danach bewahrt V2 des Testbinarys zusätzlich die geschlossene Decoderursache und
+korrigiert die Schema-Anzeigenamen auf A^3. Kein Ablauf, Repairhint oder
+Sicherheitsgate wurde aufgrund eines negativen Modellresultats gelockert.
+
+Frozen V2: `agent-tests-v2.exe`, SHA-256
+`583e53177372c247f02f67276c022077f9540e0a054fc19ab6606876f39bd1e5`.
+Ein gesonderter Granite-Nachlauf bestätigt nach angewendetem Patch und grünem
+Fixturetest die exakte terminale Klasse
+`InvalidAction(InvalidPatchOperation(NoContentChange))`. Dabei stimmt der Hash des
+vorgeschlagenen Inhalts mit dem ebenfalls vom Modell vorgeschlagenen Basishash
+überein. Diese frühe Konstruktorprüfung erreicht die spätere Zulassung gegen den
+aktuellen Snapshot nicht: Sie beweist allein nicht, dass der Vorschlag dieselben
+Bytes wie die aktuelle Datei enthält. Belegt ist der erneute Patchvorschlag nach
+angewendeter Änderung und vor der geplanten Verifikation. Laufzeit 15,08 Sekunden,
+5 Modellaufrufe, 12896/536 gebuchte Tokens. Log `granite-diagnostic-v2.log`, SHA-256
+`ca1b070eb1664d854407518070f3270c269277c5bfab9b8cbf0238f2bfe97fdd`.
+Das ist keine rückwirkende genaue Klassifikation aller Ornith-Ablehnungen.
+Qwens V2-Nachlauf erreicht erneut Done mit vier Aufrufen, 8905/247 Tokens,
+keinem Repair und 31,05 Sekunden einschließlich erneuter Modellladung/Probe.
+Diese Nachläufe werden nicht nachträglich in die gegenbalancierten Paare gemischt.
+Lunas V2-Nachlauf erreicht ebenfalls Done: vier Aufrufe, 4794/153 Tokens,
+kein Repair, 11,01 Sekunden. Beide erfolgreichen V2-Nachläufe bestätigen die
+unveränderten geschützten Dateien und nativen Einstellungen. Loghashes:
+`qwen-final-v2.log` =
+`3a4b6629fe6f9a753d7dda67f6abd9ce9183d4ae60102f90b238cdc585dda35f`,
+`luna-final-v2.log` =
+`f871a0f2240aefcabcbd4954c0ee43baa8b326d54c6f844d346815c8386df868`.
+
+Auf dem endgültigen Quellstand bestehen die 23 gezielten Agent-Turn-Tests,
+`cargo fmt --all -- --check`,
+`cargo clippy --workspace --all-targets --all-features --offline --locked --jobs 2 -- -D warnings`
+und `cargo test --workspace --all-features --offline --locked --jobs 2 -- --test-threads=1`.
+Die vollständige Suite umfasst den echten Freshness-Harness zwischen Modellstufen
+und die Storage-Verbindungsregressionen. Das Abschlussreview ergänzt gegenüber
+dem V2-Livebinary ausschließlich zwei Tests: gemeinsame verbleibende Anfragefrist
+einschließlich bereits abgelaufenem Run sowie projizierbare Verträge für alle
+16 angebotenen Auswahlwerte. Der produktive V2-Code bleibt dabei unverändert.
+Pro Prozess gelten `CARGO_INCREMENTAL=0`,
+`CARGO_PROFILE_DEV_DEBUG=0` und `CARGO_PROFILE_TEST_DEBUG=0`. Keine Frontend-Änderung.
+`pnpm check:links` und `git diff --check` bestehen; die bekannte Node-Warnung
+25.6.1 statt 24.14.0 bleibt sichtbar. Finale Gateartefakte:
+
+- `target/reports/staged-agent-clippy-review.log`, SHA-256
+  `2acb9aca1551bb2c67e1daefa7829f2f34e821bd4cc928e98020e95ef8a9efbe`.
+- `target/reports/staged-agent-workspace-review.log`, SHA-256
+  `d1810e0eecfaf4e167a1affb6d68e74d08ea0ee215be167020fe2fa7e9788548`.
+
+| Logdatei | SHA-256 |
+| --- | --- |
+| google-baseline-1.log | `59199ce7dc19f6abe53c2c3a1622f0a17f3d0cd50ba192a4c11ace700de3f559` |
+| google-baseline-2.log | `967049627a25bdc74a4540bc43a8d276864d3e3f0c81f718dea9297d91e80c3d` |
+| google-staged-1.log | `34c4ad3b196f8001c38192b53745ad1bb8ce4bc464e1c0f2961353ca0a3984d4` |
+| google-staged-2.log | `dfc7f195019efc5842a86eb50a6061de368ea14a1ab457d02a5b923a4a9200ff` |
+| gptoss-baseline-1.log | `5eb286fddfbab2806135181fa6369b72f86bab76e86e0021c8ab6cdb029b6197` |
+| gptoss-baseline-2.log | `70811cedf7ed0b103b71743aa89144d6ea1e018d5c7ed2d41e926f34b40f55b3` |
+| gptoss-staged-1.log | `3075b110c464ada9da7a8cb48d479f694eab4243a30941794bc14897dd5a9ea3` |
+| gptoss-staged-2.log | `b9077b2ae22a5998c2b2694d71a9b559228ab3454122cf810dbd902c3a5d5c6f` |
+| granite-baseline-1.log | `73b05ec6f0994919b9782d8e289f799bd55d86ff72932e92537a9d931fc67055` |
+| granite-baseline-2.log | `15c270b2310382717d3732a2d1320957042c7e0211a45d5732846e0992428b37` |
+| granite-staged-1.log | `1b2b42eb7b38469b992a772445ca6ef0363b6a890e8a8fbcb7b95b9b7c2e9922` |
+| granite-staged-2.log | `fd1b94954ce2e87191c1da9d707afa60dd525c67eb9db4a6d6bf2b6976237df1` |
+| luna-baseline-1.log | `d7db8444f19afb90f4ddbec3814d6971eb9c8e28a182fd698f6034873edb4f5c` |
+| luna-baseline-2.log | `4729c32ecd7ea8d11640ce97a3583e1d85c6e5989fda56a54e2f7aee6b6267c7` |
+| luna-staged-1.log | `d9bd240843f352519203bd8a9eb1ce60177fdd4a36a3273065ce467a6aed8505` |
+| luna-staged-2.log | `8d00e8e5a9d09beffdd35b077f7b83e6494a8426749f211fb0bac968aede2bb1` |
+| ornith-baseline-1.log | `605286a5dbc69d7149bd036d0cbbebfd6cc6114eb53722e3ec86e9201dcf31f4` |
+| ornith-baseline-2.log | `a4120b4d3227111cca83e7018df5dea5e74b7cfcde3ab26492f9abe63401feef` |
+| ornith-staged-1.log | `9a468fa41b0a478cfe658de3a26980bbe1101c144e90db4d4da58c9ed9bab019` |
+| ornith-staged-2.log | `c0ede5c441938c475e00642ce1491779d4ab245f6e06b7a276aa93976656d80e` |
+| qwen-baseline-1.log | `873dff709f569cb907849221ca7821f7fda2b16afe81113d7d13a2d4fb864789` |
+| qwen-baseline-2.log | `aa631681a09f3e8f848626f075d59b26947097f5fe4287bcc9e11a7484fb5fdf` |
+| qwen-staged-1.log | `e792cc484a2cd3353b489fbbb3f378674db198c716fdb7d570ef0f72b4893dd9` |
+| qwen-staged-2.log | `b7a58e51681991c0de4e07a02893dc57273b46838841401495b09fa296f6131e` |
+
+
 ## 2026-09-07: Aktuelle Originalquellen im normalen Agenten (ADR-0093)
 
 Ausgangspunkt `6cbbd97`. Die Codeinspektion belegt den bisherigen reinen

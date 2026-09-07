@@ -534,6 +534,11 @@ pub struct AgentActionRepair {
 }
 
 impl AgentActionRepair {
+    /// Preserves the closed decoder cause when another exchange owns the sole repair budget.
+    pub(crate) const fn rejection(&self) -> AgentActionDecodeError {
+        self.error
+    }
+
     /// Returns the content-free primary failure category.
     #[must_use]
     pub const fn repair_code(&self) -> &'static str {
