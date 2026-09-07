@@ -375,7 +375,7 @@ fn controller_reads_real_flow_evidence_and_rejects_a_live_unindexed_edit()
         let provider = StubModelProvider::new(
             durable.profile.provider_id().clone(),
             StubModelProviderBehavior::Events(provider_events(&format!(
-                r#"{{"schema_version":4,"public_note":{{"goal":"Ablauf lesen","finding_kind":"hypothesis","finding":"Ablauf noch unbekannt","finding_source_refs":[],"gap":"Schritte","next_step":"Lesen"}},"action":{{"kind":"inspect","target":{{"kind":"function_flow","symbol_id":"{}","call_path":[],"view":{{"kind":"steps","offset":0}}}}}}}}"#,
+                r#"{{"schema_version":5,"action":{{"kind":"inspect","target":{{"kind":"function_flow","symbol_id":"{}","call_path":[],"view":{{"kind":"steps","offset":0}}}}}}}}"#,
                 owner.id()
             ))?),
         );
@@ -445,7 +445,7 @@ async fn evaluate_fixture(fixture: FixtureDefinition) -> Result<(), Box<dyn Erro
     let search_provider = StubModelProvider::new(
         durable.profile.provider_id().clone(),
         StubModelProviderBehavior::Events(provider_events(&format!(
-            r#"{{"schema_version":4,"public_note":{{"goal":"Relevante Implementierung finden","finding_kind":"hypothesis","finding":"Die Implementierung ist noch nicht lokalisiert.","finding_source_refs":[],"gap":"Aktuelle Source-Evidence","next_step":"Gezielt im Index suchen"}},"action":{{"kind":"search","query":"{}","limit":5}}}}"#,
+            r#"{{"schema_version":5,"action":{{"kind":"search","query":"{}","limit":5}}}}"#,
             fixture.definition.query
         ))?),
     );
@@ -508,7 +508,7 @@ async fn evaluate_fixture(fixture: FixtureDefinition) -> Result<(), Box<dyn Erro
         .await?;
 
     let update_document = format!(
-        r#"{{"schema_version":4,"public_note":{{"goal":"Zwischenbefund festhalten","finding_kind":"hypothesis","finding":"Die aktuelle Suche lieferte eine relevante Quelle; der Controller prüft sie separat.","finding_source_refs":[],"gap":"Deterministische Verifikation","next_step":"Unverifiziertes Ergebnis im Ledger festhalten"}},"action":{{"kind":"update_ledger","step_id":"{}","update":{{"kind":"record_result","summary":"located current source evidence for {}"}}}}}}"#,
+        r#"{{"schema_version":5,"action":{{"kind":"update_ledger","step_id":"{}","update":{{"kind":"record_result","summary":"located current source evidence for {}"}}}}}}"#,
         durable.step_id, fixture.definition.query
     );
     let update_provider = StubModelProvider::new(

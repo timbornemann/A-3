@@ -1643,3 +1643,57 @@ Vollständige lokale Gates bestehen auch nach ADR-0086: `cargo test --workspace
 `node scripts/check-markdown-links.mjs` (130 Dateien/512 lokale Links) und
 `git diff --check`. Logs: `agent-gemini-v4-workspace.log` und
 `agent-gemini-v4-clippy.log`. Prozesslokale Buildprofile bleiben unverändert.
+
+### AgentAction V5 ohne redundante Statusnotiz (ADR-0087)
+
+Der neue V5-Regressionsfall scheitert zuerst mit UnknownOrMissingField. Nach der
+versionierten Umstellung bestehen 73 gezielte Agententests, einschließlich strikter
+V3/V4-Notizen, verbotener V5-Notizinjektion, genau eines Repairs, aller aktuellen
+Anker-/Snapshotkonflikte und unveränderter Replan-V4-/Research-V5-Grenzen.
+Das gesamte ausführbare V5-Subschema entspricht exakt V4 ohne öffentliche Notiz.
+Die bisherige AgentTurnExecution-Notiz wird im produktiven Executor nicht konsumiert;
+Fortschritt stammt unverändert aus tatsächlichem Journal und Ledger.
+
+Das gezielte Paketgate besteht: 1 Coding-Eval, 8 mutierende und 3 read-only Harness-
+Verträge, 6 Context-Units/13 Context-Contracts, 27 Provider-Units und HTTP-Verträge
+für Gemini (16), Ollama (14) und OpenAI (10). Live-Tests bleiben dort opt-in.
+Log: `agent-v5-targeted.log`. Keine Profile, Budgets oder Sicherheitsprüfungen erweitert.
+
+Eingefrorenes Binary `agent-v5-core-status-20260907/agent-tests.exe`, SHA-256
+`b523c2a72abe5aead0d04c1cd07cf917d5e99e203c39dbd7b817486ab3334152`.
+Der tatsächliche Systemtext sinkt von 823 auf 809 Bytes, Lunas vollständiges
+Schema-Grounding von 7045 auf 6382 Bytes bei unverändertem 16384/2048-Profil.
+Dies ist eine Vertragsgrößenmessung, kein Geschwindigkeits- oder Qualitätsbeweis.
+
+| Modell/Lauf | Dauer | Nachweis |
+| --- | --- | --- |
+| Luna 1 | 23,80 s | Patch physisch korrekt, danach wiederholter NoContentChange im Repair; Failed Sequenz 22 |
+| Luna 2 | 16,97 s | Done Sequenz 23, echter Test Exit 0, Step Completed/verified, unabhängige Prüfung grün |
+| Google Gemma 1 | 10,76 s | Mehrere Turns, danach ModelFailed(Unavailable), Failed Sequenz 16 |
+| Google Gemma 2 | 11,16 s | Erneut ModelFailed(Unavailable), Failed Sequenz 16 |
+| Qwen 8k | 38,43 s | PatchConflict(TargetAlreadyExists) nach Einzelrepair, Failed Sequenz 6 |
+
+Geschützte Dateien bleiben in allen Läufen unverändert. Nur Luna 2 erreicht die
+vollständige Implementierungsverifikation und bestätigt außerdem unveränderte
+native Settings. Die übrigen physischen Tests bleiben bis auf den bereits korrekten
+Patch in Luna 1 rot. Googles Schema-/Notizabbruch ist überwunden; aus Unavailable
+wird ohne weitere Evidenz kein bestimmter HTTP-Status oder Quotenfehler abgeleitet.
+Lunas Wiederholung nach korrektem Patch und Qwens Operationswahl bleiben offen.
+
+SHA-256 der Logs im selben Verzeichnis:
+
+- `google-live-1.log`: `c8d924cfa5ed1923ef2289f471b50722fd15d598a8489852ceb833291b9681ce`
+- `google-live-2.log`: `2051dd26af0268322907b8e8c5a6180877a1e15f34e4ddf436c021c5a3ced458`
+- `luna-live-1.log`: `e00dffed36ca50b541b34386cf2decc250ff5f7d898fda5297507f30224d13a0`
+- `luna-live-2.log`: `248947ba9e678093eae028fb08cab9552768181cbb5c1f5ea8e1437a022e52ac`
+- `qwen-live-1.log`: `de9b2e797ba17c3de0738e278486c7542deef3a0ea47d67a7c6d63bf7ed23f9b`
+
+Vollständige Gates bestehen auf dem finalen V5-Stand: `cargo test --workspace
+--all-features --offline --locked --jobs 2`, `cargo clippy --workspace --all-targets
+--all-features --offline --locked --jobs 2 -- -D warnings`, `cargo fmt --all --check`,
+`node scripts/check-markdown-links.mjs` (131 Dateien/521 lokale Links) und
+`git diff --check`. Nach Präzisierung des Debug-Redaktionstests wurden Workspace
+und Clippy erneut vollständig ausgeführt; abschließende Logs sind
+`agent-v5-core-status-final-workspace.log` und `agent-v5-core-status-final-clippy.log`.
+Die letzte Änderung betrifft nur diese Testassertion; die Live-Binaries enthalten
+denselben Produktionscode. Keine neuen Abhängigkeiten, UI- oder Storage-Migrationen.

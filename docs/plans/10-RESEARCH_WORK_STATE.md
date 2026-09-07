@@ -40,12 +40,20 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Redundante Modellstatusnotiz aus neuen normalen AgentAction-V5-Turns entfernen;
+      Core-Fortschritt, strikte Legacy-/Replan-Verträge und alle Aktionsgrenzen erhalten,
+      Google und Luna live nachtesten
+      ([ADR-0087](../adrs/0087-agentaktionen-ohne-modellstatusnotiz.md)).
+      Vollständige lokale Gates, strikte Legacy-/Replan- und echte Providerverträge
+      bestehen; Luna erreicht Done. Patch-Wiederholung und Google-Unavailable bleiben offen.
+
 - [x] Lokale Gemini-Ablehnung des vollständigen aktuellen AgentAction-V4-Schemas
       durch bekannte `multipleOf`-Projektion beheben, unabhängige Flow-Grenzen erhalten
       und Google Gemma live nachtesten
       ([ADR-0086](../adrs/0086-gemini-projektion-von-vielfachheitsregeln.md)).
       Rot→Grün, vollständige lokale Gates und echter Nachtest bestätigen die
-      Übersetzung. Der getrennte Live-Fehler InvalidPublicNote bleibt offen.
+      Übersetzung. Der damalige Live-Fehler InvalidPublicNote wird durch ADR-0087
+      für neue normale Agentturns beseitigt.
 
 - [x] Bereits im aktuellen Index erkennbare Patchkonflikte im bestehenden Einzelrepair
       abfangen; Live-Schreibgrenzen unverändert erhalten und Qwen erneut prüfen

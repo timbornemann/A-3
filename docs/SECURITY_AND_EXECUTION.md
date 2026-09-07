@@ -946,3 +946,13 @@ mehr vor dem HTTP-Aufruf an seiner Flow-Offset-Regel. Das originale Schema und d
 unabhängige typisierte Auswahl verlangen weiterhin 50er-Offsets von 0 bis 4050;
 Provider-STOP oder formal übersetzbarer Output sind keine Zulassung. Nur Schema-
 Positionen ändern sich, nicht Const-/Enum-Daten. Unbekannte Keywords bleiben Fehler.
+
+Nach [ADR-0087](adrs/0087-agentaktionen-ohne-modellstatusnotiz.md) verwenden neue
+normale Agentturns AgentAction V5 mit genau `schema_version` und `action`.
+`public_note` ist verboten; Legacy V3/V4 behalten ihre strengen Notizregeln.
+Die unabhängige Prüfung von Aktionen, aktuellen IDs und Patch-Snapshots bleibt
+vollständig bestehen. Fortschritt stammt aus bestehendem Run-Journal und Ledger,
+nicht aus einer vom Modell behaupteten Erkenntnis oder erfolgreichen Prüfung.
+Replan-Localization bleibt read-only AgentAction V4; Replan-Analyse bleibt Research
+V5 und Ask/Plan/Vorbereitung bei Research V7. Keiner dieser Verträge kann durch
+gleiche numerische Versionen den jeweils anderen autorisieren.

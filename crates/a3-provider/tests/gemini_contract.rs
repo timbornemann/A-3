@@ -348,9 +348,7 @@ async fn current_agent_wire_schema_preserves_independent_flow_offset_checks()
     let original = schema.clone();
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let endpoint = endpoint_for(&listener)?;
-    let invalid = json!({"schema_version":4,"public_note":{
-        "goal":"Inspect flow","finding_kind":"hypothesis","finding":"Not yet read",
-        "finding_source_refs":[],"gap":"Origins","next_step":"Inspect"},"action":{
+    let invalid = json!({"schema_version":5,"action":{
         "kind":"inspect","target":{"kind":"function_flow","symbol_id":"a".repeat(64),
         "call_path":[],"view":{"kind":"steps","offset":1}}}})
     .to_string();

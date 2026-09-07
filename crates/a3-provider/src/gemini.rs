@@ -1976,9 +1976,7 @@ mod tests {
             (4100, false),
             (-50, false),
         ] {
-            let document = json!({"schema_version":4,"public_note":{
-                "goal":"Inspect flow","finding_kind":"hypothesis","finding":"Not yet read",
-                "finding_source_refs":[],"gap":"Origins","next_step":"Inspect"},"action":{
+            let document = json!({"schema_version":5,"action":{
                 "kind":"inspect","target":{"kind":"function_flow","symbol_id":"a".repeat(64),
                 "call_path":[],"view":{"kind":"steps","offset":offset}}}});
             assert_eq!(
@@ -2053,6 +2051,7 @@ mod tests {
             AgentActionJsonSchema::version_one(),
             AgentActionJsonSchema::version_two(),
             AgentActionJsonSchema::version_three(),
+            AgentActionJsonSchema::version_four(),
             AgentActionJsonSchema::current(),
         ] {
             translate_response_json_schema(&schema.as_json()?)?;

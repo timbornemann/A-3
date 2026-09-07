@@ -25,8 +25,10 @@ impl AgentActionSchemaVersion {
     pub const V3: Self = Self(3);
     /// Same action set with a bounded, evidence-grounded function-flow inspection.
     pub const V4: Self = Self(4);
+    /// Same actions without redundant model-generated presentation metadata.
+    pub const V5: Self = Self(5);
     /// Schema emitted for newly compiled mutating-controller turns.
-    pub const CURRENT: Self = Self::V4;
+    pub const CURRENT: Self = Self::V5;
 
     /// Reconstructs a schema version understood by this build.
     pub const fn from_u16(value: u16) -> Result<Self, AgentActionSchemaVersionError> {
@@ -35,6 +37,7 @@ impl AgentActionSchemaVersion {
             2 => Ok(Self::V2),
             3 => Ok(Self::V3),
             4 => Ok(Self::V4),
+            5 => Ok(Self::V5),
             _ => Err(AgentActionSchemaVersionError { value }),
         }
     }

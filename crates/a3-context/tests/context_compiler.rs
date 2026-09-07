@@ -393,7 +393,7 @@ fn current_step_constants_match_provider_schema_and_exact_grounding() -> Result<
                 schema, &expected,
                 "only known current identities may become constants"
             );
-            let exact_grounding = format!("The exact AgentAction V4 JSON Schema is:\n{expected}");
+            let exact_grounding = format!("The exact AgentAction V5 JSON Schema is:\n{expected}");
             assert_eq!(
                 compiled
                     .request()

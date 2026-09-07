@@ -2207,6 +2207,10 @@ mod tests {
                 "AgentAction",
                 serde_json::to_string(&AgentActionJsonSchema::current().as_json()?)?,
             ),
+            (
+                "Historical AgentAction V4",
+                serde_json::to_string(&AgentActionJsonSchema::version_four().as_json()?)?,
+            ),
         ];
         for (name, schema) in schemas {
             let schema: Value = serde_json::from_str(&schema)?;

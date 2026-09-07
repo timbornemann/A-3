@@ -18,6 +18,7 @@ const AGENT_ACTION_SCHEMA_V1: &str = include_str!("../schemas/agent-action-v1.sc
 const AGENT_ACTION_SCHEMA_V2: &str = include_str!("../schemas/agent-action-v2.schema.json");
 const AGENT_ACTION_SCHEMA_V3: &str = include_str!("../schemas/agent-action-v3.schema.json");
 const AGENT_ACTION_SCHEMA_V4: &str = include_str!("../schemas/agent-action-v4.schema.json");
+const AGENT_ACTION_SCHEMA_V5: &str = include_str!("../schemas/agent-action-v5.schema.json");
 const MAX_AGENT_ACTION_DOCUMENT_BYTES: usize = 64 * 1_024;
 
 /// Versioned JSON Schema supplied to a structured-output model provider.
@@ -51,11 +52,19 @@ impl AgentActionJsonSchema {
         }
     }
 
+    /// Returns the historical V4 schema with flow inspection and a public note.
+    #[must_use]
+    pub const fn version_four() -> Self {
+        Self {
+            version: AgentActionSchemaVersion::V4,
+        }
+    }
+
     /// Returns the schema used for newly compiled controller turns.
     #[must_use]
     pub const fn current() -> Self {
         Self {
-            version: AgentActionSchemaVersion::V4,
+            version: AgentActionSchemaVersion::CURRENT,
         }
     }
 
@@ -72,7 +81,8 @@ impl AgentActionJsonSchema {
             AgentActionSchemaVersion::V1 => AGENT_ACTION_SCHEMA_V1,
             AgentActionSchemaVersion::V2 => AGENT_ACTION_SCHEMA_V2,
             AgentActionSchemaVersion::V3 => AGENT_ACTION_SCHEMA_V3,
-            _ => AGENT_ACTION_SCHEMA_V4,
+            AgentActionSchemaVersion::V4 => AGENT_ACTION_SCHEMA_V4,
+            _ => AGENT_ACTION_SCHEMA_V5,
         }
     }
 
@@ -161,7 +171,7 @@ pub struct DecodeAgentAction {
 }
 
 impl DecodeAgentAction {
-    /// Restricts the current strict decoder to source reads, including its single repair.
+    /// Restricts the historical V4 replan contract to reads, including its single repair.
     #[must_use]
     pub const fn for_replan_localization() -> Self {
         Self {
@@ -200,11 +210,21 @@ impl DecodeAgentAction {
         }
     }
 
+    /// Creates the historical V4 decoder, including strict presentation metadata.
+    #[must_use]
+    pub const fn version_four() -> Self {
+        Self {
+            version: AgentActionSchemaVersion::V4,
+            localization_only: false,
+            anchors: None,
+        }
+    }
+
     /// Creates the decoder used for newly compiled controller turns.
     #[must_use]
     pub const fn current() -> Self {
         Self {
-            version: AgentActionSchemaVersion::V4,
+            version: AgentActionSchemaVersion::CURRENT,
             localization_only: false,
             anchors: None,
         }
@@ -244,7 +264,11 @@ impl DecodeAgentAction {
         let root = serde_json::from_str::<Value>(raw)
             .map_err(|_| AgentActionDecodeError::MalformedJson)?;
         let root = object(&root)?;
-        let expected = if self.version >= AgentActionSchemaVersion::V3 {
+        let has_note = matches!(
+            self.version,
+            AgentActionSchemaVersion::V3 | AgentActionSchemaVersion::V4
+        );
+        let expected = if has_note {
             &["schema_version", "public_note", "action"][..]
         } else {
             &["schema_version", "action"][..]
@@ -253,7 +277,7 @@ impl DecodeAgentAction {
         if unsigned(root, "schema_version")? != u64::from(self.version.get()) {
             return Err(AgentActionDecodeError::UnsupportedVersion);
         }
-        let public_note = if self.version >= AgentActionSchemaVersion::V3 {
+        let public_note = if has_note {
             Some(
                 decode_note(required(root, "public_note")?)
                     .map_err(|_| AgentActionDecodeError::InvalidPublicNote)?,
@@ -783,7 +807,7 @@ pub enum AgentActionDecodeError {
     UnknownOrMissingField,
     /// The root named another schema version.
     UnsupportedVersion,
-    /// The action kind is not in the closed V1 union.
+    /// The action kind is not in the closed versioned union.
     UnknownAction,
     /// A typed ID, path, enum, number, or bounded text value was invalid.
     InvalidValue,
@@ -904,11 +928,71 @@ mod tests {
     }
 
     #[test]
+    fn current_actions_omit_model_status_without_weakening_legacy_notes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut document = serde_json::json!({"schema_version":5,"action":{"kind":"finish"}});
+        let decoder = super::DecodeAgentAction::current();
+        let decoded = decoder.decode_envelope(&document.to_string())?;
+        assert!(decoded.public_note().is_none());
+        assert!(matches!(
+            decoded.action(),
+            a3_domain::AgentAction::Finish(_)
+        ));
+        document["public_note"] = serde_json::json!({"goal":"injected status"});
+        assert!(decoder.decode(&document.to_string()).is_err());
+        let note = serde_json::json!({"goal":"Trace","finding_kind":"hypothesis","finding":"Not yet verified",
+            "finding_source_refs":[],"gap":"Origins","next_step":"Inspect"});
+        document["public_note"] = note.clone();
+        assert!(decoder.decode(&document.to_string()).is_err());
+        for version in [
+            a3_domain::AgentActionSchemaVersion::V3,
+            a3_domain::AgentActionSchemaVersion::V4,
+        ] {
+            let legacy = super::DecodeAgentAction {
+                version,
+                localization_only: false,
+                anchors: None,
+            };
+            document["schema_version"] = serde_json::json!(version.get());
+            document["public_note"] = note.clone();
+            assert!(
+                legacy
+                    .decode_envelope(&document.to_string())?
+                    .public_note()
+                    .is_some()
+            );
+            assert!(decoder.decode(&document.to_string()).is_err());
+            document["public_note"]["finding_kind"] = serde_json::json!("observation");
+            assert!(legacy.decode(&document.to_string()).is_err());
+            document
+                .as_object_mut()
+                .ok_or("object")?
+                .remove("public_note");
+            assert!(legacy.decode(&document.to_string()).is_err());
+        }
+        let mut expected: serde_json::Value = serde_json::from_str(super::AGENT_ACTION_SCHEMA_V4)?;
+        expected["$id"] = serde_json::json!("https://a3.local/schemas/agent-action-v5.schema.json");
+        expected["title"] = serde_json::json!("A^3 AgentAction V5");
+        expected["properties"]["schema_version"]["const"] = serde_json::json!(5);
+        expected["required"] = serde_json::json!(["schema_version", "action"]);
+        expected["properties"]
+            .as_object_mut()
+            .ok_or("properties")?
+            .remove("public_note");
+        expected["$defs"]
+            .as_object_mut()
+            .ok_or("definitions")?
+            .remove("publicNote");
+        assert_eq!(super::AgentActionJsonSchema::current().as_json()?, expected);
+        Ok(())
+    }
+
+    #[test]
     fn version_four_flow_reads_are_bounded_and_never_backported_to_v3()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut document = serde_json::json!({"schema_version":4,"public_note":{"goal":"Trace","finding_kind":"hypothesis","finding":"Not yet verified","finding_source_refs":[],"gap":"Origins","next_step":"Inspect"},"action":{"kind":"inspect","target":{"kind":"function_flow","symbol_id":"a".repeat(64),"call_path":[1,2],"view":{"kind":"origins","value":3}}}});
         assert!(matches!(
-            super::DecodeAgentAction::current().decode(&document.to_string())?,
+            super::DecodeAgentAction::version_four().decode(&document.to_string())?,
             a3_domain::AgentAction::Inspect(_)
         ));
         document["schema_version"] = serde_json::json!(3);
@@ -925,7 +1009,7 @@ mod tests {
         ] {
             document["action"]["target"]["call_path"] = path;
             assert!(
-                super::DecodeAgentAction::current()
+                super::DecodeAgentAction::version_four()
                     .decode(&document.to_string())
                     .is_err()
             );
@@ -939,7 +1023,7 @@ mod tests {
         ] {
             document["action"]["target"]["view"] = view;
             assert!(
-                super::DecodeAgentAction::current()
+                super::DecodeAgentAction::version_four()
                     .decode(&document.to_string())
                     .is_err()
             );

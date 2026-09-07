@@ -140,7 +140,7 @@ impl AgentTurnExecution {
         &self.action
     }
 
-    /// Returns the bounded presentation-only work note emitted beside the action.
+    /// Returns historical presentation metadata; current V5 progress comes from Core events.
     #[must_use]
     pub const fn public_note(&self) -> Option<&AskResearchDecisionNote> {
         self.public_note.as_ref()
@@ -1433,7 +1433,7 @@ mod tests {
     #[test]
     fn valid_search_executes_exactly_one_read_action() -> Result<(), Box<dyn Error>> {
         let mut fixture = turn_fixture(vec![provider_response(
-            r#"{"schema_version":4,"public_note":{"goal":"Controller finden","finding_kind":"hypothesis","finding":"Die Implementierung muss noch lokalisiert werden.","finding_source_refs":[],"gap":"Aktuelle Quelle","next_step":"Nach dem Controller suchen"},"action":{"kind":"search","query":"controller","limit":5}}"#,
+            r#"{"schema_version":5,"action":{"kind":"search","query":"controller","limit":5}}"#,
         )?])?;
         let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
         let provider = ScriptedProvider {
@@ -1459,10 +1459,7 @@ mod tests {
             return Err("valid search was rejected".into());
         };
         assert!(matches!(execution.action(), AgentAction::Search(_)));
-        assert_eq!(
-            execution.public_note().map(|note| note.goal.as_str()),
-            Some("Controller finden")
-        );
+        assert!(execution.public_note().is_none());
         assert_eq!(
             execution.charge().action(),
             Some(AgentTurnActionClass::Search)
@@ -1497,44 +1494,54 @@ mod tests {
 
     #[test]
     fn invalid_primary_and_repair_never_cross_the_tool_boundary() -> Result<(), Box<dyn Error>> {
-        let mut fixture = turn_fixture(vec![
-            provider_response("not-json")?,
-            provider_response(r#"{"schema_version":1,"action":{"kind":"shell"}}"#)?,
-        ])?;
-        let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
-        let provider = ScriptedProvider {
-            provider_id: fixture.profile.provider_id().clone(),
-            responses: Mutex::new(fixture.responses),
-        };
-        let tools = CountingReadTools {
-            calls: AtomicUsize::new(0),
-        };
-        let recovery = TestRecoveryStore::default();
-
-        let outcome = futures::executor::block_on(
-            ExecuteReadOnlyAgentTurn::new(&compiler, &provider, &tools, &recovery).execute(
-                &fixture.run,
-                &fixture.input,
-                timestamp(5)?,
-                &TestControl,
+        let injected_note = r#"{"schema_version":5,"action":{"kind":"search","query":"controller","limit":5},"public_note":{"goal":"untrusted injected status"}}"#;
+        for (primary, repaired, code) in [
+            (
+                "not-json",
+                r#"{"schema_version":5,"action":{"kind":"shell"}}"#,
+                "unknown_action",
             ),
-        )?;
-        let event = outcome.record(&mut fixture.run, event_id(20), timestamp(20)?)?;
+            (injected_note, injected_note, "unknown_or_missing_field"),
+        ] {
+            let mut fixture = turn_fixture(vec![
+                provider_response(primary)?,
+                provider_response(repaired)?,
+            ])?;
+            let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
+            let provider = ScriptedProvider {
+                provider_id: fixture.profile.provider_id().clone(),
+                responses: Mutex::new(fixture.responses),
+            };
+            let tools = CountingReadTools {
+                calls: AtomicUsize::new(0),
+            };
+            let recovery = TestRecoveryStore::default();
 
-        let AgentTurnOutcome::Rejected(rejected) = outcome else {
-            return Err("invalid repaired output executed".into());
-        };
-        assert!(
-            matches!(rejected.reason(), AgentTurnRejectionReason::InvalidActionAfterRepair(failure) if failure.repair_code() == "unknown_or_missing_field")
-        );
-        assert_eq!(rejected.charge().repair(), AgentTurnRepairUsage::One);
-        assert_eq!(rejected.charge().action(), None);
-        assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
-        assert_eq!(recovery.begins.load(Ordering::SeqCst), 0);
-        assert_eq!(fixture.run.usage().turn_count(), 1);
-        assert_eq!(fixture.run.usage().action_count(), 0);
-        assert_eq!(fixture.run.usage().repair_count(), 1);
-        assert_eq!(event.payload().code(), RunEventCode::InvalidModelOutput);
+            let outcome = futures::executor::block_on(
+                ExecuteReadOnlyAgentTurn::new(&compiler, &provider, &tools, &recovery).execute(
+                    &fixture.run,
+                    &fixture.input,
+                    timestamp(5)?,
+                    &TestControl,
+                ),
+            )?;
+            let event = outcome.record(&mut fixture.run, event_id(20), timestamp(20)?)?;
+
+            let AgentTurnOutcome::Rejected(rejected) = outcome else {
+                return Err("invalid repaired output executed".into());
+            };
+            assert!(
+                matches!(rejected.reason(), AgentTurnRejectionReason::InvalidActionAfterRepair(failure) if failure.repair_code() == code)
+            );
+            assert_eq!(rejected.charge().repair(), AgentTurnRepairUsage::One);
+            assert_eq!(rejected.charge().action(), None);
+            assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
+            assert_eq!(recovery.begins.load(Ordering::SeqCst), 0);
+            assert_eq!(fixture.run.usage().turn_count(), 1);
+            assert_eq!(fixture.run.usage().action_count(), 0);
+            assert_eq!(fixture.run.usage().repair_count(), 1);
+            assert_eq!(event.payload().code(), RunEventCode::InvalidModelOutput);
+        }
         Ok(())
     }
 
@@ -1572,7 +1579,7 @@ mod tests {
                         serde_json::json!({"kind":kind,"step_id":step.to_string(),"update":{"kind":"record_result","summary":"unverified result"}})
                     }
                 };
-                let valid = serde_json::json!({"schema_version":4,"public_note":{"goal":"Current step","finding_kind":"hypothesis","finding":"Verification remains open","finding_source_refs":[],"gap":"Verification","next_step":"Execute current step"},"action":action});
+                let valid = serde_json::json!({"schema_version":5,"action":action});
                 let mut wrong = valid.clone();
                 wrong["action"][field] = serde_json::json!("ff".repeat(32));
                 let final_document = if corrected { &valid } else { &wrong };
@@ -1710,7 +1717,7 @@ mod tests {
                 let mut fixture = turn_fixture(Vec::new())?;
                 let index = patch_index(snapshot(), IndexRunId::from_bytes([12; 32]))?;
                 let step = fixture.input.current_step_id();
-                let valid = serde_json::json!({"schema_version":4,"public_note":{"goal":"Current step","finding_kind":"hypothesis","finding":"Check remains open","finding_source_refs":[],"gap":"Verification","next_step":"Apply scoped update"},"action":{
+                let valid = serde_json::json!({"schema_version":5,"action":{
                     "kind":"apply_patch","run_id":fixture.run.id().to_string(),"worktree_id":fixture.input.project().worktree().id().to_string(),"snapshot_id":snapshot().to_string(),"step_id":step.to_string(),
                     "verification_spec_id":fixture.input.task_ledger().step(step).ok_or("step")?.definition().verification_spec().id().to_string(),"rationale":"current scoped change",
                     "operations":[{"kind":"update","path":"existing.rs","expected_hash":"07".repeat(32),"content":"changed\n"}]
@@ -1896,7 +1903,7 @@ mod tests {
     fn denied_tool_attempt_is_durable_before_invocation_and_then_terminal()
     -> Result<(), Box<dyn Error>> {
         let mut fixture = turn_fixture(vec![provider_response(
-            r#"{"schema_version":4,"public_note":{"goal":"Controller finden","finding_kind":"hypothesis","finding":"Die Implementierung muss noch lokalisiert werden.","finding_source_refs":[],"gap":"Aktuelle Quelle","next_step":"Nach dem Controller suchen"},"action":{"kind":"search","query":"controller","limit":5}}"#,
+            r#"{"schema_version":5,"action":{"kind":"search","query":"controller","limit":5}}"#,
         )?])?;
         let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
         let provider = ScriptedProvider {

@@ -343,6 +343,15 @@ der gesamte Index in den Prompt kopiert noch Originale nachgeladen oder Modellwe
 korrigiert. Dieselbe Publikation gilt für Primär- und Repairantwort; sie ersetzt
 keine Live-Frischeprüfung und erteilt keine Schreibfreigabe.
 
+Neue normale Agentturns verwenden nach
+[ADR-0087](adrs/0087-agentaktionen-ohne-modellstatusnotiz.md) das AgentAction-V5-
+Schema ohne modellgenerierten Statusblock. Das ausführbare Aktionsschema bleibt
+gegenüber V4 exakt gleich. Bekannte ID-Konstanten sowie das vollständige tatsächliche
+Schema und Systemframing werden weiterhin vor Retrieval gezählt und im Digest
+gebunden. Ziel, aktueller Schritt und Verifikationszustand bleiben Pflichtkontext;
+reale Fortschrittsereignisse bleiben Core-eigen. Historische V3/V4-Schemas und die
+gesonderten Replan-Verträge werden nicht umgeschrieben.
+
 `ContextCompilerPolicyVersion::V5` behält den vollständigen kompakten L0-Repository-Anchor aus V2
 vor allen optionalen gerankten L1-/L2-Einträgen. Package- und Entrypointmengen erscheinen in L0 als
 Anzahlen; konkrete IDs werden nicht dort und später erneut bezahlt, sondern bleiben in den
