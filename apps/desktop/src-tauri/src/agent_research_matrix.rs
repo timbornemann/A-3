@@ -94,9 +94,27 @@ fn missing_concepts(family: usize, answer: &str) -> Vec<&'static str> {
     };
     groups
         .iter()
-        .filter(|alternatives| !alternatives.iter().any(|s| lower.contains(s)))
+        .filter(|alternatives| !alternatives.iter().any(|s| contains_concept(&lower, s)))
         .map(|alternatives| alternatives[0])
         .collect()
+}
+
+fn contains_concept(answer: &str, concept: &str) -> bool {
+    match concept {
+        "add_task"
+        | "trigger_task_created"
+        | "on_task_created"
+        | "_log"
+        | "write"
+        | "abspath"
+        | "dispatch"
+        | "get_task_response"
+        | "get_task"
+        | "dictreader" => answer
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .any(|identifier| identifier == concept),
+        _ => answer.contains(concept),
+    }
 }
 
 fn matrix_case_passed(
@@ -415,6 +433,28 @@ fn research_matrix_rubric_recognizes_typographic_hyphens_without_inventing_conce
 }
 
 #[test]
+fn research_matrix_rubric_requires_whole_method_identifiers() {
+    let audit = "add_task trigger_task_created on_task_created _log output.write audit_log.txt os.path.abspath working directory append";
+    assert!(missing_concepts(1, audit).is_empty());
+    for (method, replacement) in [
+        ("output.write", "Writer"),
+        ("_log ", ""),
+        ("add_task ", "batch_add_task "),
+    ] {
+        let missing = missing_concepts(1, &audit.replace(method, replacement));
+        assert!(!missing.is_empty(), "substring accepted as {method}");
+    }
+    let rest = "Dispatcher get_task_response KeyError 404 200";
+    assert!(missing_concepts(2, rest).contains(&"dispatch"));
+    assert!(missing_concepts(2, rest).contains(&"get_task"));
+    for method in ["write", "_log", "get_task"] {
+        let decorated = format!("`object.{method}(value)`");
+        let family = if method == "get_task" { 2 } else { 1 };
+        assert!(!missing_concepts(family, &decorated).contains(&method));
+    }
+}
+
+#[test]
 fn research_matrix_cannot_pass_a_question_or_unfinished_work_with_all_keywords() {
     let answer = "QUESTION: Confirm PLAN: import-csv DictReader project_id title add_task UTF-8 tests invalid?";
     let missing = missing_concepts(3, answer);
@@ -665,7 +705,7 @@ fn research_approved_model_matrix() -> Result<(), Box<dyn Error>> {
                             .lock()
                             .map_err(|_| "fixture diagnostics poisoned")?
                             .clone();
-                        let record = serde_json::json!({"fixture":"research-eval-v1","rubric_version":2,"family":family,"variant":variant,"repeat":repeat,"completed":completed,"work_ready":work_ready,"passed":passed,"missing":missing,"error":error,"calls":model.calls.load(Ordering::SeqCst),"adaptive_reads":adaptive_reads,"repeated_adaptive_reads":repeated_adaptive_reads,"user_halt":user_halt,"context_utf8_bytes":model.bytes.load(Ordering::SeqCst),"elapsed_ms":started.elapsed().as_millis(),"answer":answer,"work_summary":work_summary,"empty_analysis_notes":empty_notes,"decision_diagnostics":decisions});
+                        let record = serde_json::json!({"fixture":"research-eval-v1","rubric_version":3,"family":family,"variant":variant,"repeat":repeat,"completed":completed,"work_ready":work_ready,"passed":passed,"missing":missing,"error":error,"calls":model.calls.load(Ordering::SeqCst),"adaptive_reads":adaptive_reads,"repeated_adaptive_reads":repeated_adaptive_reads,"user_halt":user_halt,"context_utf8_bytes":model.bytes.load(Ordering::SeqCst),"elapsed_ms":started.elapsed().as_millis(),"answer":answer,"work_summary":work_summary,"empty_analysis_notes":empty_notes,"decision_diagnostics":decisions});
                         writeln!(report, "{record}")?;
                         report.flush()?;
                         let mut summary = record;

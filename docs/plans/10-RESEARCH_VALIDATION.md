@@ -1811,3 +1811,45 @@ Produktionsverhalten oder Prüfumfang zu lockern. Danach liefen beide Gates erne
 vollständig. Das eingefrorene Live-Binary enthält denselben Produktionscode;
 die letzten Änderungen betreffen ausschließlich Tests. Keine Frontend-Änderung,
 keine plattformübergreifende UI-/Releaseabnahme behauptet.
+
+### Rubrik v3: vollständige Methodenbezeichner, keine umgeschriebenen Altreports
+
+Der neue Regressionstest scheitert vor der Korrektur an `Writer` als vermeintlichem
+`write`-Nachweis. Nach der Korrektur bestehen alle sechs `research_matrix_`-Tests;
+zusätzlich werden `audit_log.txt` statt `_log`, `batch_add_task` statt `add_task`
+und `get_task_response` statt `get_task` abgewiesen. Qualifizierte echte Aufrufe
+bleiben gültig. Produktionsprompts, Quelle, Fragen, Budgets und Berechtigungen
+sind unverändert. Neue JSONL-Zeilen tragen `rubric_version: 3`; alte v1/v2-Berichte
+werden nicht geändert. Der Worttest ist weiterhin kein Beweis für Aufrufreihenfolge
+oder behauptete Nebenwirkungen.
+
+Eingefrorenes Binary `research-rubric-v3-20260907/research-tests.exe`, SHA-256
+`c59a91062f373a24960e9fe5f71579a544c8b9385c7f5586f2d3386995f8d855`.
+
+| Modell | Dauer | Abschluss / Work ready | Rubrik v3 | Nutzerhalte / adaptive Reads |
+| --- | --- | --- | --- | --- |
+| Luna | 167,72 s | 12/12 | 10/12 | 0 / 0 |
+| Qwen 8k | 215,37 s | 12/12 | 9/12 | 0 / 0 |
+
+Luna lässt `write` in Audit 1:1 und 1:2 aus, Qwen in allen drei Audit-Varianten.
+Die Sichtprüfung bestätigt die Auslassungen; die Antworten beschreiben das Schreiben
+in Prosa, nennen aber nicht die verlangte vollständige Methodenkette. Luna 1:2
+bezeichnet zudem `open(...)` selbst als Writer. Die unbelegte Behauptung, der
+Aufruf von `save_tasks` speichere tatsächlich die Aufgabenliste, tritt in Luna 1:1
+und 1:2 erneut auf. Beide Live-Matrixtests enden deshalb korrekt rot (Exit 101),
+nicht wegen Rechercheabbruch oder Nutzerfrage. Die Quellen bleiben bytegleich.
+
+SHA-256:
+
+- `eval-1788794346926.jsonl`: `22bf0b8dfad1810b356d6e5b91f147261ffa3c98ff5dafb9474173f3c5c6305f`
+- `eval-1788794362960.jsonl`: `858b7e44b9d8850978004f36258bd90b928e068f8c9baf986c8c6874afbbe28f`
+- `research-rubric-v3-20260907/luna-matrix.log`: `7b92028a7d7daf81769688833a885c53b92754315afcec43b4ed7b8589bdde63`
+- `research-rubric-v3-20260907/qwen-matrix.log`: `9a2a5c43d52af9c23f853b9a25ef7cadda572b8f1d3a65370bb71f3ad720ea75`
+
+Lokale Gates: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
+--all-features --offline --locked --jobs 2 -- -D warnings` und `cargo test --workspace
+--all-features --offline --locked --jobs 2 -- --test-threads=1` enden mit Exit 0.
+Logs: `research-rubric-v3-red.log`, `research-rubric-v3-targeted.log`,
+`research-rubric-v3-clippy.log`, `research-rubric-v3-workspace.log`.
+Die verschärfte Auswertung behebt den Messfehler, nicht die jetzt sichtbaren
+Inhaltsdefekte. Diese bleiben Teil der offenen Modellabnahme.

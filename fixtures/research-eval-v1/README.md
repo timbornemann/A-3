@@ -84,6 +84,13 @@ visible. Originals are checked byte-for-byte after every case. No private source
   must not be reported as absent. Required concepts and original fixture questions are
   unchanged. This does not normalize code identifiers for evidence admission. Old
   reports without a version keep their original v1 meaning and are never rewritten.
+- Rubric v3 additionally requires complete identifiers for the fixture's concrete
+  methods and `DictReader`. `Writer` cannot satisfy `write`, `audit_log.txt` cannot
+  satisfy `_log`, and `get_task_response` cannot satisfy `get_task`. Qualified calls,
+  Markdown code formatting and parentheses remain valid. Prose concepts retain the
+  previous matching rules. This is still only a necessary-term check, not static
+  analysis, call-order validation or proof of claimed side effects. V1/v2 reports
+  keep their original scores; comparisons must name the rubric version explicitly.
 - `user_halt` also catches a returned `QUESTION:`. Baseline has only completion state;
   missing newer metric fields mean **unavailable**, never zero.
 - `adaptive_reads` counts durable access starts, and `repeated_adaptive_reads` counts

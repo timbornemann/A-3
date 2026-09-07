@@ -47,9 +47,12 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
       Rot→Grün, vollständige lokale Gates, Wiederanlauf und drei echte Luna-Done-
       Läufe bestehen. Die übrigen Modellfehler bleiben gesondert offen.
 
-- [ ] Begriffsrubrik gegen Teilstring-Falschpositive härten: konkrete Methoden wie
+- [x] Begriffsrubrik gegen Teilstring-Falschpositive härten: konkrete Methoden wie
       `write`, `_log` und `get_task` müssen als vollständige Bezeichner vorkommen;
       alte Berichte nicht umschreiben und semantische Gegenbeispiele getrennt halten.
+      Rot→Grün und vollständige lokale Gates bestehen. Die unveränderten Live-Fragen
+      ergeben mit Rubrik v3 bei Luna 10/12, bei Qwen 9/12 Begriffstreffer trotz jeweils
+      12 fertiger Fälle; fehlendes `write` und unbelegte Persistenz bleiben Inhaltsfehler.
 
 - [x] Redundante Modellstatusnotiz aus neuen normalen AgentAction-V5-Turns entfernen;
       Core-Fortschritt, strikte Legacy-/Replan-Verträge und alle Aktionsgrenzen erhalten,
