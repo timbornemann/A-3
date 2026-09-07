@@ -22,6 +22,7 @@ use a3_provider::{
 enum ExplicitResearchTarget {
     Luna,
     GoogleGemma,
+    GoogleFlash,
 }
 
 impl ExplicitResearchTarget {
@@ -30,6 +31,7 @@ impl ExplicitResearchTarget {
             (None, None) => Ok(None),
             (Some("openai"), Some("gpt-5.6-luna")) => Ok(Some(Self::Luna)),
             (Some("gemini"), Some("gemma-4-26b-a4b-it")) => Ok(Some(Self::GoogleGemma)),
+            (Some("gemini"), Some("gemini-3.8-flash")) => Ok(Some(Self::GoogleFlash)),
             _ => Err("explicit research provider/model pair is not reviewed"),
         }
     }
@@ -38,6 +40,7 @@ impl ExplicitResearchTarget {
         match self {
             Self::Luna => (ModelProviderKind::OpenAi, "gpt-5.6-luna"),
             Self::GoogleGemma => (ModelProviderKind::Gemini, "gemma-4-26b-a4b-it"),
+            Self::GoogleFlash => (ModelProviderKind::Gemini, "gemini-3.8-flash"),
         }
     }
 
@@ -174,7 +177,7 @@ impl LiveResearchModel {
             .ok_or("explicit research provider credential is unavailable")?;
         let origin = endpoint.canonical_origin();
         match target {
-            ExplicitResearchTarget::GoogleGemma => {
+            ExplicitResearchTarget::GoogleGemma | ExplicitResearchTarget::GoogleFlash => {
                 Self::probe_provider(
                     Arc::new(GeminiModelProvider::new(
                         GeminiEndpoint::parse(origin)?,
@@ -293,6 +296,7 @@ fn research_live_target_requires_an_exact_reviewed_pair() -> Result<(), Box<dyn 
     for target in [
         ExplicitResearchTarget::Luna,
         ExplicitResearchTarget::GoogleGemma,
+        ExplicitResearchTarget::GoogleFlash,
     ] {
         let (kind, model) = target.identity();
         assert_eq!(

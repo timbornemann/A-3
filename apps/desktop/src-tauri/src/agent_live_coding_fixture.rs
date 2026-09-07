@@ -15,49 +15,9 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const FILES: [(&str, &str); 5] = [
-    (
-        "increment.py",
-        include_str!("../../../../fixtures/agent-coding-eval-v1/small-local-bugfix/increment.py"),
-    ),
-    (
-        "tests/test_increment.py",
-        include_str!(
-            "../../../../fixtures/agent-coding-eval-v1/small-local-bugfix/tests/test_increment.py"
-        ),
-    ),
-    (
-        "pytest.py",
-        include_str!("../../../../fixtures/agent-coding-eval-v1/small-local-bugfix/pytest.py"),
-    ),
-    (
-        "pyproject.toml",
-        include_str!("../../../../fixtures/agent-coding-eval-v1/small-local-bugfix/pyproject.toml"),
-    ),
-    (
-        "unrelated.txt",
-        "Preserve this independently owned fixture content.\n",
-    ),
-];
-
-fn original_preflight_delivered(text: &str) -> bool {
-    text.contains("[ORIGINAL_SOURCE path=increment.py ") && text.contains(FILES[0].1.trim_end())
-}
-
-#[test]
-fn original_preflight_checks_actual_typed_fixture_body() {
-    let current = format!(
-        "[ORIGINAL_SOURCE path=increment.py hash=fixture]\n{}\n[/ORIGINAL_SOURCE]",
-        FILES[0].1
-    );
-    assert!(original_preflight_delivered(&current));
-    assert!(!original_preflight_delivered(
-        "L3 file path=increment.py hash=fixture"
-    ));
-    assert!(!original_preflight_delivered(
-        "[ORIGINAL_SOURCE path=increment.py hash=fixture]\ndef increment(value):\n    return value + 2"
-    ));
-}
+#[path = "agent_live_coding_cases.rs"]
+mod cases;
+use cases::LiveCodingCase;
 
 #[derive(Debug)]
 struct ReadOnlySettings(StoredDesktopSettings);
@@ -97,22 +57,13 @@ fn now() -> Result<AgentRunTimestamp, Box<dyn Error>> {
     )?)
 }
 
-fn patch_scope(
-    operation: AgentApprovalFileOperation,
-    source: Option<&str>,
-    target: Option<&str>,
-) -> bool {
-    operation == AgentApprovalFileOperation::Update
-        && source == Some("increment.py")
-        && target == Some("increment.py")
-}
-
-fn check_scope(action: &AgentApprovalAction) -> Result<(), Box<dyn Error>> {
+fn check_scope(case: LiveCodingCase, action: &AgentApprovalAction) -> Result<(), Box<dyn Error>> {
     let allowed = match action {
         AgentApprovalAction::Patch(patch) => {
-            patch.files().len() == 1
+            !patch.files().is_empty()
+                && patch.files().len() <= case.sources().len()
                 && patch.files().iter().all(|file| {
-                    patch_scope(
+                    case.patch_scope(
                         file.operation(),
                         file.source_path()
                             .and_then(|p| std::str::from_utf8(p.as_bytes()).ok()),
@@ -152,9 +103,45 @@ fn process_scope(
 
 /// Independent physical check; the model cannot change the locked runner or tests.
 fn run_locked_tests(path: &std::path::Path, control: &JobContext) -> Result<bool, Box<dyn Error>> {
-    let mut child = std::process::Command::new("python")
-        .args(["-B", "-m", "pytest"])
-        .current_dir(path)
+    run_check(
+        std::process::Command::new("python")
+            .args(["-B", "-m", "pytest"])
+            .current_dir(path),
+        || control.cancellation_token().is_cancelled(),
+    )
+}
+
+fn run_oracle(
+    case: LiveCodingCase,
+    path: &std::path::Path,
+    cancelled: impl Fn() -> bool,
+) -> Result<bool, Box<dyn Error>> {
+    run_check(
+        std::process::Command::new("python")
+            .args(["-I", "-B", "-c", cases::ORACLE, case.id()])
+            .arg(path)
+            .current_dir(path),
+        cancelled,
+    )
+}
+
+fn require_oracle_passed(passed: bool) -> Result<(), Box<dyn Error>> {
+    if passed {
+        Ok(())
+    } else {
+        Err("Done alone is insufficient: independent additional-input oracle failed".into())
+    }
+}
+
+// Only the two closed supervisor checks above use this helper; no model-supplied argv.
+fn run_check(
+    command: &mut std::process::Command,
+    cancelled: impl Fn() -> bool,
+) -> Result<bool, Box<dyn Error>> {
+    if cancelled() {
+        return Err("independent locked test cancelled before spawn".into());
+    }
+    let mut child = command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -170,8 +157,7 @@ fn run_locked_tests(path: &std::path::Path, control: &JobContext) -> Result<bool
                 return Err(error.into());
             }
         }
-        if control.cancellation_token().is_cancelled() || start.elapsed() > Duration::from_secs(30)
-        {
+        if cancelled() || start.elapsed() > Duration::from_secs(30) {
             let _kill = child.kill();
             let _joined = child.wait();
             return Err("independent locked test cancelled or timed out".into());
@@ -278,7 +264,8 @@ fn live_coding_scope_rejects_process_scope_changes() -> Result<(), Box<dyn Error
 
 #[test]
 fn live_coding_scope_rejects_test_rewrites_moves_and_extra_paths() {
-    assert!(patch_scope(
+    let case = LiveCodingCase::Bugfix;
+    assert!(case.patch_scope(
         AgentApprovalFileOperation::Update,
         Some("increment.py"),
         Some("increment.py")
@@ -288,11 +275,7 @@ fn live_coding_scope_rejects_test_rewrites_moves_and_extra_paths() {
         AgentApprovalFileOperation::Move,
         AgentApprovalFileOperation::Delete,
     ] {
-        assert!(!patch_scope(
-            operation,
-            Some("increment.py"),
-            Some("increment.py")
-        ));
+        assert!(!case.patch_scope(operation, Some("increment.py"), Some("increment.py")));
     }
     for path in [
         "tests/test_increment.py",
@@ -302,11 +285,7 @@ fn live_coding_scope_rejects_test_rewrites_moves_and_extra_paths() {
         "../increment.py",
         "increment.py/other",
     ] {
-        assert!(!patch_scope(
-            AgentApprovalFileOperation::Update,
-            Some(path),
-            Some(path)
-        ));
+        assert!(!case.patch_scope(AgentApprovalFileOperation::Update, Some(path), Some(path)));
     }
 }
 
@@ -327,13 +306,17 @@ fn agent_approved_live_coding_fixture() -> Result<(), Box<dyn Error>> {
 }
 
 async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
+    let case = LiveCodingCase::parse(super::optional_env("A3_LIVE_AGENT_CASE")?.as_deref())?;
     let generation = match std::env::var("A3_LIVE_AGENT_GENERATION").as_deref() {
         Ok("staged") => AgentActionGeneration::SelectThenFill,
         Ok("guided") => AgentActionGeneration::ReviewThenSelect,
         Ok("baseline") | Err(std::env::VarError::NotPresent) => AgentActionGeneration::SingleAction,
         _ => return Err("A3_LIVE_AGENT_GENERATION must be baseline, staged or guided".into()),
     };
-    println!("A3_LIVE_CODING generation={generation:?}");
+    println!(
+        "A3_LIVE_CODING version=2 case={} generation={generation:?}",
+        case.id()
+    );
     let catalog_path = super::optional_env("A3_LIVE_AGENT_CATALOG")?
         .or(super::optional_env("A3_CONFIGURED_RESEARCH_CATALOG")?)
         .ok_or("live Agent requires an explicit read-only settings catalog")?;
@@ -365,13 +348,19 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
     );
     let repository = support::TempDirectory::new()?;
     repository.git(["init", "--initial-branch=main"])?;
-    for (path, content) in FILES {
+    for (path, content) in case.files() {
         repository.write(path, content)?;
     }
     repository.git(["add", "."])?;
     assert!(
         !run_locked_tests(repository.path(), control)?,
         "fixture must start red"
+    );
+    assert!(
+        !run_oracle(case, repository.path(), || control
+            .cancellation_token()
+            .is_cancelled())?,
+        "independent oracle must start red"
     );
     let project = RepositoryInspector::new().inspect(repository.path())?;
     let data = support::TempDirectory::new()?;
@@ -418,23 +407,36 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
     let step_id = TaskStepId::from_bytes([2; 32]);
     let task_id = TaskId::from_bytes([3; 32]);
     let run_id = AgentRunId::from_bytes([4; 32]);
-    let goal = GoalContract::initial(task_id, GoalContractDraft::new(
-        GoalObjective::try_from_string("Fix increment(value) in increment.py to increase its input by exactly one. Change only increment.py. Do not modify tests, pytest.py, pyproject.toml or unrelated.txt. Run the existing python -m pytest command and verify the actual result.".to_owned())?,
-        vec![AcceptanceCriterion::new(criterion, AcceptanceCriterionStatement::try_from_string("The unchanged existing increment tests pass after the fix".to_owned())?)],
-        Vec::new(), Vec::new(), Vec::new(), SuccessVerification::try_from_string("Run python -m pytest using the confirmed command profile".to_owned())?)?,
-        GoalContractTimestamp::from_unix_millis(now()?.unix_millis())?);
+    let goal = GoalContract::initial(
+        task_id,
+        GoalContractDraft::new(
+            GoalObjective::try_from_string(case.objective().to_owned())?,
+            vec![AcceptanceCriterion::new(
+                criterion,
+                AcceptanceCriterionStatement::try_from_string(
+                    "The unchanged existing tests pass after the requested implementation"
+                        .to_owned(),
+                )?,
+            )],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            SuccessVerification::try_from_string(
+                "Run python -m pytest using the confirmed command profile".to_owned(),
+            )?,
+        )?,
+        GoalContractTimestamp::from_unix_millis(now()?.unix_millis())?,
+    );
     let definition = TaskStepDefinition::new(
         step_id,
         None,
-        TaskStepOutcome::try_from_string(
-            "Fix increment.py and prove the unchanged tests pass".to_owned(),
-        )?,
+        TaskStepOutcome::try_from_string(case.outcome().to_owned())?,
         TaskStepRationale::try_from_string(
-            "Correct the off-by-one behavior with the existing test".to_owned(),
+            "Implement the requested behavior and verify with existing tests".to_owned(),
         )?,
         Vec::new(),
         vec![ExpectedTaskEvidence::try_from_string(
-            "Current increment.py and passing locked test result".to_owned(),
+            case.evidence().to_owned(),
         )?],
         VerificationSpec::command(
             VerificationSpecId::from_bytes([5; 32]),
@@ -527,12 +529,13 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
     // A diagnostic compile must not complete the production attempt's monotone progress.
     match preflight.compile(&input, &PreflightControl(control)).await {
         Ok(compiled) => {
-            let original_delivered = compiled
+            let originals_delivered: usize = compiled
                 .request()
                 .messages()
                 .iter()
-                .any(|message| original_preflight_delivered(message.content()));
-            if !original_delivered {
+                .map(|message| case.originals_delivered(message.content()))
+                .sum();
+            if originals_delivered == 0 {
                 println!(
                     "A3_LIVE_CODING preflight_code_allowance={} prompt_tokens={}",
                     compiled
@@ -557,7 +560,11 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
                 }
                 return Err("normal agent preflight omitted the current original source".into());
             }
-            println!("A3_LIVE_CODING context_preflight=passed original_source=delivered");
+            // Initial hydration is bounded; further originals may require normal safe reads.
+            println!(
+                "A3_LIVE_CODING context_preflight=passed original_sources={originals_delivered} required_sources={}",
+                case.sources().len()
+            );
         }
         Err(error) => {
             println!("A3_LIVE_CODING context_preflight={error:?}");
@@ -624,10 +631,11 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
         // Only durable, content-free receipts; process application is not test success.
         // The store bounds the history, and at most 32 entries are printed per attempt.
         println!(
-            "A3_LIVE_CODING mutation_receipts={} omitted={} source_changed={} snapshot_changed={}",
+            "A3_LIVE_CODING mutation_receipts={} omitted={} changed_sources={} required_sources={} snapshot_changed={}",
             mutations.len(),
             mutations.len().saturating_sub(32),
-            std::fs::read(repository.path().join(FILES[0].0))? != FILES[0].1.as_bytes(),
+            case.changed_sources(repository.path())?,
+            case.sources().len(),
             run.current_snapshot_id() != indexed.published_index().run().snapshot_id()
         );
         for (ordinal, mutation) in mutations.iter().take(32).enumerate() {
@@ -665,12 +673,13 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
         }
         if outcome.is_err() || run.state() == AgentControllerState::Failed {
             println!(
-                "A3_LIVE_CODING failure_physical_test_passed={} protected_files_unchanged={}",
+                "A3_LIVE_CODING failure_physical_test_passed={} independent_oracle_passed={} protected_files_unchanged={} settings_unchanged={}",
                 run_locked_tests(repository.path(), control)?,
-                FILES.iter().skip(1).all(|(path, content)| std::fs::read(
-                    repository.path().join(path)
-                )
-                .is_ok_and(|bytes| bytes == content.as_bytes()))
+                run_oracle(case, repository.path(), || control
+                    .cancellation_token()
+                    .is_cancelled())?,
+                case.protected_unchanged(repository.path()),
+                LibsqlKnowledgeStore::read_settings_snapshot(catalog_path).await? == original
             );
         }
         outcome?;
@@ -687,7 +696,7 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
                 "nonterminal live Agent stopped without an actionable exact approval".into(),
             );
         };
-        check_scope(center.presentation().action())?;
+        check_scope(case, center.presentation().action())?;
         assert!(center.can_allow_once());
         let approval_id = ApprovalId::from_bytes([30 + attempt; 32]);
         let result = approve
@@ -741,27 +750,38 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
                 .and_then(TaskStepAttempt::verification)
                 .is_some_and(|v| v.passed() && !v.evidence_ids().is_empty())
     }));
-    for (path, content) in FILES.iter().skip(1) {
+    assert!(
+        run_locked_tests(repository.path(), control)?,
+        "physical post-run verification failed"
+    );
+    let oracle_passed = run_oracle(case, repository.path(), || {
+        control.cancellation_token().is_cancelled()
+    })?;
+    // Check preserved data after both physical executions, not just before them.
+    for (path, content) in case.protected() {
         assert_eq!(
             std::fs::read(repository.path().join(path))?,
             content.as_bytes(),
             "protected fixture changed: {path}"
         );
     }
-    assert_ne!(
-        std::fs::read(repository.path().join("increment.py"))?,
-        FILES[0].1.as_bytes()
-    );
-    assert!(
-        run_locked_tests(repository.path(), control)?,
-        "physical post-run verification failed"
+    assert_eq!(
+        case.changed_sources(repository.path())?,
+        case.sources().len(),
+        "all requested source files must change"
     );
     assert_eq!(
         LibsqlKnowledgeStore::read_settings_snapshot(catalog_path).await?,
         original
     );
     println!(
-        "A3_LIVE_CODING passed=true done=true verified=true protected_files_unchanged=true settings_unchanged=true"
+        "A3_LIVE_CODING independent_oracle_passed={oracle_passed} protected_files_unchanged=true settings_unchanged=true"
+    );
+    // An expected negative live result must reach the owned supervisor as an error,
+    // not panic its worker and obscure the oracle failure with a closed-channel message.
+    require_oracle_passed(oracle_passed)?;
+    println!(
+        "A3_LIVE_CODING passed=true done=true verified=true independent_oracle_passed=true protected_files_unchanged=true settings_unchanged=true"
     );
     Ok(())
 }

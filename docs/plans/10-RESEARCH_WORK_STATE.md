@@ -1,7 +1,7 @@
 # Plan 10: Verbindliche Rechercheführung
 
 Status: Deterministische Baseline umgesetzt; fortgesetzte Modell- und Implementierungsabnahme läuft.\
-Stand: 2026-09-07. Ausgangscommit: `31e9db7`.
+Stand: 2026-09-08. Ausgangscommit: `31e9db7`.
 
 Entscheidungen: [ADR-0047](../adrs/0047-verbindlicher-recherchearbeitsstand.md),
 [ADR-0048](../adrs/0048-rungebundene-replan-recherche.md),
@@ -39,6 +39,20 @@ oder äußeren Recherchebudgets. Berechtigungsgrenzen und wirklich folgenreiche
 fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
+
+- [x] Die V2-Liveabnahme um echte Modelländerungen über zwei Module und
+      unabhängige zusätzliche Testeingaben erweitern. Das dadurch nachgewiesene
+      Verdrängen aktueller Originale durch optionale Metadaten mit
+      [ADR-0096](../adrs/0096-originalbudget-vor-optionalen-metadaten.md) und der
+      ausdrücklich großzügigeren Zielversorgung aus
+      [ADR-0097](../adrs/0097-grosszuegigere-optionale-codeversorgung.md) korrigieren.
+      Vollständige Gates und aktuelle Modellmatrix prüfen; Produktübernahme der
+      gestuften Strategien, normale Read-Frontier und volle Planübergabe bleiben
+      getrennte offene Nachweise.
+      Budget-/Context-/Scope-/Orakelregressionen und vollständige lokale Gates
+      bestehen. Alle 24 V8-Lives erhalten beide Originalmodule; sieben bestehen
+      die unabhängige Abnahme, vier weitere Done-Läufe werden vom Zusatzorakel
+      abgelehnt. Mehr Code behebt nicht die Read-Schleifen von Qwen/Google Flash.
 
 - [x] Die quittungsgebundene Nachentscheidung aus
       [ADR-0095](../adrs/0095-gefuehrte-nachentscheidung-nach-angewendeten-aenderungen.md)

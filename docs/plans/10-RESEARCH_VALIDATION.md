@@ -1,5 +1,206 @@
 # Plan 10: Verifikationsprotokoll
 
+## 2026-09-08: Größere Codeversorgung und unabhängige Live-Orakel (ADR-0096/0097)
+
+Ausgangspunkt `957fc75`. [Live-Coding V2](../../fixtures/agent-live-coding-v2/README.md)
+erweitert den echten nativen Modelllauf um die unveränderten öffentlichen
+Zwei-Modul-Startdateien und ein separat ausgeführtes, nicht in den Modell-Worktree
+kopiertes Orakel. Es prüft zusätzlich zwölf Increment-Werte beziehungsweise
+49 Preis-/Rabattkombinationen und 35 Rechnungen einschließlich Helferdelegation.
+Konstantantworten bestehen die alten sichtbaren Tests, scheitern aber jetzt
+nachweislich an den unabhängigen Regressionen. `Done` bleibt von der zusätzlichen
+physisch geprüften Korrektheit getrennt. Dies ist weiterhin kein voller
+Conversation-Plan→Agent-Übergang und kein allgemeiner Korrektheitsbeweis.
+
+Der erste eingefrorene V2-Build mit Context-Policy V7 scheitert bei Luna in allen
+vier Zwei-Modul-Vorprüfungen bereits vor Coding: nur 256 CodeAndEvidence-Tokens,
+kein aktueller Originalkörper. Keine Agentmutation oder Coding-Inferenz findet statt.
+Ein gezielt roter Context-Regressionstest mit längerem Ziel, wiederholtem Schema
+und offener Fehlerevidence bestätigt denselben Verdrängungsfehler.
+
+V8 priorisiert aktuelle Evidence nach allen Pflichtankern vor optionalen
+Projektmetadaten und Tool-Ergebnisanteilen. Der Nutzer erhöhte während der
+Umsetzung das gewünschte Zielbudget: ADR-0097 ergänzt deshalb die zuerst
+dokumentierte ADR-0096-Regel um 4096 optionale Referenztokens bei 16k, also 2048
+bei 8k. Bestehende größere Codebereiche werden nicht begrenzt. Nur tatsächlich
+verfügbarer Donorplatz wird übertragen; harte Gesamtgrenze, gezählte Pflichtbytes,
+Mindestanteile und Output-/Sicherheitsreserve bleiben unverändert. Die halbe
+Originalgrenze, höchstens zwei Safe-Reader-Seiten und alle Replan-Grenzen bleiben
+erhalten. Die Regression ist nach der Korrektur grün.
+
+Die aktualisierte ausdrückliche Modellauswahl ergänzt im geschlossenen nativen
+Testselektor `gemini-3.8-flash`; ein unbekanntes oder falsch gepaartes Modell bleibt
+abgelehnt. Kein Provider wird aktiviert, kein Katalog oder Profil gespeichert,
+kein Schlüssel ausgegeben. Für die fortgesetzte Matrix ersetzen Google Flash und
+lokales `gemma4:12b` die zuvor untersuchten Google-Gemma-/GPT-OSS-Fälle.
+
+Die gegenbalancierten V8-Zwei-Modul-Läufe verwenden A=`staged`, B=`guided` in
+Reihenfolge A1→B1→B2→A2. Luna bekommt jetzt beide Originalmodule und besteht
+alle vier Läufe einschließlich unabhängigem Orakel und unveränderten geschützten
+Dateien/Einstellungen. A benötigt jeweils vier, B jeweils drei Modellaufrufe.
+Die vollständige Matrix und abschließenden lokalen Gates sind ausgewertet;
+das gemischte Ergebnis rechtfertigt keine allgemeine Strategieübernahme.
+
+Die abgeschlossenen lokalen Vergleiche zeigen die Grenzen der erweiterten Aufgabe:
+
+- Qwen erhält beide Originalmodule, führt aber in allen vier Läufen 29–31
+  Read-Aktionen ohne Mutation aus. Die vorhandene 120-Sekunden-Versuchsgrenze
+  beendet den laufenden nächsten Turn. Ein größeres Kontextpaket verhindert
+  diesen Ablauf nicht. Die vorhandenen Logs identifizieren nicht jede konkrete
+  Leseanforderung; gleiche Schema-/Nachrichtengröße beweist keine identischen
+  Pfad-/Bereichsidentitäten. Typisierte Fortschrittsdiagnostik bleibt notwendig.
+- Granite: A1 und B1 ändern beide Dateien fehlerhaft, führen zwei rote Tests
+  aus und scheitern an `InvalidReplanAnalysisAfterRepair(Decode(InvalidValue))`.
+  A2 scheitert nach roten Tests an `RepeatedReplanRead`; B2 besteht vollständig.
+  Kein roter Test beendet den Schritt als verifiziert.
+- Ornith: A1 erzeugt nach acht Reads eine fehlerhafte Änderung und endet später
+  in `NoContentChange`; A2 hat unabhängig korrekten Code, erreicht aber wegen
+  derselben Ablehnung keinen verifizierten Runabschluss. B1 besteht; B2 erreicht
+  `Done` mit grünen alten Tests, scheitert jedoch am Zusatzorakel.
+- Gemma4 erreicht in allen vier Läufen `Done` mit grünen alten Tests. Nur B2
+  besteht zusätzlich das unabhängige Orakel. A1, B1 und A2 sind deshalb
+  ausdrücklich keine erfolgreichen Liveabnahmen.
+
+`NoContentChange` vergleicht weiterhin den vorgeschlagenen Inhalt mit dem vom
+Modell behaupteten Basishash, nicht automatisch mit aktuellen Datei-Bytes.
+Eine solche Ablehnung darf nicht als ausführbarer Prüfauftrag interpretiert werden.
+
+Damit sind bereits vier Done-Läufe mit unzureichender Verhaltensabdeckung
+sichtbar geworden. Der Test-Goal-Contract besitzt bewusst weiterhin nur die
+alte Testcommand-Verifikation; das Orakel ist ein zusätzlicher externer
+Abnahmeschritt, kein nachträglich injizierter Agentbeleg. Die vollständige
+Planübergabe mit ausreichend starken Kriterien ist weiter offen.
+Die erste V2-Version verwendete für das negative Orakel eine Assertion im
+besessenen Test-Worker; dessen Panic verursachte zusätzlich eine irreführende
+Closed-Channel-Meldung. Nach den eingefrorenen Messungen gibt dieselbe
+Erfolgsschranke einen normalen Fehler zurück. Die negative und positive
+Offline-Orakelregression prüfen diesen Rückgabepfad; Erfolgskriterien und
+Modellkontext ändern sich dadurch nicht.
+
+Eingefrorene Artefakte:
+
+- V2/V7-Vorprüfungen: `target/reports/agent-live-v2-20260908/agent-tests.exe`,
+  SHA-256 `6de3dd7db328640d5026e4e14f1392872e298bbb137ec025a7330b6f6190ae18`.
+- V2/V8 Luna: `target/reports/agent-live-v8-20260908/agent-tests.exe`,
+  SHA-256 `d69635cc587865a444534f265d70bced717a22483485f074e06b8ea137847446`.
+- V2/V8 mit zusätzlich zugelassenem Google-Flash-Testziel:
+  `target/reports/agent-live-v8-20260908/agent-tests-flash.exe`,
+  SHA-256 `5a98ab52a4219638ebca1868b8e74dff77499ef9fcbfbb1c37d4f6c0308ac23b`.
+  Gegenüber dem vorherigen V8-Build sind ausschließlich der Testselektor und sein
+  Scope-Test ergänzt; Harness, Budget, öffentliche Aufgaben und Profile identisch.
+  Innerhalb jedes A/B-Vergleichs ist das Binary unverändert. Lokale Modelle laufen
+  strikt nacheinander, während der Livevergleiche keine Builds.
+
+### Abgeschlossene Zwei-Modul-Matrix
+
+Abschließende Gates sind grün:
+
+- `cargo fmt --all -- --check`
+- `cargo test -p a3-domain context_pack --offline --locked --jobs 2` (7 Budgettests)
+- `cargo test -p a3-context --offline --locked --jobs 2` (7 Unit-/24 Context-Tests)
+- `cargo test -p a3-desktop --lib live_fixture::coding:: --offline --locked --jobs 2 -- --test-threads=1` (5 Offline-Regressionen; der Livefall bleibt opt-in)
+- `cargo test -p a3-desktop --lib research_live_target --offline --locked --jobs 2 -- --test-threads=1` (2 Scope-/Providergrenzen)
+- `cargo clippy --workspace --all-targets --all-features --offline --locked --jobs 2 -- -D warnings`
+- `cargo test --workspace --all-features --offline --locked --jobs 2 -- --test-threads=1`
+- `pnpm check:links` und `git diff --check`
+
+Die Gesamtsuite enthält den tatsächlichen Ein-/Zwei-Datei-Harness, unveränderte
+E9-Goldens, die Safe-Reader-/Live-Edit-Grenzen und den nativen
+`connection_lifecycle`-Test ohne Crash-Retry. Keine Frontendänderung. Die bekannte
+Node-25.6.1-statt-24.14.0-Warnung bleibt bestehen; der Linkcheck besteht mit
+142 Markdown-Dateien/588 lokalen Links. Alle Cargo-Prozesse verwenden
+`CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`.
+
+- Clippylog `target/reports/agent-live-v8-clippy.log`, SHA-256
+  `5bd6b8d054713a5670197904d2e9ac7089bd4b4392d0f8bb7f22a0818991f229`.
+- Workspace-Log `target/reports/agent-live-v8-workspace.log`, SHA-256
+  `3315c03b478339c1c64947dbf0dd2b1c082537c0358cbcbd55dad96aa7f104f2`.
+
+Die vier anfänglich gescheiterten V7-Preflights bleiben unter
+`target/reports/agent-live-v2-20260908/` erhalten:
+
+| Log | SHA-256 |
+| --- | --- |
+| luna-two-A1.log | `633d1a2f981be3217c96710991ee69a30fe9c0c8def96ba0617b296cea84a4f8` |
+| luna-two-A2.log | `51a84a74dc688faa27b9dc6a03b219c19bd490ffe3d9a3e3826d47eee31196e5` |
+| luna-two-B1.log | `131a8940cb639bfc4b07dc7e563bd9741d4d5ae0bc8a10a67544101840e77660` |
+| luna-two-B2.log | `3de15426e1d6298ecb1bd204a83413d209b3747201dde60aaaef57387bc29211` |
+
+Alle 24 V8-Läufe bestehen den Original-Preflight mit beiden Modulen; alle bewahren
+geschützte Dateien und native Einstellungen. Sieben Läufe bestehen die vollständige
+Liveabnahme, elf erreichen den alten commandgebundenen Done-Status. Vier dieser elf
+werden durch das Zusatzorakel abgelehnt. A (`staged`) besteht 2/12, B (`guided`)
+5/12; die kleine Stichprobe erlaubt keine allgemeine Produktfreigabe. `baseline`
+(`SingleAction`, produktiver Standard) ist nicht Gegenstand dieses A/B-Vergleichs.
+Google Flash besteht die Capability-Vorbereitung, erhält beide Originale und endet
+in allen vier Läufen nach 25–31 Reads ohne Mutation an der Versuchsfrist. Das ist
+kein erneut aufgetretener Unsupported-/Unavailable-Befund. Die größere Codeversorgung
+behebt nicht die weiter offene normale Read-Fortschrittsführung.
+
+Profile: Luna 16384/2048 mit RepeatSchemaInPrompt, Qwen 8192/2048 mit FormatFieldOnly;
+übrige Modelle 16384/4096 mit FormatFieldOnly. Aufrufe sind tatsächliche Startmeldungen
+einschließlich abgebrochener Aufrufe. Tokens sind die letzte dauerhafte Runbuchung;
+bei Abbruch können konservativ reservierte Kosten enthalten sein. Sekunden umfassen
+auch Modellvorbereitung, Indexierung, reguläre Freigaben und unabhängige Nachprüfung.
+Pro Modell war die Reihenfolge A1, B1, B2, A2; die Tabelle ist nach Dateiname sortiert.
+
+| Log | Aufrufe | Prompt/Output gebucht | Aktionen/Repairs | Sekunden | Done | Abnahme |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| flash-two-A1.log | 64 | 236181/6573 | 31/0 | 122.96 | nein | nicht bestanden |
+| flash-two-A2.log | 58 | 214035/6332 | 28/0 | 124.89 | nein | nicht bestanden |
+| flash-two-B1.log | 51 | 183911/1973 | 25/0 | 124.71 | nein | nicht bestanden |
+| flash-two-B2.log | 62 | 224518/2401 | 31/0 | 122.70 | nein | nicht bestanden |
+| gemma4-two-A1.log | 4 | 12298/429 | 2/0 | 32.09 | ja | nicht bestanden |
+| gemma4-two-A2.log | 4 | 12356/434 | 2/0 | 23.84 | ja | nicht bestanden |
+| gemma4-two-B1.log | 3 | 9133/409 | 2/0 | 22.47 | ja | nicht bestanden |
+| gemma4-two-B2.log | 3 | 9178/420 | 2/0 | 21.60 | ja | bestanden |
+| granite-two-A1.log | 9 | 22685/827 | 4/1 | 25.79 | nein | nicht bestanden |
+| granite-two-A2.log | 12 | 30423/951 | 5/1 | 26.92 | nein | nicht bestanden |
+| granite-two-B1.log | 8 | 20100/788 | 4/1 | 22.49 | nein | nicht bestanden |
+| granite-two-B2.log | 3 | 7172/512 | 2/0 | 15.27 | ja | bestanden |
+| luna-two-A1.log | 4 | 6956/294 | 2/0 | 10.70 | ja | bestanden |
+| luna-two-A2.log | 4 | 7000/294 | 2/0 | 9.76 | ja | bestanden |
+| luna-two-B1.log | 3 | 5335/276 | 2/0 | 8.72 | ja | bestanden |
+| luna-two-B2.log | 3 | 5314/276 | 2/0 | 9.23 | ja | bestanden |
+| ornith-two-A1.log | 49 | 172618/2694 | 23/1 | 85.42 | nein | nicht bestanden |
+| ornith-two-A2.log | 7 | 20791/1350 | 2/1 | 30.74 | nein | nicht bestanden |
+| ornith-two-B1.log | 5 | 14679/412 | 3/0 | 19.55 | ja | bestanden |
+| ornith-two-B2.log | 3 | 8752/495 | 2/0 | 18.10 | ja | nicht bestanden |
+| qwen-two-A1.log | 62 | 153912/4393 | 30/0 | 131.54 | nein | nicht bestanden |
+| qwen-two-A2.log | 59 | 147550/4260 | 29/0 | 126.67 | nein | nicht bestanden |
+| qwen-two-B1.log | 63 | 157213/4406 | 31/0 | 126.63 | nein | nicht bestanden |
+| qwen-two-B2.log | 62 | 154095/4355 | 30/0 | 126.51 | nein | nicht bestanden |
+
+Die Rohlogs liegen unter `target/reports/agent-live-v8-20260908/`.
+SHA-256 zur eindeutigen Zuordnung:
+
+| Log | SHA-256 |
+| --- | --- |
+| flash-two-A1.log | `fb2102bde704f8f736038fe870c3513ca469cba1868bfc3163db41e9c41fd415` |
+| flash-two-A2.log | `e0781631fcbb0709dbf7e9765a533a5ccd77714e2e0f1f1414da07a84d844ba6` |
+| flash-two-B1.log | `2fa28744828987cf89e12c5d027a38557129afd5f3e52ad54055d65a82782eb7` |
+| flash-two-B2.log | `bb667a0cbfbf09cb844bf10153afadcba4c58031477613eae27be0f710e41d97` |
+| gemma4-two-A1.log | `38e876f1469b1edd01bd249231915535e379ff64f8957a95752f3b803b4c0594` |
+| gemma4-two-A2.log | `02b3da099f77207a3cc174488f15c04b8d4cb149280f5c08d685c9a614ce35b1` |
+| gemma4-two-B1.log | `1fe578668aa290156509704ebcc91f74f775a93963be3254c933fd40d1dada9f` |
+| gemma4-two-B2.log | `f4bd8edcf556e263c00f0237e72296a84233314a4e533433878a0b8b422597e6` |
+| granite-two-A1.log | `6aa0da06c4d1c80b903767a3cc5aab94b1cd5ae877ae7727fab58d328c7fdddb` |
+| granite-two-A2.log | `ecfb94a390aeb3eb6187cd69da9cf8217e2fad4e0dde402cf3b153de7e0ca885` |
+| granite-two-B1.log | `e7ed30714da1ee7d96138d1126384c4ab0ac25347997bb5ab3f932b5b6cc203c` |
+| granite-two-B2.log | `1cffbafb9689f44ae5dd2b8dc39e64b0d6f3f035ad9d64b8d6e3f9fd8b76a709` |
+| luna-two-A1.log | `6d99f59ce522fa5f2bd5a93ef951ef8da0205ba7f82df7bca3a5f9d3caadc07f` |
+| luna-two-A2.log | `1bc7f77e02d1ad7b7d819aa19419cb2b53f65b96789f5dd08ce4d841915b42da` |
+| luna-two-B1.log | `dbc18be1d9c5bc7705fc2098a1f92eb1d0bc4a7866636668561d17e0495d863c` |
+| luna-two-B2.log | `83b12048d54afa6f3a9bc60fb41cf9da724dc3896abe56ec189e4f16c35d91c7` |
+| ornith-two-A1.log | `a89e776650655f954991610acd53031490f606e13f8709cea895cb7955444106` |
+| ornith-two-A2.log | `f06ac01f2b7ebbab9ed2d812cdf395a93d2ef70afa2bbebe9db476594bf2bd0e` |
+| ornith-two-B1.log | `5628c58cf0e887fb4986b6c5be9f83cbdd0a754a424e3514b07b8977dfc6d6c1` |
+| ornith-two-B2.log | `d23506df25d3169ae6337344c9d365ea8d5983d9988351ae1308b966f9e5b225` |
+| qwen-two-A1.log | `291db20073aee0a7b0cc00337e3cb2b0fd093b02f6ed3deaca8408e6448738d2` |
+| qwen-two-A2.log | `f4ff6575ce8f9dd6f81a86b2803df4e0e4b6a2f423c199cdaf6edcd91a034c3f` |
+| qwen-two-B1.log | `37447cb3580d222e9ef5e0c4b8bb71f29aacbb7df740ae02e82e66121334a461` |
+| qwen-two-B2.log | `c76ea168eb1cc612b439edef7ffffbb9940740970ae31275a2018483c35b055f` |
+
 ## 2026-09-07: Geführte Nachentscheidung nach Patch (ADR-0095)
 
 Ausgangspunkt `ade289f`. Die dritte Vergleichsvariante `guided` ergänzt nach einer

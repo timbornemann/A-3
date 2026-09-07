@@ -43,6 +43,17 @@ nicht umgestellt. Selbstbewertungen des Modells sind kein Verifikationsnachweis.
 
 ## Ergänzung: Originalquellen im normalen Agententurn
 
+[ADR-0096](adrs/0096-originalbudget-vor-optionalen-metadaten.md) ergänzt Policy V8:
+Nach vollständigem Einpassen der Pflichtanker und des tatsächlichen L0-Framings
+erhält CodeAndEvidence nach der Nutzererweiterung aus
+[ADR-0097](adrs/0097-grosszuegigere-optionale-codeversorgung.md) vorrangig 4096 bei
+16k linear skalierte optionale Tokens als Ziel, also 2048 bei 8k. Bereits größere
+Codebereiche werden dadurch nicht verkleinert. Nur fehlender Platz wird aus optionaler ProjectMap und danach ToolResults
+übertragen; beide behalten ihren Mindestanteil und alle tatsächlichen Pflichtbytes.
+Output-/Sicherheitsreserven und Gesamtkosten bleiben unverändert. Reicht der
+Donorplatz nicht, bleibt das Zielbudget ehrlich teilweise unerreicht. Replan nutzt
+diese Umverteilung nicht. Die nachfolgende halbe Originalgrenze aus V7 bleibt gültig.
+
 [ADR-0093](adrs/0093-originalquellen-im-agentenkontext.md) ergänzt Context-Policy V7:
 Der Compiler materialisiert vor optionaler Historie bis zu zwei ausgewählte aktuelle
 Quellseiten über den bestehenden Safe-Reader-Port. Tatsächliche jüngste Originalmarker

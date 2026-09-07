@@ -8,6 +8,7 @@ const GOAL_LEDGER_REFERENCE_TOKENS: u32 = 1_100;
 const PROJECT_MAP_REFERENCE_TOKENS: u32 = 1_200;
 const CODE_EVIDENCE_REFERENCE_TOKENS: u32 = 6_800;
 const TOOL_RESULTS_REFERENCE_TOKENS: u32 = 1_500;
+const CURRENT_EVIDENCE_REFERENCE_TOKENS: u32 = 4_096;
 const SAFETY_REFERENCE_TOKENS: u32 = 900;
 const OUTPUT_REFERENCE_TOKENS: u32 = 3_500;
 const OUTPUT_PERCENT_NUMERATOR: u64 = 22;
@@ -37,10 +38,13 @@ impl ContextCompilerPolicyVersion {
     pub const V6: Self = Self(6);
 
     /// Policy emitted by the current deterministic compiler implementation.
-    pub const CURRENT: Self = Self::V7;
+    pub const CURRENT: Self = Self::V8;
 
     /// ADR-0093 materializes bounded current originals before optional context.
     pub const V7: Self = Self(7);
+
+    /// ADR-0096 prioritizes bounded current evidence over optional metadata after fitting anchors.
+    pub const V8: Self = Self(8);
 
     /// Returns the stable persisted integer.
     #[must_use]
@@ -210,6 +214,45 @@ impl ContextBudgetPlan {
             .filter(|remaining| *remaining >= minimum)
             .ok_or(ContextBudgetError::AllocationOverflow)?;
         Ok(())
+    }
+
+    /// Rebalances only optional donors after mandatory fitting, for normal original hydration.
+    /// An unreachable evidence target remains partial; no reserve or mandatory byte is donated.
+    pub fn prioritize_current_originals(
+        mut self,
+        mandatory_evidence: u32,
+        mandatory_project: u32,
+    ) -> Result<Self, ContextBudgetError> {
+        if mandatory_evidence > self.code_and_evidence || mandatory_project > self.project_map {
+            return Err(ContextBudgetError::AllocationOverflow);
+        }
+        let target = mandatory_evidence
+            .checked_add(scaled_non_zero(
+                CURRENT_EVIDENCE_REFERENCE_TOKENS,
+                self.context_limit,
+            ))
+            .ok_or(ContextBudgetError::AllocationOverflow)?;
+        let mut needed = target.saturating_sub(self.code_and_evidence);
+        for (area, reference, mandatory) in [
+            (
+                &mut self.project_map,
+                PROJECT_MAP_REFERENCE_TOKENS,
+                mandatory_project,
+            ),
+            (&mut self.tool_results, TOOL_RESULTS_REFERENCE_TOKENS, 0),
+        ] {
+            let minimum = scaled_non_zero(reference, self.context_limit)
+                .min(256)
+                .max(mandatory);
+            let take = area.saturating_sub(minimum).min(needed);
+            *area -= take;
+            self.code_and_evidence = self
+                .code_and_evidence
+                .checked_add(take)
+                .ok_or(ContextBudgetError::AllocationOverflow)?;
+            needed -= take;
+        }
+        Ok(self)
     }
 
     /// Returns the effective model context window.
@@ -480,7 +523,7 @@ mod tests {
     fn sixteen_k_budget_keeps_v5_allocation_under_v6_rendering() -> Result<(), Box<dyn Error>> {
         assert_eq!(
             ContextCompilerPolicyVersion::CURRENT,
-            ContextCompilerPolicyVersion::V7
+            ContextCompilerPolicyVersion::V8
         );
         let plan = ContextBudgetPlan::for_profile(&profile(16_384, 4_096)?)?;
         assert_eq!(plan.allowance(ContextSection::SystemAndTools), 900);
@@ -573,6 +616,77 @@ mod tests {
         let digest = ContextDigest::from_bytes([0xab; 32]);
         assert_eq!(digest.to_string(), "ab".repeat(32));
         assert_eq!(digest.as_bytes(), [0xab; 32]);
+    }
+
+    #[test]
+    fn current_original_priority_preserves_all_mandatory_bytes_and_exact_total()
+    -> Result<(), Box<dyn Error>> {
+        for (context, output) in [(8_192, 2_048), (16_384, 2_048), (16_384, 4_096)] {
+            let base = ContextBudgetPlan::for_profile(&profile(context, output)?)?;
+            let evidence = 200;
+            let project = 380;
+            let goal = base.allowance(ContextSection::GoalAndLedger);
+            let system = context
+                - base.output_reserve()
+                - base.safety_reserve()
+                - goal
+                - 256
+                - base.allowance(ContextSection::ProjectMap)
+                - base.allowance(ContextSection::ToolResults);
+            let fitted = base.with_mandatory_repository(system, goal, evidence, project)?;
+            assert_eq!(fitted.allowance(ContextSection::CodeAndEvidence), 256);
+            let prioritized = fitted.prioritize_current_originals(evidence, project)?;
+            assert!(prioritized.allowance(ContextSection::CodeAndEvidence) > 256);
+            assert!(prioritized.allowance(ContextSection::ProjectMap) >= project);
+            assert!(prioritized.allowance(ContextSection::ToolResults) >= 256);
+            for section in [
+                ContextSection::SystemAndTools,
+                ContextSection::GoalAndLedger,
+            ] {
+                assert_eq!(prioritized.allowance(section), fitted.allowance(section));
+            }
+            assert_eq!(
+                prioritized.maximum_accounted_tokens()?,
+                fitted.maximum_accounted_tokens()?
+            );
+            assert_eq!(prioritized.output_reserve(), fitted.output_reserve());
+            assert_eq!(prioritized.safety_reserve(), fitted.safety_reserve());
+            assert_eq!(
+                prioritized,
+                prioritized.prioritize_current_originals(evidence, project)?
+            );
+            assert!(
+                fitted
+                    .prioritize_current_originals(u32::MAX, project)
+                    .is_err()
+            );
+            assert!(
+                fitted
+                    .prioritize_current_originals(evidence, u32::MAX)
+                    .is_err()
+            );
+
+            // Mandatory inputs may consume every donor: no new failure or invented allowance.
+            let exhausted_system = context
+                - base.output_reserve()
+                - base.safety_reserve()
+                - goal
+                - 256
+                - project
+                - 256;
+            let exhausted =
+                base.with_mandatory_repository(exhausted_system, goal, evidence, project)?;
+            assert_eq!(
+                exhausted,
+                exhausted.prioritize_current_originals(evidence, project)?
+            );
+            let roomy = base.with_mandatory_repository(100, 100, evidence, project)?;
+            assert_eq!(
+                roomy,
+                roomy.prioritize_current_originals(evidence, project)?
+            );
+        }
+        Ok(())
     }
 
     #[test]

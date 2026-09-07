@@ -229,6 +229,14 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
                 )
             })
             .map_err(ContextCompileFailure::Budget)?;
+        let budget_plan =
+            if input.replan_localization().is_none() && input.replan_research().is_none() {
+                budget_plan
+                    .prioritize_current_originals(mandatory_evidence_tokens, project_floor)
+                    .map_err(ContextCompileFailure::Budget)?
+            } else {
+                budget_plan
+            };
         report(control, ContextCompilePhase::Pack)?;
         let originals = originals::materialize(
             self.source,
