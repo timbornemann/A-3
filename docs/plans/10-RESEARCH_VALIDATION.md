@@ -1597,3 +1597,49 @@ Vollständige Gates auf diesem Stand erfolgreich: `cargo test --workspace --all-
 `git diff --check`. Test-/Clippylogs: `agent-patch-snapshot-workspace.log` und
 `agent-patch-snapshot-clippy.log`. Dieselben prozesslokalen kompakten Buildprofile;
 keine neuen Abhängigkeiten, Frontend-, Settings- oder Datenbankschemaänderungen.
+
+Weitere strikt nacheinander ausgeführte lokale Läufe auf demselben
+`agent-patch-snapshot-20260907`-Binary erreichen den Kontext-Preflight, aber keinen
+verifizierten Abschluss. Jeweils Failed Sequenz 6, unabhängiger Test rot und
+geschützte Dateien unverändert:
+
+| Modell | Dauer | Terminaler Befund |
+| --- | --- | --- |
+| Ornith 9B | 49,63 s | IncompleteModelOutput |
+| GPT-OSS 20B | 19,36 s | ModelFailed(InvalidResponse) |
+| Granite 8B | 19,88 s | InvalidPatchOperation(SameMovePath) nach Einzelrepair |
+
+SHA-256: `ornith-live-1.log` =
+`6d6ce69ba86dc66ea7440045b801d7a2ecfeb6a19e80b2fd30bbb6a81a0386cb`,
+`gptoss-live-1.log` = `17ee72b56b8c95de143a43380d43540aa5cbf37c4eb2abfe0c16f4a487ba00a5`,
+`granite-live-1.log` = `8151a1bd47c916df04ee319cb3ec36394efbc62a07e690ab196259557f934376`.
+Weder eine erfolgreiche Probe noch das Modellalter erklären allein diese Fehler.
+
+### Vollständiges Agent-V4-Schema im Gemini-Adapter (ADR-0086)
+
+Die bisherige lokale Providerprüfung testete Agent V1–V3, nicht V4. Dessen Flow-
+Offset trägt `multipleOf:50`; der explizite Adapter lehnt es vor jeder HTTP-Anfrage
+ab. Der neue vollständige V4-Test reproduziert zuerst `Error: Rejected`. Nach der
+engen Wire-Projektion bestehen 27 Provider-Unit- und 16 Gemini-HTTP-Verträge.
+Unveränderte Core-Decodierung akzeptiert 0/50/4050 und lehnt 1/49/4051/4100/-50 ab.
+Const-/Enum-Literale bleiben gleich; unbekannte Keywords bleiben abgewiesen.
+Der HTTP-Gegentest liefert absichtlich Offset 1 als STOP: der Decoder verweigert
+ihn trotz erfolgreicher Übertragung des vollständigen Schemas.
+
+Eingefroren: `agent-gemini-v4-20260907/agent-tests.exe`, SHA-256
+`5d932abe234688da391ce48469b03aa4cdf0ab70c0c766064e0383bf23188441`.
+Google Gemma liefert nun tatsächliche Modellausgabe statt lokaler Schemaablehnung,
+scheitert nach Einzelrepair aber an `InvalidPublicNote` (10,57 s, Failed Sequenz 6).
+Die unabhängige Prüfung bleibt rot, geschützte Dateien unverändert. Das unveränderte
+Profil bleibt 16384/4096, FormatFieldOnly. `google-live-1.log`, SHA-256
+`ec512ac273e14ffece9dbf7aafe2cb753262f0004a385585a199272812a95065`.
+Damit ist die lokale Übersetzungsursache behoben, nicht der gesamte Google-Agent.
+Der streng vor der Action gelesene Präsentationsblock verhindert aktuell schon die
+Prüfung der eigentlichen Aktion; deren Gültigkeit wird deshalb nicht behauptet.
+
+Vollständige lokale Gates bestehen auch nach ADR-0086: `cargo test --workspace
+--all-features --offline --locked --jobs 2`, `cargo clippy --workspace --all-targets
+--all-features --offline --locked --jobs 2 -- -D warnings`, `cargo fmt --all --check`,
+`node scripts/check-markdown-links.mjs` (130 Dateien/512 lokale Links) und
+`git diff --check`. Logs: `agent-gemini-v4-workspace.log` und
+`agent-gemini-v4-clippy.log`. Prozesslokale Buildprofile bleiben unverändert.

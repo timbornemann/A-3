@@ -938,3 +938,11 @@ Der Core ersetzt keine Operation, Pfade oder Hashes und führt dabei keine Tools
 Ein gültiger korrigierter Lesevorschlag nutzt den normalen Read-Pfad; ein erneut
 ungültiger Patch bleibt terminal. Live-Dateisystem-, Freigabe-, Policy- und
 Reconciliation-Prüfungen an der eigentlichen Mutationsgrenze bleiben unverändert.
+
+Nach [ADR-0086](adrs/0086-gemini-projektion-von-vielfachheitsregeln.md) behandelt die
+explizite Gemini-Wire-Projektion `multipleOf` wie die bereits ausgesparten Pattern-
+und Längengrenzen. Dadurch scheitert das vollständige AgentAction-V4-Schema nicht
+mehr vor dem HTTP-Aufruf an seiner Flow-Offset-Regel. Das originale Schema und die
+unabhängige typisierte Auswahl verlangen weiterhin 50er-Offsets von 0 bis 4050;
+Provider-STOP oder formal übersetzbarer Output sind keine Zulassung. Nur Schema-
+Positionen ändern sich, nicht Const-/Enum-Daten. Unbekannte Keywords bleiben Fehler.

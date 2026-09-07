@@ -40,6 +40,13 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Lokale Gemini-Ablehnung des vollständigen aktuellen AgentAction-V4-Schemas
+      durch bekannte `multipleOf`-Projektion beheben, unabhängige Flow-Grenzen erhalten
+      und Google Gemma live nachtesten
+      ([ADR-0086](../adrs/0086-gemini-projektion-von-vielfachheitsregeln.md)).
+      Rot→Grün, vollständige lokale Gates und echter Nachtest bestätigen die
+      Übersetzung. Der getrennte Live-Fehler InvalidPublicNote bleibt offen.
+
 - [x] Bereits im aktuellen Index erkennbare Patchkonflikte im bestehenden Einzelrepair
       abfangen; Live-Schreibgrenzen unverändert erhalten und Qwen erneut prüfen
       ([ADR-0085](../adrs/0085-patch-snapshotkonflikte-im-einzelrepair.md)).

@@ -340,6 +340,78 @@ async fn research_wire_projection_does_not_relax_the_independent_decoder() -> Re
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn current_agent_wire_schema_preserves_independent_flow_offset_checks()
+-> Result<(), TestError> {
+    let schema = a3_application::AgentActionJsonSchema::current()
+        .as_json()
+        .map_err(map_app_error)?;
+    let original = schema.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = endpoint_for(&listener)?;
+    let invalid = json!({"schema_version":4,"public_note":{
+        "goal":"Inspect flow","finding_kind":"hypothesis","finding":"Not yet read",
+        "finding_source_refs":[],"gap":"Origins","next_step":"Inspect"},"action":{
+        "kind":"inspect","target":{"kind":"function_flow","symbol_id":"a".repeat(64),
+        "call_path":[],"view":{"kind":"steps","offset":1}}}})
+    .to_string();
+    // Own and bound both halves, including a failure before the provider connects.
+    let server = tokio::time::timeout(std::time::Duration::from_secs(5), async move {
+        let (mut stream, _) = listener.accept().await?;
+        let request = read_http_request(&mut stream).await?;
+        write_event_stream_head(&mut stream).await?;
+        let event = json!({"candidates":[{"index":0,"content":{"parts":[{"text":invalid}]},"finishReason":"STOP"}]});
+        write_http_chunk(&mut stream, format!("data: {event}\n\n").as_bytes()).await?;
+        finish_http_chunks(&mut stream).await?;
+        Ok::<_, TestError>(request)
+    });
+    let provider = test_provider(endpoint)?;
+    let request = structured_request_with_schema("gemma-4-26b-a4b-it", schema)?;
+    let control = TestControl::default();
+    let exchange = async {
+        let mut stream = provider
+            .stream(
+                &request,
+                ModelRequestTimeout::from_millis(5000).map_err(map_app_error)?,
+                &control,
+            )
+            .await
+            .map_err(map_app_error)?;
+        let mut output = String::new();
+        let mut completed = false;
+        while let Some(event) = stream.next().await {
+            match event.map_err(map_app_error)? {
+                ProviderEvent::OutputText(chunk) => output.push_str(chunk.as_str()),
+                ProviderEvent::Completed(done) => {
+                    assert_eq!(done.reason(), ModelFinishReason::Stop);
+                    completed = true;
+                }
+            }
+        }
+        assert!(completed);
+        Ok::<_, TestError>(output)
+    };
+    let (wire, output) = tokio::join!(server, exchange);
+    let output = output?;
+    let wire: Value = serde_json::from_slice(&wire??.body)?;
+    let offset = &wire["generationConfig"]["responseJsonSchema"]["$defs"]["functionFlowTarget"]["properties"]
+        ["view"]["anyOf"][0]["properties"]["offset"];
+    assert_eq!(
+        offset,
+        &json!({"type":"integer","minimum":0,"maximum":4050})
+    );
+    assert_eq!(
+        request.structured_output().ok_or("schema missing")?.value(),
+        &original
+    );
+    let decoder = a3_application::DecodeAgentAction::current();
+    assert!(decoder.decode(&output).is_err());
+    let mut valid: Value = serde_json::from_str(&output)?;
+    valid["action"]["target"]["view"]["offset"] = json!(50);
+    assert!(decoder.decode(&valid.to_string()).is_ok());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn deep_map_schema_is_translated_to_geminis_supported_wire_dialect() -> Result<(), TestError>
 {
     let listener = TcpListener::bind("127.0.0.1:0").await?;

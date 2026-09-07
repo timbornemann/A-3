@@ -958,7 +958,7 @@ fn translate_schema_node(
     for (key, value) in object {
         match key.as_str() {
             "$schema" | "$id" | "$anchor" | "pattern" | "minLength" | "maxLength"
-            | "uniqueItems" => {}
+            | "uniqueItems" | "multipleOf" => {}
             "const" => {
                 if object.contains_key("enum") {
                     return Err(ModelProviderFailure::Rejected);
@@ -1949,6 +1949,55 @@ mod tests {
     }
 
     #[test]
+    fn current_agent_schema_translates_without_relaxing_flow_offset_admission()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let original = AgentActionJsonSchema::current().as_json()?;
+        let before = original.clone();
+        let wire = translate_response_json_schema(&original)?;
+        let offset = &wire["$defs"]["functionFlowTarget"]["properties"]["view"]["anyOf"][0]["properties"]
+            ["offset"];
+        assert_eq!(
+            offset,
+            &json!({"type":"integer","minimum":0,"maximum":4050})
+        );
+        assert_eq!(original, before);
+        assert_eq!(
+            original["$defs"]["functionFlowTarget"]["properties"]["view"]["oneOf"][0]["properties"]
+                ["offset"]["multipleOf"],
+            50
+        );
+        for (offset, admitted) in [
+            (0, true),
+            (50, true),
+            (4050, true),
+            (1, false),
+            (49, false),
+            (4051, false),
+            (4100, false),
+            (-50, false),
+        ] {
+            let document = json!({"schema_version":4,"public_note":{
+                "goal":"Inspect flow","finding_kind":"hypothesis","finding":"Not yet read",
+                "finding_source_refs":[],"gap":"Origins","next_step":"Inspect"},"action":{
+                "kind":"inspect","target":{"kind":"function_flow","symbol_id":"a".repeat(64),
+                "call_path":[],"view":{"kind":"steps","offset":offset}}}});
+            assert_eq!(
+                a3_application::DecodeAgentAction::current()
+                    .decode(&document.to_string())
+                    .is_ok(),
+                admitted
+            );
+        }
+        let literal = json!({"enum":[{"multipleOf":50,"properties":{"multipleOf":2}}]});
+        assert_eq!(translate_response_json_schema(&literal)?, literal);
+        assert_eq!(
+            translate_response_json_schema(&json!({"const":{"multipleOf":50}}))?,
+            json!({"enum":[{"multipleOf":50}]})
+        );
+        Ok(())
+    }
+
+    #[test]
     fn response_schema_translation_is_bounded_explicit_and_preserves_core_invariants()
     -> Result<(), Box<dyn std::error::Error>> {
         let translated = translate_response_json_schema(&json!({
@@ -2004,6 +2053,7 @@ mod tests {
             AgentActionJsonSchema::version_one(),
             AgentActionJsonSchema::version_two(),
             AgentActionJsonSchema::version_three(),
+            AgentActionJsonSchema::current(),
         ] {
             translate_response_json_schema(&schema.as_json()?)?;
         }

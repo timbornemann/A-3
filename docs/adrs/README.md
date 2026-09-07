@@ -110,6 +110,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0083](0083-bekannte-schrittidentitaeten-als-schemakonstanten.md) | Bekannte Schrittidentitäten als Schemakonstanten |
 | [0084](0084-ergebnisnotizen-fordern-operationale-verifikation-an.md) | Ergebnisnotizen fordern operationale Verifikation an |
 | [0085](0085-patch-snapshotkonflikte-im-einzelrepair.md) | Patch-Snapshotkonflikte im Einzelrepair |
+| [0086](0086-gemini-projektion-von-vielfachheitsregeln.md) | Gemini-Projektion von Vielfachheitsregeln |
 
 ## Neue ADRs
 
