@@ -1397,3 +1397,35 @@ Conflict, ohne erfolgreiche Änderung oder Done (Runsequenz 5). Geschützte Date
 bleiben gleich. Die genaue Konfliktart ist durch diese bisher generische Diagnose
 noch nicht belegt. `qwen-live-1.log`, SHA-256
 `8f2980c279fac5f7f931dc053b2a14a883a6ba2f1e3d197e0ca6ce8a1323753c`.
+
+### Ankergebundener Einzelrepair und erster echter Done-Nachweis
+
+ADR-0082 bindet Primärdecoder und denselben einzigen Repair an die aktuellen fünf
+Patchanker sowie die aktuelle Step-ID von Run-/Ledgeraktionen. Die 14 Varianten
+(sieben unterschiedliche falsche Anker, jeweils korrekte oder nochmals falsche
+Korrektur) waren vor der Änderung rot und bestehen danach. Die Tests verlangen
+genau zwei Modellaufrufe, null Toolaufrufe vor Übergabe und terminale Ablehnung einer
+erneut falschen Korrektur. Die Mutationsgrenze revalidiert alle Anker weiterhin selbst.
+
+Eingefroren: `agent-anchor-repair-20260907/agent-tests.exe`, SHA-256
+`a614cb86af1bd0690a36fbb826ac2caff52002ae61bf7424f6c16501f69e9145`.
+Mit demselben unveränderten Luna-Profil erreicht Lauf 1 nach 25,92 Sekunden erstmals
+Run=Done (Sequenz 23), Step=Completed, echte erfolgreiche Command-Evidence und
+`python -m pytest` mit Exitcode 0. Der unabhängige physische Test besteht ebenfalls;
+gesperrte Dateien und Benutzerkatalog bleiben gleich. Die Wiederholung auf exakt
+demselben Binary scheitert nach 30,18 Sekunden mit
+InvalidActionAfterRepair(InvalidValue), obwohl die korrigierte Datei physisch besteht.
+Das ist ein echter einzelner Funktionsnachweis, keine behauptete stabile Erfolgsrate.
+
+Logs unter demselben Verzeichnis:
+
+- `luna-live-1.log`: `e8bf1910611824a4f4abd65999746837caf98e6f13a182107d917240283e9814`
+- `luna-live-2.log`: `b55bc4735b18530ac31fc6b3df30177b56c1bf10cf22acd561fdf76fcef8739e`
+
+Alle 68 gezielten Agent-Unit-Tests, das erneute vollständige Offline-Workspace-Gate
+(alle Features), Workspace-Clippy (alle Targets/Features, -D warnings), Formatierung,
+Diffprüfung und 488 lokale Links in 126 Markdown-Dateien bestehen. Gesamtlogs:
+`agent-anchor-repair-workspace.log` und `agent-anchor-repair-clippy.log`.
+Die abgehakten Implementierungsschnitte sind damit lokal verifiziert; die getrennte
+fortgesetzte Modell-/Inhaltsabnahme bleibt offen. Insbesondere werden die übrigen
+ungültigen Aktionswerte und Qwens Patchvorschau-Konflikt nicht als behoben ausgewiesen.

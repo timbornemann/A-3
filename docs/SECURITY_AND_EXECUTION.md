@@ -890,3 +890,11 @@ ebenfalls vor dem Packing reserviert. Keine dieser Korrekturen entfernt Pflichti
 Nach dem einzigen erfolglosen Action-Repair bleibt dessen geschlossene Decoderklasse erhalten
 (`InvalidActionAfterRepair`); ein ungültiger Präsentationshinweis ist separat
 `InvalidPublicNote`. Weder rohe Modellausgabe noch zusätzliche Repairrechte entstehen daraus.
+
+Nach [ADR-0082](adrs/0082-aktuelle-aktionsanker-innerhalb-des-einzelrepairs.md) bindet
+ExecuteAgentTurn sowohl Primärdecoder als auch denselben einzigen Repair an seine
+unabhängig geprüften aktuellen Anker. Ein Patch mit anderer Run-, Worktree-, Snapshot-,
+Step- oder Verification-Spec-ID sowie Run-/Ledgeraktionen für einen anderen Schritt
+werden bereits als `anchor_mismatch` abgewiesen. Der Core korrigiert keine ID selbst.
+Struktur- und Ankerfehler teilen sich genau einen Repair; an der Mutationsgrenze werden
+Aktualität, Anker, Policy, Pfade und Hashes unverändert erneut geprüft.

@@ -94,11 +94,55 @@ impl fmt::Display for AgentActionSchemaError {
 
 impl Error for AgentActionSchemaError {}
 
-/// Strict runtime decoder paired with one AgentAction schema version.
+/// Core-owned identity binding for one already validated executable turn.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AgentActionTurnAnchors {
+    run: AgentRunId,
+    worktree: WorktreeId,
+    snapshot: SnapshotId,
+    step: TaskStepId,
+    verification: VerificationSpecId,
+}
+
+impl AgentActionTurnAnchors {
+    pub(crate) const fn new(
+        run: AgentRunId,
+        worktree: WorktreeId,
+        snapshot: SnapshotId,
+        step: TaskStepId,
+        verification: VerificationSpecId,
+    ) -> Self {
+        Self {
+            run,
+            worktree,
+            snapshot,
+            step,
+            verification,
+        }
+    }
+
+    fn matches(self, action: &AgentAction) -> bool {
+        match action {
+            AgentAction::ApplyPatch(patch) => {
+                patch.run_id() == self.run
+                    && patch.worktree_id() == self.worktree
+                    && patch.snapshot_id() == self.snapshot
+                    && patch.task_step_id() == self.step
+                    && patch.verification_spec_id() == self.verification
+            }
+            AgentAction::Run(command) => command.step_id() == self.step,
+            AgentAction::UpdateLedger(update) => update.step_id() == self.step,
+            AgentAction::Search(_) | AgentAction::Inspect(_) | AgentAction::Finish(_) => true,
+        }
+    }
+}
+
+/// Strict runtime decoder paired with one AgentAction schema version and optional Core anchors.
 #[derive(Debug, Clone, Copy)]
 pub struct DecodeAgentAction {
     version: AgentActionSchemaVersion,
     localization_only: bool,
+    anchors: Option<AgentActionTurnAnchors>,
 }
 
 impl DecodeAgentAction {
@@ -108,6 +152,7 @@ impl DecodeAgentAction {
         Self {
             version: AgentActionSchemaVersion::V4,
             localization_only: true,
+            anchors: None,
         }
     }
     /// Creates the V1 decoder.
@@ -116,6 +161,7 @@ impl DecodeAgentAction {
         Self {
             version: AgentActionSchemaVersion::V1,
             localization_only: false,
+            anchors: None,
         }
     }
 
@@ -125,6 +171,7 @@ impl DecodeAgentAction {
         Self {
             version: AgentActionSchemaVersion::V2,
             localization_only: false,
+            anchors: None,
         }
     }
 
@@ -134,6 +181,7 @@ impl DecodeAgentAction {
         Self {
             version: AgentActionSchemaVersion::V3,
             localization_only: false,
+            anchors: None,
         }
     }
 
@@ -143,7 +191,13 @@ impl DecodeAgentAction {
         Self {
             version: AgentActionSchemaVersion::V4,
             localization_only: false,
+            anchors: None,
         }
+    }
+
+    pub(crate) const fn with_turn_anchors(mut self, anchors: AgentActionTurnAnchors) -> Self {
+        self.anchors = Some(anchors);
+        self
     }
 
     /// Returns the version's base schema. `AgentPromptContract` narrows this schema for
@@ -197,6 +251,12 @@ impl DecodeAgentAction {
             && !matches!(action, AgentAction::Search(_) | AgentAction::Inspect(_))
         {
             return Err(AgentActionDecodeError::InvalidValue);
+        }
+        if self
+            .anchors
+            .is_some_and(|anchors| !anchors.matches(&action))
+        {
+            return Err(AgentActionDecodeError::AnchorMismatch);
         }
         Ok(DecodedAgentAction {
             action,
@@ -656,6 +716,8 @@ pub enum AgentActionDecodeError {
     InvalidValue,
     /// Presentation-only note violated its separate legacy evidence/text contract.
     InvalidPublicNote,
+    /// Model-supplied action identities differ from the verified current controller turn.
+    AnchorMismatch,
 }
 
 impl AgentActionDecodeError {
@@ -671,6 +733,7 @@ impl AgentActionDecodeError {
             Self::UnknownAction => "unknown_action",
             Self::InvalidValue => "invalid_value",
             Self::InvalidPublicNote => "invalid_public_note",
+            Self::AnchorMismatch => "anchor_mismatch",
         }
     }
 }
@@ -686,6 +749,7 @@ impl fmt::Display for AgentActionDecodeError {
             Self::UnknownAction => "AgentAction output names an unknown action",
             Self::InvalidValue => "AgentAction output contains an invalid bounded value",
             Self::InvalidPublicNote => "AgentAction presentation note violates its contract",
+            Self::AnchorMismatch => "AgentAction identities differ from the current turn",
         })
     }
 }

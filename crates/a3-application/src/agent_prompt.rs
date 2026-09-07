@@ -348,6 +348,14 @@ pub struct DecodeAgentActionTurn {
 }
 
 impl DecodeAgentActionTurn {
+    pub(crate) const fn with_turn_anchors(
+        mut self,
+        anchors: crate::agent_action_codec::AgentActionTurnAnchors,
+    ) -> Self {
+        self.decoder = self.decoder.with_turn_anchors(anchors);
+        self
+    }
+
     /// Uses the restricted decoder for both the primary response and its sole repair.
     #[must_use]
     pub const fn for_replan_localization() -> Self {

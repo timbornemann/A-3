@@ -428,7 +428,20 @@ impl<'a> ExecuteAgentTurn<'a> {
             DecodeAgentActionTurn::for_replan_localization()
         } else {
             DecodeAgentActionTurn::current()
-        };
+        }
+        .with_turn_anchors(crate::agent_action_codec::AgentActionTurnAnchors::new(
+            run.id(),
+            input.project().worktree().id(),
+            snapshot_id,
+            current_step_id,
+            input
+                .task_ledger()
+                .step(current_step_id)
+                .ok_or(ExecuteAgentTurnFailure::InputMismatch)?
+                .definition()
+                .verification_spec()
+                .id(),
+        ));
         let (decoded, prompt_tokens, output_tokens, repair, observed_model_output_bytes) =
             match decoder.decode_primary(&primary.raw) {
                 AgentActionPrimaryOutcome::Accepted(action) => (
@@ -1502,6 +1515,103 @@ mod tests {
         assert_eq!(fixture.run.usage().action_count(), 0);
         assert_eq!(fixture.run.usage().repair_count(), 1);
         assert_eq!(event.payload().code(), RunEventCode::InvalidModelOutput);
+        Ok(())
+    }
+
+    #[test]
+    fn current_action_anchors_share_the_single_structural_repair() -> Result<(), Box<dyn Error>> {
+        for (kind, field) in [
+            ("apply_patch", "run_id"),
+            ("apply_patch", "worktree_id"),
+            ("apply_patch", "snapshot_id"),
+            ("apply_patch", "step_id"),
+            ("apply_patch", "verification_spec_id"),
+            ("run", "step_id"),
+            ("update_ledger", "step_id"),
+        ] {
+            for corrected in [false, true] {
+                let mut fixture = turn_fixture(Vec::new())?;
+                let step = fixture.input.current_step_id();
+                let action = match kind {
+                    "apply_patch" => serde_json::json!({
+                        "kind":kind, "run_id":fixture.run.id().to_string(),
+                        "worktree_id":fixture.input.project().worktree().id().to_string(),
+                        "snapshot_id":fixture.run.current_snapshot_id().to_string(), "step_id":step.to_string(),
+                        "verification_spec_id":fixture.input.task_ledger().step(step).ok_or("step")?.definition().verification_spec().id().to_string(),
+                        "rationale":"apply the current scoped change", "operations":[{"kind":"add","path":"new.rs","content":"pub fn current() {}\n"}]
+                    }),
+                    "run" => {
+                        serde_json::json!({"kind":kind,"step_id":step.to_string(),"command_id":"ad".repeat(32)})
+                    }
+                    _ => {
+                        serde_json::json!({"kind":kind,"step_id":step.to_string(),"update":{"kind":"record_result","summary":"unverified result"}})
+                    }
+                };
+                let valid = serde_json::json!({"schema_version":4,"public_note":{"goal":"Current step","finding_kind":"hypothesis","finding":"Verification remains open","finding_source_refs":[],"gap":"Verification","next_step":"Execute current step"},"action":action});
+                let mut wrong = valid.clone();
+                wrong["action"][field] = serde_json::json!("ff".repeat(32));
+                let final_document = if corrected { &valid } else { &wrong };
+                let provider = ScriptedProvider {
+                    provider_id: fixture.profile.provider_id().clone(),
+                    responses: Mutex::new(
+                        vec![
+                            provider_response(&wrong.to_string())?,
+                            provider_response(&final_document.to_string())?,
+                            provider_response(&valid.to_string())?,
+                        ]
+                        .into(),
+                    ),
+                };
+                let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
+                let tools = CountingReadTools {
+                    calls: AtomicUsize::new(0),
+                };
+                let recovery = TestRecoveryStore::default();
+                let outcome = futures::executor::block_on(
+                    ExecuteAgentTurn::new(&compiler, &provider, &tools, &recovery).execute(
+                        &fixture.run,
+                        &fixture.input,
+                        timestamp(5)?,
+                        &TestControl,
+                    ),
+                )?;
+                let event = outcome.record(&mut fixture.run, event_id(20), timestamp(5)?)?;
+                match outcome {
+                    AgentTurnOutcome::Executed(execution) if corrected => {
+                        assert_eq!(
+                            execution.action(),
+                            &crate::DecodeAgentAction::current().decode(&valid.to_string())?
+                        );
+                        assert_eq!(execution.charge().repair(), AgentTurnRepairUsage::One);
+                    }
+                    AgentTurnOutcome::Rejected(rejected) if !corrected => {
+                        assert!(
+                            matches!(rejected.reason(), AgentTurnRejectionReason::InvalidActionAfterRepair(failure) if failure.repair_code() == "anchor_mismatch")
+                        );
+                        assert!(rejected.charge().action().is_none());
+                        assert_eq!(event.payload().code(), RunEventCode::InvalidModelOutput);
+                    }
+                    _ => {
+                        return Err(format!(
+                            "wrong anchor admission for {kind}:{field} corrected={corrected}"
+                        )
+                        .into());
+                    }
+                }
+                assert_eq!(fixture.run.usage().repair_count(), 1);
+                assert_eq!(
+                    provider
+                        .responses
+                        .lock()
+                        .map_err(|_| "provider lock")?
+                        .len(),
+                    1,
+                    "only one repair may be consumed"
+                );
+                assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
+                assert_eq!(recovery.begins.load(Ordering::SeqCst), 0);
+            }
+        }
         Ok(())
     }
 

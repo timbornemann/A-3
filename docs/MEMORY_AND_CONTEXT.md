@@ -320,6 +320,11 @@ Eine sicher gelesene Original-Dateiseite liefert außerdem `expected_hash` aus i
 vollständig geprüften `FileRevision`, getrennt von Evidence-ID und Toolresultat-Digest.
 Dieser Hash bindet ein vorgeschlagenes Update an genau den gelesenen Dateistand;
 Patchvorschau und Schreibgrenze prüfen ihn weiterhin unabhängig erneut.
+Der ausführende Turn bindet nach
+[ADR-0082](adrs/0082-aktuelle-aktionsanker-innerhalb-des-einzelrepairs.md) auch den
+Decoder und seine einzige Reparatur an diese aktuellen Controller-IDs. Fremde
+Anker werden nicht erst als ausführbarer Modellvorschlag weitergereicht und
+auch nicht vom Core still ersetzt. Historische Schema-only-Decodierung bleibt erhalten.
 
 `ContextCompilerPolicyVersion::V5` behält den vollständigen kompakten L0-Repository-Anchor aus V2
 vor allen optionalen gerankten L1-/L2-Einträgen. Package- und Entrypointmengen erscheinen in L0 als

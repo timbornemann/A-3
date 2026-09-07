@@ -40,18 +40,22 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
-- [ ] Portablen Prozessstart ohne undefinierte Tempvariablen ermöglichen, echte
+- [x] Modellaktionen vor Freigabe durch denselben Einzelrepair gegen aktuelle Core-Anker
+      prüfen; falsche IDs niemals überschreiben und Sicherheitsgrenzen erneut prüfen
+      ([ADR-0082](../adrs/0082-aktuelle-aktionsanker-innerhalb-des-einzelrepairs.md)).
+
+- [x] Portablen Prozessstart ohne undefinierte Tempvariablen ermöglichen, echte
       Prozess-/Sicherheitsverträge und mutierenden Live-Test prüfen
       ([ADR-0081](../adrs/0081-optionale-portable-tempvariablen.md)).
 
-- [ ] Offene Fehler-/Hypothesen-Memory vor optionaler Kontextverteilung reservieren;
+- [x] Offene Fehler-/Hypothesen-Memory vor optionaler Kontextverteilung reservieren;
       reproduzierten RepeatSchemaInPrompt-Abbruch regressionsprüfen und live nachtesten
       ([ADR-0080](../adrs/0080-pflichtmemory-vor-optionaler-kontextverteilung.md)).
 
-- [ ] Vorzeitiges Agent-Finish über die vorhandene Step-Verifikation führen und live
+- [x] Vorzeitiges Agent-Finish über die vorhandene Step-Verifikation führen und live
       bis zum nachgewiesenen Done prüfen ([ADR-0079](../adrs/0079-abschlussanforderung-verifiziert-zuerst-den-schritt.md)).
 
-- [ ] Tatsächlich mutierenden Live-Agent mit gesperrten Tests und unabhängiger
+- [x] Tatsächlich mutierenden Live-Agent mit gesperrten Tests und unabhängiger
       Verifikation ergänzen; aufgedeckte Budgetinkompatibilität ohne Änderung des
       Modellprofils beheben ([ADR-0077](../adrs/0077-vollstaendige-agent-anker-im-konfigurierten-kontext.md),
       [ADR-0078](../adrs/0078-freien-kontext-vor-pflichtabbruch-nutzen.md)).
@@ -83,8 +87,9 @@ Fortsetzung mit Mehrprovider-Einstellungen (ADR-0066):
 - [x] Gehostetes Gemma 4 mit dokumentiertem explizitem minimalem Thinking prüfen;
       unveränderte Budgets und kontrollierter Live-Vergleich, keine vermutete Abhilfe
       als Erfolg zählen ([ADR-0070](../adrs/0070-gemma-api-explizites-minimal-thinking.md)).
-- [ ] Live-Agent-Umsetzung auf isolierter Fixture einschließlich tatsächlicher Verification
-      prüfen; bisherige Agent-Vorbereitung ist kein Nachweis ausgeführter Änderungen.
+- [x] Live-Agent-Umsetzung auf isolierter Fixture einschließlich tatsächlicher Verification
+      prüfen: Luna erreicht auf einer gesperrten Bugfix-Fixture nachweislich Done. Die
+      Wiederholung scheitert jedoch; weitere Modell-/Aufgabenabnahme bleibt ausdrücklich offen.
 - [x] Modellgenerierte Verwaltungsnotizen aus dem aktuellen V6-Vertrag entfernen;
       Status und nächste Pflicht aus dem zugelassenen Core-Prüfstand ableiten,
       Legacy- und Evidence-Grenzen erhalten und vergleichbar live nachtesten
