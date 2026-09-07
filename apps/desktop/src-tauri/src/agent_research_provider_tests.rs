@@ -324,6 +324,12 @@ fn actual_provider_packets_preserve_goal_and_evidence_during_repair_and_use_phas
                             .any(|message| message.content() == packet)
                     );
                     let actual = request.structured_output().ok_or("phase schema")?.value();
+                    if phase != 3 {
+                        assert_eq!(actual["properties"]["schema_version"]["const"], 7);
+                        assert!(actual["properties"].get("response").is_some());
+                        assert!(actual["$defs"].get("work").is_none());
+                        assert!(actual["$defs"].get("progress").is_none());
+                    }
                     if phase == 2 {
                         assert_eq!(
                             actual.pointer("/$defs/planDecision/properties/kind/const"),
@@ -332,13 +338,14 @@ fn actual_provider_packets_preserve_goal_and_evidence_during_repair_and_use_phas
                     }
                     if phase == 0 {
                         assert_eq!(
-                            actual.pointer("/$defs/work/properties/questions/minItems"),
+                            actual
+                                .pointer("/$defs/questionsResponse/properties/questions/minItems"),
                             Some(&serde_json::json!(1))
                         );
                     }
                     if phase == 1 {
                         assert_eq!(
-                            actual.pointer("/$defs/result/properties/question_id/const"),
+                            actual.pointer("/$defs/resultPayload/properties/question_id/const"),
                             Some(&serde_json::json!(1))
                         );
                     }

@@ -43,6 +43,8 @@ enum WorkFault {
     TestConfirmationAlways,
     CoreStatus,
     CoreStatusRepairOnce,
+    DisjointResponse,
+    DisjointResponseRepairOnce,
 }
 
 fn retained_long_design() -> String {
@@ -375,7 +377,10 @@ impl ResearchModel for CoherentModel {
             }
             if matches!(
                 self.fault,
-                WorkFault::CoreStatus | WorkFault::CoreStatusRepairOnce
+                WorkFault::CoreStatus
+                    | WorkFault::CoreStatusRepairOnce
+                    | WorkFault::DisjointResponse
+                    | WorkFault::DisjointResponseRepairOnce
             ) {
                 document["schema_version"] = serde_json::json!(6);
                 document["decision"]
@@ -385,6 +390,27 @@ impl ResearchModel for CoherentModel {
                 if self.fault == WorkFault::CoreStatusRepairOnce && call == 0 {
                     document["decision"]["note"] =
                         serde_json::json!({"finding":"injected presentation"});
+                }
+                if matches!(
+                    self.fault,
+                    WorkFault::DisjointResponse | WorkFault::DisjointResponseRepairOnce
+                ) {
+                    let response = if phase == a3_application::ResearchOutputPhase::Initialize {
+                        serde_json::json!({"kind":"questions","questions":document["work"]["questions"]})
+                    } else {
+                        let mut result = document["work"]["results"][0].clone();
+                        let kind = result
+                            .as_object_mut()
+                            .ok_or(AgentConversationFailure::InvalidOutput)?
+                            .remove("kind")
+                            .ok_or(AgentConversationFailure::InvalidOutput)?;
+                        serde_json::json!({"kind":kind,"result":result})
+                    };
+                    document = serde_json::json!({"schema_version":7,"response":response});
+                    if self.fault == WorkFault::DisjointResponseRepairOnce && call == 0 {
+                        document["response"]["note"] =
+                            serde_json::json!({"finding":"injected presentation"});
+                    }
                 }
             }
             return Ok(document.to_string());
@@ -544,6 +570,16 @@ fn research_v6_core_status_completes_all_modes_without_model_presentation()
 #[test]
 fn research_v6_injected_status_gets_one_repair_without_extra_reads() -> Result<(), Box<dyn Error>> {
     coherent_fixture_selected(true, false, WorkFault::CoreStatusRepairOnce)
+}
+
+#[test]
+fn research_v7_disjoint_response_closes_all_modes_without_status() -> Result<(), Box<dyn Error>> {
+    coherent_fixture_selected(true, false, WorkFault::DisjointResponse)
+}
+
+#[test]
+fn research_v7_disjoint_response_repairs_injected_status_once() -> Result<(), Box<dyn Error>> {
+    coherent_fixture_selected(true, false, WorkFault::DisjointResponseRepairOnce)
 }
 
 #[test]
@@ -886,7 +922,10 @@ fn coherent_fixture_with_profile(
                 let result = received?;
                 if matches!(
                     fault,
-                    WorkFault::CoreStatus | WorkFault::CoreStatusRepairOnce
+                    WorkFault::CoreStatus
+                        | WorkFault::CoreStatusRepairOnce
+                        | WorkFault::DisjointResponse
+                        | WorkFault::DisjointResponseRepairOnce
                 ) {
                     let detail = store
                         .load_detail(&project, id, AgentSessionSequence::FIRST)
@@ -904,7 +943,10 @@ fn coherent_fixture_with_profile(
                     );
                     assert_eq!(
                         model.calls.load(Ordering::SeqCst),
-                        if fault == WorkFault::CoreStatusRepairOnce {
+                        if matches!(
+                            fault,
+                            WorkFault::CoreStatusRepairOnce | WorkFault::DisjointResponseRepairOnce
+                        ) {
                             4
                         } else {
                             3

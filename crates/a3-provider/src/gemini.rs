@@ -1937,6 +1937,7 @@ mod tests {
         ] {
             for original in [
                 a3_application::research_work_phase_schema(phase, true)?,
+                a3_application::research_work_v6_phase_schema(phase, true)?,
                 a3_application::research_work_current_phase_schema(phase, true)?,
             ] {
                 let translated = translate_response_json_schema(&original)?;

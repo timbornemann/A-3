@@ -1259,7 +1259,7 @@ impl AgentAskResearcher {
                         let _packet = state.model_evidence(query, &query_targets);
                         controller.finish_round(delivery_before, state.progress_with_pending());
                         feedback = if state.work.is_some() {
-                            "CORE: The active question is still unresolved. Evaluate the delivered original evidence; return work.results only for supported answers. The Core, not model tool requests, controls the next read.".to_owned()
+                            "CORE: The active question is still unresolved. Evaluate current original evidence and provide its supported response or a concrete original-bound evidenceNeed. The Core, not model tool requests, controls the next read.".to_owned()
                         } else {
                             format!(
                                 "CORE EVIDENCE GATE: The proposed answer is not final because material evidence is still missing{}. Return kind research now. Inspect named indexed files directly, continue large files with inspectPath start_line, search concrete symbols or literals, and follow relevant relations. Do not ask the user to provide files already present in the pinned index.",

@@ -1203,3 +1203,110 @@ noch nicht; ein gezielter neuer Live-Lauf ist deshalb erforderlich. Ein öffentl
 Wire-Diagnosetest ergänzt denselben trivialen Analyseauftrag unter V5 und V6, um
 Stream- und Schemafehler getrennt von Repository-Semantik untersuchen zu können.
 Die Gesamtpraxisabnahme, Inhaltskorrekturen und Live-Agent-Umsetzung bleiben offen.
+
+## V7: Disjunkte Antworten und der live gefundene Union-Regress
+
+V6-Sicherungscommit: `263353f`. Das zuvor eingefrorene `v6-verified-20260907/research-tests.exe`
+hat SHA-256 `7509255a9a276b31adb28179916fa9f500a0aaadb02af586a21e12d29a4ebded`.
+Mit der wiederhergestellten ACTIVE-Q-Instruktion besteht Granite REST 2:0 in drei
+Wiederholungen: `eval-1788777001278.jsonl`, 3/3 completed/ready/Rubrik, null Halte/Reads,
+je fünf Calls und 14036 Kontextbytes, 23800/15416/15030 ms. SHA-256
+`ec6cb01ca910f1a1bf91fa80b9daf2b334f527b9e6da88af63e62d5746a40030`.
+Das schließt nicht die anderen Inhaltsbefunde.
+
+ADR-0075 beseitigt die getrennten nullable Work-/Decision-Felder. Der erste
+V7-Ergebnistest scheitert vor Implementierung an UnsupportedVersion und besteht
+danach einschließlich negativer Felder-/Phasen-/Anker-/Bytefälle. Die echte
+Mehrmodus-Navigation mit Reopen und ein Repair auf injizierten Status bestehen.
+Der breitere Lauf findet eine alte Provider-Schemaassertion; nach Anpassung an
+den konkreten V7-Root besteht auch der geschützte echte Paketvertrag. Der volle
+Workspace und Clippy auf diesem flachen V7-Stand enden mit Exit 0
+(`v7-workspace-tests.log`, `v7-clippy.log`). Trotzdem scheitert die reale Matrix:
+
+Binary `v7-disjoint-20260907/research-tests.exe`, SHA-256
+`ad109a32abd35cc1d4cb4f315453051fd959d26c209daf2d5ba3d64792844e08`.
+Alle folgenden Berichte haben null completed, ready und Rubrik-Erfolge:
+
+| Modell / Bericht | Fälle / Halte / Reads | Calls / Kontextbytes / ms |
+| --- | --- | --- |
+| Google, CSV 3:2 / `eval-1788777743423.jsonl` | 2 / 2 / 24 | 2 / 7148 / 5533 |
+| Luna / `eval-1788777745716.jsonl` | 12 / 12 / 88 | 32 / 99366 / 71371 |
+| GPT-OSS / `eval-1788777753588.jsonl` | 12 / 12 / 88 | 33 / 102279 / 78376 |
+| Ornith / `eval-1788777841237.jsonl` | 12 / 12 / 64 | 31 / 95545 / 58488 |
+| Qwen 8k / `eval-1788777912190.jsonl` | 12 / 12 / 64 | 34 / 97625 / 96580 |
+| Granite / `eval-1788778014996.jsonl` | 12 / 12 / 76 | 32 / 99946 / 51505 |
+
+SHA-256 in derselben Reihenfolge:
+
+- `b4cee3af61304d5752aa59df7305a3cf9cba466a5aa755cf7997d8b266e9cc35`
+- `bbb016a99519ca5675245ef39da7f9161f57b727fda2cc96b3c4e7d04e30e4cd`
+- `9159a5c1f1776120844360e0d731fee54aef4cdb1312884a80e50cf4386efe94`
+- `fb38b668448bd52e8f1906b3b537541f28cf3e4c913637f50c42aa79324ef357`
+- `88fb0252dfb65b5363b4eabf46b4073ca49b18351c4034c50737c82e60c68cb0`
+- `c6ea63d439e6241dd80e6f10530b6049c1bea4dba00fcbfc002537f283151051`
+
+Die Nullabschlüsse sind ein Schema-/Modell-Kompatibilitätsregress, kein bestandenes
+Autonomiegate. Viele Antworten weichen auf Belegbedarf aus; der Core führt begrenzte
+deduplizierte Zugriffe durch und hält ungelöste Pflichten offen. Die kürzeren Laufzeiten
+sind kein Geschwindigkeitsgewinn, sondern folgen aus dem vorzeitigen Scheitern.
+
+### Direkter öffentlicher Wirevergleich und ADR-0076
+
+`v7-wire-shape-20260907/research-tests.exe`, SHA-256
+`6ed5472c6f6147c68c464de06fa1c4f5a3ab437f631747e1d125a716ce03ab5d`, vergleicht
+denselben minimalen Auftrag mit `def helper(): return 7` ohne Repository oder Tools.
+Luna gibt unter der flachen Union zuvor nur eine Rückfrage aus (111 Bytes); Google
+liefert Bedarf samt Whitespace (12486 Bytes). In der Ergebnis-only-Variante antworten
+Luna, Google und GPT-OSS jeweils korrekt mit E1 (135/160/160 Bytes). In der Union mit
+vorangestelltem `kind` und verschachteltem `result` bleiben sämtliche Alternativen
+erhalten; alle drei liefern ebenfalls die richtige Antwort mit E1 (146/171/158 Bytes).
+Die übrigen Providerbudgets und Profile bleiben unverändert. Ein Test-Exit 0 des
+Wirewerkzeugs bedeutet nur ausgeführte Diagnose, nicht automatisch gültiges Ergebnis.
+
+ADR-0076 übernimmt diese Ergebnisform. Der neue verschachtelte Decodertest wird
+zunächst mit UnknownOrMissingField rot und danach grün. Der Core validiert den
+äußeren epistemischen Typ und das enge Payload separat; flache V7-Felder sind keine
+Fallback-Eingabe. Schema-UTF-8-Bytes V6 → korrigiertes V7: Initialize 1148 → 968,
+Analyze 2028 → 1773, SummarizeOriginals 1820 → 1539, Design 1537 → 1032,
+DesignTests 1288 → 786, Finalize 1246 → 969. Das ist nur eine Größenmessung.
+Die erneuten Gesamtgates und vollständigen Modellnachtests auf diesem korrigierten
+Stand sind bei dieser Zwischenprotokollierung noch offen.
+
+### Terminaler Nachtest der verschachtelten V7-Antwort
+
+`v7-nested-20260907/research-tests.exe`, SHA-256
+`a4bce99a404b00c9e3368052254e081c223092d5ecf882ca0598eef45855521b`:
+vollständige Offline-Workspace-Tests (alle Features, seriell) und Workspace-Clippy
+(alle Targets/Features, Warnungen als Fehler) bestehen. Die vier V7-Applicationtests,
+drei V7-Desktopregressionen und begrenzten Repair-Hints bestehen ebenfalls.
+Lokale Modelle liefen ausschließlich nacheinander. Alle Berichte haben null
+adaptive Reads und null wiederholte Reads; das ist für diese bereits vollständig
+gelieferten Originalpakete kein Nachweis zusätzlicher Suchfähigkeit.
+
+| Modell / Bericht | Fälle / Abschlüsse / Rubrik bestanden / Halte | Calls / Kontextbytes / ms |
+| --- | --- | --- |
+| Luna / `eval-1788778564676.jsonl` | 12 / 12 / 12 / 0 | 35 / 129527 / 168445 |
+| Google, CSV 3:2 / `eval-1788778563626.jsonl` | 2 / 0 / 0 / 2 | 2 / 7148 / 176025 |
+| GPT-OSS / `eval-1788778573966.jsonl` | 12 / 11 / 10 / 1 | 40 / 144804 / 161998 |
+| Ornith / `eval-1788778744534.jsonl` | 12 / 12 / 11 / 0 | 36 / 136913 / 186190 |
+| Qwen 8k / `eval-1788778943199.jsonl` | 12 / 12 / 11 / 0 | 34 / 100902 / 210690 |
+| Granite / `eval-1788779160101.jsonl` | 12 / 11 / 10 / 1 | 36 / 131714 / 161695 |
+
+SHA-256 in derselben Reihenfolge:
+
+- `7ba951cb37698fc364ca8d45b03d99964748ec605bba9b41acf2cc9657b5655a`
+- `b7052bf2d26d1053863f84de869cbd1c318b3e9d61eb6adf35cdb502e7ee0ed3`
+- `271aecef607a44d4302da655cd35e211512f21de8d2ee2a20fe2caef667198ed`
+- `5b626912bc94abcafd8e132fbf23117e6a1fdc98b963c8f2e2636b010dfbe537`
+- `0410d5b707bc110188899c41e1334db392becad1b83660ae4df342c864ce9f22`
+- `094c40761fe2fb677a3e6786eafb0531db1ae7c228d56312ee93f6dbe1d7780a`
+
+Offene Befunde: GPT-OSS erhält im REST-Fall 2:1 wiederholt leere Dokumente;
+Granites CSV-Testentwurf 3:2 überschreitet auch nach der einzigen Reparatur die
+4096-Byte-Textgrenze. Google endet zweimal nach etwa 88 Sekunden als ModelRejected;
+der genaue Providergrund ist noch nicht belegt. GPT-OSS, Ornith und Qwen lassen
+im Audit-Fall 1:0 den eigentlichen Writer aus. Luna benennt ihn jetzt korrekt,
+behauptet im CSV-Plan aber weiterhin unbelegt Persistenz durch `save_tasks`:
+die vollständig geprüfte Fixture implementiert dort nur eine Tupelrückgabe.
+Die grüne Keywordrubrik ist daher ausdrücklich keine semantische Gesamtabnahme.
+Ein tatsächlicher mutierender Live-Agent-Abschluss bleibt separat nachzuweisen.

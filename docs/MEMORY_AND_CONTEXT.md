@@ -653,8 +653,20 @@ unberührt und ungekürzt.
 
 ## Verbindlicher Rechercheprüfstand (ADR-0047)
 
-Für neue Ask-, Plan- und Agent-Vorbereitungsläufe verwendet die Modellgrenze Recherche-V6
-gemäß [ADR-0071](adrs/0071-core-eigene-recherchestatusangaben.md).
+Für neue Ask-, Plan- und Agent-Vorbereitungsläufe verwendet die Modellgrenze Recherche-V7
+gemäß [ADR-0075](adrs/0075-disjunkte-rechercheantworten-statt-leerfortschritt.md).
+Der Root enthält ausschließlich `schema_version=7` und eine phasengebundene `response`:
+Frageninitialisierung, einzelne Interpretation, einzelner Entwurf, konkreter Belegbedarf,
+folgenreiche Nutzerfrage oder Legacy-Planfelder. Ergebnis und Bedarf sind disjunkt;
+leere Ergebnislisten und ein neutraler Fortschrittsarm existieren nicht. Strikte
+Feld-/Wert-/Phasenprüfung normalisiert in dieselben bestehenden Work-Typen vor der
+unveränderten Originalzulassung. Historische V3–V6-Decoder und gespeicherte Zustände bleiben;
+der mutierende Replan behält seinen gesonderten V5-Vertrag.
+Nach [ADR-0076](adrs/0076-entscheidungstyp-vor-ergebnisdaten-im-v7-vertrag.md)
+steht der gemeinsame Entscheidungstyp vor den Varianten-Daten: Interpretation
+und Entwurf tragen `response.kind` und darunter `response.result` mit
+`question_id`, `text`, `evidence`. Flache experimentelle V7-Ergebnisse werden
+nicht salvagiert; reale Wire-Tests müssen die Variantenwahl nachweisen.
 Die vorstehenden Freitext-/Nullrundenregeln beschreiben den erhaltenen V3/V4-Legacypfad.
 Der seit V5 bestehende `ResearchWorkState` bleibt unverändert: unveränderlicher Auftrag, Core-IDs Q1–Q32,
 Pflicht-/unterstützende/optionale Fragen, frühere Abhängigkeiten, Ergebnisart und Prüfstatus.
@@ -680,14 +692,14 @@ Recherchequellen selbst. Höchstens 32 Änderungen und 32 Tests mit jeweils einz
 werden akzeptiert; der bestehende Plan-/Task-Ledger-Vertrag wird anschließend erneut geprüft.
 Das Modell kann durch `kind: plan` weder Rechercheabschluss noch Ausführung autorisieren.
 
-V6 verlangt keine wiederholte administrative Modellnotiz. Ziel, zugelassener Fortschritt
+Seit V6 wird keine wiederholte administrative Modellnotiz verlangt. Ziel, zugelassener Fortschritt
 und nächste offene Pflicht kommen ausschließlich aus dem Core-Prüfstand. Sie erscheinen
 als begrenzte Audit-Ereignisse und in der vorhandenen Prüfliste, nicht als Einträge der
 Befundtabelle. So werden sie auch nach Datenbank-Reopen nicht zu ResearchMemory-Findings.
 V3–V5-Modellnotizen behalten ihre bisherigen unabhängigen Prüfungen und Speicherung.
 Eine neue Persistenzversion ist dafür nicht nötig.
 
-Für echte weitere Recherche erlaubt V6-Analyze gemäß
+Für echte weitere Recherche erlaubt Analyze seit V6 gemäß
 [ADR-0072](adrs/0072-typisierter-belegbedarf-ohne-statusprosa.md) einen typisierten
 `evidenceNeed` für die aktive Frage mit ein bis acht einfachen Symbol-/Pfadliteralen.
 Jedes Literal muss im aktuellen Originalauftrag oder einem tatsächlich gelieferten
@@ -697,9 +709,11 @@ dürfen nicht gemeinsam auftreten. Die vorhandene Audit-Query hält diese Naviga
 für Fortsetzungen fest; alte Querytexte bleiben unmaßgebliche Suchhistorie und ersetzen
 keine erneute Original-/Scopeprüfung. Designphasen können so keine neue Recherche anfordern.
 Nach [ADR-0074](adrs/0074-konkreter-belegbedarf-in-planbestandsaufnahme.md) gilt
-dies auch für V6-SummarizeOriginals: vollständig gelieferte benannte Dateien können
+dies auch seit V6 für SummarizeOriginals: vollständig gelieferte benannte Dateien können
 erst auf weitere Helfer verweisen. Leerer `progress` bleibt dort unzulässig; nur der
 konkrete geprüfte Bedarf darf den unverändert offenen Stand an die Read-Frontier geben.
+V7 übernimmt diese Variante direkt in `response`; die alte leere Analyze-progress-
+Darstellung kann nur im historischen V5/V6-Replay auftreten.
 
 [ADR-0073](adrs/0073-originalgebundene-navigationsstellen-im-kontext.md) hält im
 vorhandenen 32-Einheiten-Cache auch kurze, tatsächlich gelieferte Originalzeilen der

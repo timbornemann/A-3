@@ -202,7 +202,7 @@ impl WorkGuard {
             return None;
         }
         let mut hint = format!(
-            "Original coverage repair for Q{}. Return schema_version=6, work.questions=[], one result question_id={}, kind=interpretation, and decision with kind=progress only; no note. Explain the requested behavior of EACH required original and cite at least one current anchor_ref from EVERY file group: {}. Multiple anchors in one group belong to the same file. Use only evidence supporting the explanation, not S labels or copied quotes. Do not substitute one file for another, omit a required file, propose new design or invent facts. The Core still validates every source; no extra read or repair is granted.",
+            "Original coverage repair for Q{}. Return schema_version=7, response.kind=interpretation and nested result with question_id={}, text and evidence; no note, work, decision or progress. Explain the requested behavior of EACH required original and cite at least one current anchor_ref from EVERY file group: {}. Multiple anchors in one group belong to the same file. Use only evidence supporting the explanation, not S labels or copied quotes. Do not substitute one file for another, omit a required file, propose new design or invent facts. Core validates every source; no extra read or repair is granted.",
             id.get(),
             id.get(),
             groups.join(" ")
@@ -805,7 +805,7 @@ impl AskResearchWorkingSet {
             "\nCORE RESEARCH CONTRACT (immutable; results are source-bound interpretations, not verified facts):\n"
         });
         if !self.work_required_revisions.is_empty() && !compact {
-            text.push_str("Required original file coverage across work.results (each named file needs an original E-window reference; a caller does not prove the callee body):\n");
+            text.push_str("Required original file coverage for the active result (each named file needs an original E-window reference; a caller does not prove the callee body):\n");
             for revision in &self.work_required_revisions {
                 let covered = work
                     .questions()

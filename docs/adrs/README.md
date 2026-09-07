@@ -99,6 +99,8 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0072](0072-typisierter-belegbedarf-ohne-statusprosa.md) | Typisierter Belegbedarf ohne Statusprosa |
 | [0073](0073-originalgebundene-navigationsstellen-im-kontext.md) | Originalgebundene Navigationsstellen im Kontext |
 | [0074](0074-konkreter-belegbedarf-in-planbestandsaufnahme.md) | Konkreter Belegbedarf in der Planbestandsaufnahme |
+| [0075](0075-disjunkte-rechercheantworten-statt-leerfortschritt.md) | Disjunkte Rechercheantworten statt Leerfortschritt |
+| [0076](0076-entscheidungstyp-vor-ergebnisdaten-im-v7-vertrag.md) | Entscheidungstyp vor Ergebnisdaten im V7-Vertrag |
 
 ## Neue ADRs
 

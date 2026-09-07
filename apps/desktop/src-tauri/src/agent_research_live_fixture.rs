@@ -375,7 +375,17 @@ fn research_live_wire_diagnostic() -> Result<(), Box<dyn Error>> {
         let initialize = a3_application::research_work_phase_schema(ResearchOutputPhase::Initialize, true)?;
         let analyze_phase = ResearchOutputPhase::Analyze(a3_domain::ResearchQuestionId::FIRST);
         let v5_analyze = a3_application::research_work_phase_schema(analyze_phase, true)?;
-        let v6_analyze = a3_application::research_work_current_phase_schema(analyze_phase, true)?;
+        let v6_analyze = a3_application::research_work_v6_phase_schema(analyze_phase, true)?;
+        let v7_analyze = a3_application::research_work_current_phase_schema(analyze_phase, true)?;
+        let mut v7_flat = v7_analyze.clone();
+        let mut flat_result = v7_flat["$defs"]["resultPayload"].clone();
+        flat_result["properties"]["kind"] = v7_flat["$defs"]["result"]["properties"]["kind"].clone();
+        flat_result["required"].as_array_mut().ok_or("flat required")?.insert(1, json!("kind"));
+        v7_flat["$defs"]["result"] = flat_result;
+        v7_flat["$defs"].as_object_mut().ok_or("flat definitions")?.remove("resultPayload");
+        let mut v7_result_only = v7_flat.clone();
+        v7_result_only["properties"]["response"] = json!({"$ref":"#/$defs/result"});
+        let v7_wrapped = v7_analyze.clone();
         let mut small_initialize = initialize.clone();
         small_initialize["$defs"]["work"]["properties"]["questions"]["maxItems"] = json!(2);
         small_initialize["$defs"]["question"]["properties"]["dependencies"]["maxItems"] = json!(1);
@@ -386,7 +396,12 @@ fn research_live_wire_diagnostic() -> Result<(), Box<dyn Error>> {
         let cases = [
             ("v5_analyze", v5_analyze),
             ("v6_analyze", v6_analyze),
-            ("v6_initialize", a3_application::research_work_current_phase_schema(ResearchOutputPhase::Initialize, true)?),
+            ("v6_initialize", a3_application::research_work_v6_phase_schema(ResearchOutputPhase::Initialize, true)?),
+            ("v7_analyze", v7_analyze),
+            ("v7_flat_analyze", v7_flat),
+            ("v7_result_only", v7_result_only),
+            ("v7_wrapped_analyze", v7_wrapped),
+            ("v7_initialize", a3_application::research_work_current_phase_schema(ResearchOutputPhase::Initialize, true)?),
             ("relaxed_initialize", relaxed_initialize),
             ("simple", simple),
             ("union", union),
@@ -402,7 +417,13 @@ fn research_live_wire_diagnostic() -> Result<(), Box<dyn Error>> {
         }
         for (name, schema) in cases {
             if selected.as_deref().is_some_and(|selection| selection != name) { continue; }
-            let question = if name.ends_with("_analyze") {
+            let question = if matches!(name, "v7_analyze" | "v7_wrapped_analyze") {
+                "Analyze ACTIVE Q1: What does helper() return? Current delivered original [E1]: def helper(): return 7. Return schema_version=7 and response kind=interpretation, with result={question_id:1,text:concrete answer,evidence:[{anchor_ref:E1}]}. No work, decision, note, progress or new questions. This is public synthetic data; no tools are available."
+            } else if matches!(name, "v7_flat_analyze" | "v7_result_only") {
+                "Analyze ACTIVE Q1: What does helper() return? Current delivered original [E1]: def helper(): return 7. Return schema_version=7 and one response kind=interpretation, question_id=1, concrete text and evidence with anchor_ref E1. No work, decision, note, progress or new questions. This is public synthetic data; no tools are available."
+            } else if name == "v7_initialize" {
+                "Return schema_version=7 and response kind=questions with one required repository question about a fixture, no dependencies. No work, decision, note, progress or results. Public synthetic data; no research or tools are available."
+            } else if name.ends_with("_analyze") {
                 "Analyze ACTIVE Q1: What does helper() return? Current delivered original [E1]: def helper(): return 7. Return one interpretation for question_id 1 with anchor_ref E1, no new questions. Use a progress decision. If the schema requires a note, use brief status with finding_kind=hypothesis and finding_source_refs=[]. This is public synthetic data; no tools are available."
             } else {
                 "Answer briefly using the supplied schema. Where applicable use a progress decision and one question about a fixture. No research or tools are available."

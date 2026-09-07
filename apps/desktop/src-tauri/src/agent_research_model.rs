@@ -214,7 +214,7 @@ impl DecisionIssue {
                 "kind=interpretation with current E-window anchor_ref evidence. Explain the actual delivered implementation"
             };
             return format!(
-                "Core instruction echo in Q{}: the previous text only repeated an assigned obligation. Return schema_version=6, decision with kind=progress only, work.questions=[], exactly one result question_id={}, {result}. Do not copy an obligation or promise to do it later. Preserve the original request and admitted prerequisites. No note, new reads or obligations. Failure category: {}.",
+                "Core instruction echo in Q{}: the previous text only repeated an assigned obligation. Return schema_version=7 and one response: outer kind as below; nested result holds question_id={}, text and evidence. {result}. Do not copy an obligation or promise to do it later. Preserve the original request and admitted prerequisites. No note, progress, work, new reads or obligations. Failure category: {}.",
                 id.get(),
                 id.get(),
                 self.code()
@@ -222,11 +222,11 @@ impl DecisionIssue {
         }
         let rule = match phase {
             Some(ResearchOutputPhase::Initialize) => {
-                "Initialize: decision contains only kind=progress. Return schema_version=6, work.questions with the complete required investigation contract and work.results=[]. Classify existing-code questions as repository; future proposals as design. Do not answer yet or emit a note."
+                "Initialize: return schema_version=7 and response={kind:questions,questions:[...]}, the complete required investigation contract. Classify existing-code questions as repository; future proposals as design. No result yet, note, work, decision or progress."
             }
             Some(ResearchOutputPhase::Analyze(id)) => {
                 return format!(
-                    "Analyze Q{}: schema_version=6; work.questions=[]; decision={{kind:progress}}; at most one result question_id={}, kind=interpretation with current E-window anchor_ref evidence. Cover relevant named originals. No note, quotes, citation markers, boundedUnknown, designDecision, markdown or new questions. If evidence is missing, results=[]; optionally decision={{kind:evidenceNeed,question_id:{},targets:[exact symbol or relative path literals from the request or delivered originals]}}. The Core alone resolves and reads existing indexed targets. Failure category: {}.",
+                    "Analyze Q{}: schema_version=7; response kind=interpretation, nested result with question_id={}, concrete text and current E-window anchor_ref evidence. Cover relevant named originals. No note, quotes, citation markers, boundedUnknown, designDecision, markdown or new questions. If evidence is missing, response={{kind:evidenceNeed,question_id:{},targets:[exact symbol or relative path literals from request or delivered originals]}}. No work, decision or empty progress. Core resolves existing indexed targets. Failure category: {}.",
                     id.get(),
                     id.get(),
                     id.get(),
@@ -235,7 +235,7 @@ impl DecisionIssue {
             }
             Some(ResearchOutputPhase::DesignTests(id)) => {
                 return format!(
-                    "DesignTests Q{}: return schema_version=6, decision contains only kind=progress, work.questions=[], exactly one result question_id={}, kind=designDecision, evidence=[]. Derive concrete test inputs, expected results and verification methods from the original request and admitted design. Defining these tests is your assigned work; never ask the user to supply or confirm routine scenarios. No note, new research, changed prerequisites or implementation claims. Maximum result text 4096 UTF-8 bytes. Failure category: {}.",
+                    "DesignTests Q{}: schema_version=7; response.kind=designDecision and exactly one result in response.result: question_id={}, concrete text, evidence=[]. Derive concrete test inputs, expected results and verification methods from the original request and admitted design. Defining these tests is your assigned work; never ask the user to supply or confirm routine scenarios. No note, work, decision, progress, new research, changed prerequisites or implementation claims. Maximum result text 4096 UTF-8 bytes. Failure category: {}.",
                     id.get(),
                     id.get(),
                     self.code()
@@ -243,7 +243,7 @@ impl DecisionIssue {
             }
             Some(ResearchOutputPhase::Design(id)) => {
                 return format!(
-                    "Design Q{}: return schema_version=6; decision contains only kind=progress; work.questions=[]. work.results must contain exactly one concrete result, question_id={}, kind=designDecision, evidence=[]. Answer the original request, not merely a heading or status. Preserve admitted prerequisite design decisions; specify the requested future outcome. A proposed implementation need not already exist; further repository reads cannot repair an empty design. Only a consequential missing user choice permits kind=question with message and empty results. No note, source anchors, quotes, citation markers, interpretation, boundedUnknown, markdown or new obligations. Failure category: {}.",
+                    "Design Q{}: schema_version=7; response.kind=designDecision, evidence=[] in nested result with question_id={} and concrete text. Answer the original request, not a heading or status. Preserve admitted prerequisite decisions; specify the future outcome. Proposed work need not already exist; reads cannot repair empty design. Only a consequential missing user choice permits response={{kind:question,message:...}}. No note, work, decision, progress, source anchors, quotes, citation markers, interpretation, boundedUnknown or new obligations. Failure category: {}.",
                     id.get(),
                     id.get(),
                     self.code()
@@ -251,7 +251,7 @@ impl DecisionIssue {
             }
             Some(ResearchOutputPhase::SummarizeOriginals(id)) => {
                 return format!(
-                    "SummarizeOriginals Q{}: schema_version=6, work.questions=[]. With decision={{kind:progress}} return exactly one interpretation question_id={} with current E-window anchor_ref covering every named original. For a concrete missing helper only: results=[] and decision={{kind:evidenceNeed,question_id:{},targets:[exact literals from delivered originals/request]}}. No note, empty progress, new design, tools, questions or invented external facts. Core owns reads and validates every source. Failure category: {}.",
+                    "SummarizeOriginals Q{}: schema_version=7; response is exactly one interpretation with nested result: question_id={}, text and current E-window anchor_ref covering every named original. For a concrete missing helper only: response={{kind:evidenceNeed,question_id:{},targets:[exact literals from delivered originals/request]}}. No note, empty progress, work, decision, new design, tools, questions or invented external facts. Core owns reads and validates every source. Failure category: {}.",
                     id.get(),
                     id.get(),
                     id.get(),
@@ -259,7 +259,7 @@ impl DecisionIssue {
                 );
             }
             Some(ResearchOutputPhase::Finalize) => {
-                "Finalize: return schema_version=6, kind=plan with summary, changes, interfaces, tests and assumptions. Changes/tests are nonempty arrays of single-line concrete verifiable outcomes. No note, markdown field, markers, headings, citations, source_refs, evidence_status, new research or question. Use work.questions=[] and work.results=[]. The Core formats the plan and attaches admitted original evidence."
+                "Finalize: return schema_version=7 and response kind=plan with summary, changes, interfaces, tests and assumptions. Changes/tests are nonempty arrays of single-line concrete verifiable outcomes. No note, work, decision, progress, markdown field, markers, headings, citations, source_refs, evidence_status, new research or question. The Core formats the plan and attaches admitted original evidence."
             }
             None => return self.repair_hint(source_count),
         };

@@ -40,6 +40,13 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [ ] Disjunkte V7-Phasenantworten gegen leeren Fortschritt implementieren und mit
+      striktem Legacy-/Provider-/Mehrmodusvertrag sowie unveränderten öffentlichen
+      Modellfällen nachtesten ([ADR-0075](../adrs/0075-disjunkte-rechercheantworten-statt-leerfortschritt.md)).
+- [ ] Den live gescheiterten flachen V7-Unionarm durch eine discriminator-first
+      Ergebnisdarstellung korrigieren, ohne Bedarf oder Evidenzregeln zu entfernen
+      ([ADR-0076](../adrs/0076-entscheidungstyp-vor-ergebnisdaten-im-v7-vertrag.md)).
+
 Fortsetzung mit Mehrprovider-Einstellungen (ADR-0066):
 
 - [x] Explizite Live-Testauswahl für Luna und Google Gemma aus bestehenden freigegebenen

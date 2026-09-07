@@ -22,6 +22,7 @@ struct NavigationModel {
     calls: AtomicUsize,
     needs: std::sync::Mutex<Vec<String>>,
     invalid: bool,
+    disjoint: bool,
 }
 
 fn anchor(packet: &str, needle: &str) -> Option<serde_json::Value> {
@@ -128,6 +129,22 @@ impl ResearchModel for NavigationModel {
             }
             ResearchOutputPhase::Finalize => return Err(AgentConversationFailure::InvalidInput),
         }
+        if self.disjoint {
+            let response = if phase == ResearchOutputPhase::Initialize {
+                serde_json::json!({"kind":"questions","questions":document["work"]["questions"]})
+            } else if document["decision"]["kind"] == "evidenceNeed" {
+                document["decision"].clone()
+            } else {
+                let mut result = document["work"]["results"][0].clone();
+                let kind = result
+                    .as_object_mut()
+                    .ok_or(AgentConversationFailure::InvalidOutput)?
+                    .remove("kind")
+                    .ok_or(AgentConversationFailure::InvalidOutput)?;
+                serde_json::json!({"kind":kind,"result":result})
+            };
+            document = serde_json::json!({"schema_version":7,"response":response});
+        }
         Ok(document.to_string())
     }
 
@@ -143,16 +160,23 @@ impl ResearchModel for NavigationModel {
 #[test]
 fn research_v6_original_bound_needs_follow_two_helpers_and_persist_as_navigation()
 -> Result<(), Box<dyn Error>> {
-    navigation_fixture(false)
+    navigation_fixture(false, false)
 }
 
 #[test]
 fn research_v6_invented_need_gets_one_repair_without_adaptive_reads() -> Result<(), Box<dyn Error>>
 {
-    navigation_fixture(true)
+    navigation_fixture(true, false)
 }
 
-fn navigation_fixture(invalid: bool) -> Result<(), Box<dyn Error>> {
+#[test]
+fn research_v7_disjoint_navigation_preserves_origins_resume_and_invalid_need_boundary()
+-> Result<(), Box<dyn Error>> {
+    navigation_fixture(false, true)?;
+    navigation_fixture(true, true)
+}
+
+fn navigation_fixture(invalid: bool, disjoint: bool) -> Result<(), Box<dyn Error>> {
     support::run_libsql_test(async {
         let repository = support::TempDirectory::new()?;
         repository.git(["init", "--initial-branch=main"])?;
@@ -241,6 +265,7 @@ fn navigation_fixture(invalid: bool) -> Result<(), Box<dyn Error>> {
                 calls: AtomicUsize::new(0),
                 needs: std::sync::Mutex::new(Vec::new()),
                 invalid,
+                disjoint,
             });
             let worker_model = model.clone();
             let worker_project = project.clone();

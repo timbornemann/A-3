@@ -14,6 +14,7 @@ mod replan_research;
 pub use replan_research::{ReplanResearchCheckpoint, ReplanResearchContext};
 mod agent_recovery;
 mod agent_research_controller;
+mod research_response_codec;
 mod research_work_admission;
 mod research_work_codec;
 mod schema_projection;
@@ -23,7 +24,7 @@ pub use research_work_admission::{
 pub use research_work_codec::{
     ResearchEvidenceAnchorId, ResearchEvidenceNeed, ResearchOutputPhase, ResearchQuoteProposal,
     ResearchResultProposal, ResearchWorkUpdate, research_work_current_phase_schema,
-    research_work_decision_schema, research_work_phase_schema,
+    research_work_decision_schema, research_work_phase_schema, research_work_v6_phase_schema,
 };
 mod agent_runtime;
 mod agent_session;

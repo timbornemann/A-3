@@ -81,9 +81,16 @@ impl ResearchOutputPhase {
     }
 }
 
-/// Current V6 wire contract: the Core owns presentation, not the model (ADR-0071).
-/// The independent V5 builder remains unchanged for historical replay and comparisons.
+/// Current V7 wire contract: one disjoint response per trusted phase (ADR-0075).
 pub fn research_work_current_phase_schema(
+    phase: ResearchOutputPhase,
+    reads: bool,
+) -> Result<Value, DecodeError> {
+    crate::research_response_codec::schema(phase, reads)
+}
+
+/// Historical V6 phase contract retained independently for strict replay and comparisons.
+pub fn research_work_v6_phase_schema(
     phase: ResearchOutputPhase,
     reads: bool,
 ) -> Result<Value, DecodeError> {
@@ -548,6 +555,33 @@ fn question_id(value: &Value) -> Result<ResearchQuestionId, DecodeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn research_v7_disjoint_result_is_not_nullable_progress()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let phase = ResearchOutputPhase::Analyze(ResearchQuestionId::FIRST);
+        let result = json!({"schema_version":7,"response":{"kind":"interpretation","result":{"question_id":1,"text":"helper returns 7.","evidence":[{"anchor_ref":"E1"}]}}});
+        let decoded = crate::DecodeAskResearchDecision.decode_phase(&result.to_string(), phase)?;
+        let crate::AskResearchDecision::Answer { note, .. } = decoded else {
+            return Err("V7 result did not normalize to work".into());
+        };
+        assert_eq!(note.origin, crate::AskResearchNoteOrigin::CoreWorkState);
+        assert_eq!(note.work.ok_or("missing work")?.results.len(), 1);
+        for response in [
+            json!({"kind":"progress"}),
+            json!({"kind":"progress","results":[]}),
+            json!({"kind":"interpretation","question_id":1,"text":"helper returns 7.","evidence":[]}),
+            json!({"kind":"evidenceNeed","question_id":1,"targets":["helper"],"text":"pretend result"}),
+        ] {
+            let invalid = json!({"schema_version":7,"response":response});
+            assert!(
+                crate::DecodeAskResearchDecision
+                    .decode_phase(&invalid.to_string(), phase)
+                    .is_err()
+            );
+        }
+        Ok(())
+    }
     #[test]
     fn repeated_canonical_original_anchors_form_one_bounded_source_set() -> Result<(), DecodeError>
     {
@@ -1024,7 +1058,7 @@ mod tests {
             ResearchOutputPhase::Finalize,
         ] {
             let previous = research_work_phase_schema(phase, true)?;
-            let current = research_work_current_phase_schema(phase, true)?;
+            let current = research_work_v6_phase_schema(phase, true)?;
             assert_eq!(current["properties"]["schema_version"]["const"], 6);
             assert!(current["$defs"].get("v5StatusNote").is_none());
             let mut expected_work = previous["$defs"]["work"].clone();

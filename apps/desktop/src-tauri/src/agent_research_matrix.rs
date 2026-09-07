@@ -215,8 +215,14 @@ fn research_matrix_diagnostics_bind_numeric_anchors_without_source_or_model_text
 
 // Fixed-shape diagnostics for the public fixture, never raw model/provider content.
 fn invalid_shape_summary(document: &serde_json::Value) -> serde_json::Value {
-    let note = &document["decision"]["note"];
-    let note_present = document["decision"].get("note").is_some();
+    let current = document["schema_version"] == 7;
+    let decision = if current {
+        &document["response"]
+    } else {
+        &document["decision"]
+    };
+    let note = &decision["note"];
+    let note_present = decision.get("note").is_some();
     let refs = note["finding_source_refs"].as_array();
     let canonical_ref = |value: &serde_json::Value, prefix: char, max: u16| {
         value.as_str().is_some_and(|text| {
@@ -225,9 +231,26 @@ fn invalid_shape_summary(document: &serde_json::Value) -> serde_json::Value {
                 .is_some_and(|n| n > 0 && n <= max && text == format!("{prefix}{n}"))
         })
     };
-    let results = document["work"]["results"]
-        .as_array()
-        .map(|items| {
+    let mut wrapped_result = document["response"]["result"].clone();
+    if let Some(object) = wrapped_result.as_object_mut() {
+        object.insert("kind".to_owned(), decision["kind"].clone());
+    }
+    let single = [wrapped_result];
+    let items = if current {
+        Some(
+            if matches!(
+                decision["kind"].as_str(),
+                Some("interpretation" | "designDecision")
+            ) {
+                single.as_slice()
+            } else {
+                &[]
+            },
+        )
+    } else {
+        document["work"]["results"].as_array().map(Vec::as_slice)
+    };
+    let results = items.map(|items| {
             items.iter().take(2).map(|r| {
                 let anchors = r["evidence"].as_array();
                 serde_json::json!({
@@ -242,7 +265,7 @@ fn invalid_shape_summary(document: &serde_json::Value) -> serde_json::Value {
         });
     serde_json::json!({
         "model_note_present":note_present,
-        "evidence_need":document["decision"]["kind"] == "evidenceNeed",
+        "evidence_need":decision["kind"] == "evidenceNeed",
         "note_bytes":(["goal","finding","gap","next_step"].map(|key| note[key].as_str().map(|s| s.trim().len()))),
         "note_kind_valid":note_present.then(|| matches!(note["finding_kind"].as_str(), Some("observation" | "hypothesis" | "conclusion"))),
         "note_refs_canonical":note_present.then(|| refs.is_some_and(|r| r.iter().all(|v| canonical_ref(v, 'S', 200)))),
@@ -265,6 +288,13 @@ fn research_matrix_shape_diagnostics_distinguish_repeated_anchors_without_raw_te
     assert_eq!(current["model_note_present"], false);
     assert!(current["note_refs_canonical"].is_null());
     assert!(current["note_kind_valid"].is_null());
+    let disjoint = invalid_shape_summary(&serde_json::json!({"schema_version":7,"response":{
+        "kind":"interpretation","result":{"question_id":1,"text":"private-looking sentinel",
+        "evidence":[{"anchor_ref":"E2"},{"anchor_ref":"E2"}]}}}));
+    assert_eq!(disjoint["model_note_present"], false);
+    assert_eq!(disjoint["results"][0]["anchors_duplicate"], true);
+    assert_eq!(disjoint["results"][0]["question_id"], 1);
+    assert!(!disjoint.to_string().contains("sentinel"));
 }
 impl ResearchModel for MatrixModel {
     fn requires_work_contract(&self) -> bool {

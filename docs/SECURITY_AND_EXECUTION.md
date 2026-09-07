@@ -615,8 +615,9 @@ Frage kann eine Mutation autorisieren.
 
 ## Netzwerk und Datenschutz
 
-Der aktuelle Recherche-V6-Vertrag gemäß
-[ADR-0071](adrs/0071-core-eigene-recherchestatusangaben.md) akzeptiert keine
+Der aktuelle Recherche-V7-Vertrag gemäß
+[ADR-0075](adrs/0075-disjunkte-rechercheantworten-statt-leerfortschritt.md) akzeptiert wie V6 aus
+[ADR-0071](adrs/0071-core-eigene-recherchestatusangaben.md) keine
 modellgenerierten Verwaltungsnotizen. Core-Status wird ausschließlich als Audit
 gespeichert, nicht als wiederverwendbarer Befund. Der V6-Belegbedarf aus
 [ADR-0072](adrs/0072-typisierter-belegbedarf-ohne-statusprosa.md) enthält nur
@@ -626,7 +627,15 @@ Erst die bestehenden Indexauflösungs-, Freshness-, Safe-Reader- und Policygrenz
 entscheiden über einen Zugriff. Ein Literalvorkommen ist kein Ausführungsrecht
 und kein semantischer Beweis. Die Audit-Queryhistorie bewahrt lediglich die
 Suchrichtung; sie darf nach Wiederaufnahme weder einen Fakt noch einen ungeprüften
-Read autorisieren. Historische V3–V5-Dokumente behalten ihre strikte Zulassung.
+Read autorisieren. Historische V3–V6-Dokumente behalten ihre strikte Zulassung.
+V7 erzwingt eine einzige disjunkte `response`; gemischte Felder, Leerfortschritt
+und eine falsche Phase werden unabhängig vom Provider verworfen. Erst nach
+Feldprüfung erfolgt die Normalisierung in bestehende Work-Typen. Daraus entstehen
+weder Fakten noch zusätzliche Repairs oder Rechte.
+Der gemeinsame äußere Entscheidungstyp nach
+[ADR-0076](adrs/0076-entscheidungstyp-vor-ergebnisdaten-im-v7-vertrag.md) bestimmt
+die epistemische Art von `response.result`. Der Ergebnisinhalt darf keinen zweiten
+Typ einschleusen; flache oder gemischte Felder werden verworfen.
 Die eng typisierte Variante gilt in Analyze sowie nach
 [ADR-0074](adrs/0074-konkreter-belegbedarf-in-planbestandsaufnahme.md) in
 SummarizeOriginals. Leerer Fortschritt ist in der Bestandsaufnahme weiterhin kein

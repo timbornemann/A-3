@@ -158,7 +158,7 @@ pub enum AskResearchDecision {
     },
 }
 
-/// Strict V3-V5 replay decoder with an independently checked V6 production-phase contract.
+/// Strict V3-V6 replay decoder with an independently checked V7 production-phase contract.
 #[derive(Debug, Clone, Copy)]
 pub struct DecodeAskResearchDecision;
 
@@ -174,7 +174,7 @@ impl DecodeAskResearchDecision {
         self.decode_document(raw, None)
     }
 
-    /// Enforces the Core-selected V5 phase independently of provider schema support.
+    /// Enforces the Core-selected phase independently of provider schema support.
     pub fn decode_phase(
         self,
         raw: &str,
@@ -193,6 +193,7 @@ impl DecodeAskResearchDecision {
         }
         let root: Value =
             serde_json::from_str(raw).map_err(|_| AskResearchDecisionDecodeError::MalformedJson)?;
+        let root = crate::research_response_codec::normalize(root)?;
         if let Some(phase) = phase {
             crate::research_work_codec::validate_phase(&root, phase)?;
         }
