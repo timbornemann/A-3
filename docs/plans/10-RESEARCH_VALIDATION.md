@@ -1930,3 +1930,53 @@ Inspektionen Debug-Text, während `ModuleCardClaimId` dort absichtlich redigiert
 Dadurch kollidieren unterschiedliche Claim-Ziele. Das ist nicht als Ursache des
 Granite-Fixtures nachgewiesen und wird separat mit dauerhafter Legacy-Behandlung
 bearbeitet; es darf nicht durch Lockerung des Duplikatschutzes verdeckt werden.
+
+### ADR-0089: Replan-Leseduplikate im bestehenden Einzelrepair
+
+Der neue Turntest scheitert vor der Korrektur daran, dass ein bereits bekannter
+Read sofort terminal wird und null statt eines Repairs verbraucht. Log
+`replan-duplicate-repair-red.log`. Danach besteht die gesamte Kombination aus
+Duplikat→anderem Read (genau ein Tool-/Recovery-Aufruf), Duplikat→Duplikat und
+Strukturfehler→Duplikat (null Toolwirkung, genau zwei Modellantworten und kein
+dritter Versuch). Der ursprüngliche Request samt Schema bleibt im Repair erhalten;
+der feste Hinweis enthält weder Query noch Pfad. Ein ausgeschöpftes Readbudget
+öffnet weiterhin keinen Duplikatrepair. Fertige Replan-Untersuchungen und Turns
+ohne Replan behalten ihre normale Zulassung.
+
+Der tatsächliche Storage-Vertrag öffnet den Store erneut, rekonstruiert dieselbe
+Quittung und prüft einen weiterhin gesperrten identischen File-Read bei unverändertem
+Readzähler. Alle bestehenden Anker-, Snapshot-, Mutations-, Context-, Provider-,
+Storage- und Mehrmodusverträge bestehen. Keine Migration oder Profiländerung.
+
+Eingefrorenes Binary `replan-duplicate-repair-20260907/agent-tests.exe`, SHA-256
+`ecab19018a650ea07f8fc4624e98b13cb6a62f2f19d5c4760260e6be1ffae34d`.
+Es enthält den finalen Produktionscode; danach wurde nur der zusätzliche
+Unit-Grenztest für fertige und Nicht-Replan-Kontexte ergänzt.
+
+| Modell | Dauer | Tatsächliches Ergebnis |
+| --- | --- | --- |
+| Luna | 15,72 s | Done 23, echter Test Exit 0, Completed/verified, unabhängige Prüfung grün |
+| Granite 8B | 52,95 s | Sechs Tests Exit 1, später RepeatedReplanRead nach Einzelrepair, Failed 62 |
+| Qwen 8k | 39,04 s | TargetAlreadyExists nach Einzelrepair, Failed 6 |
+
+Die lokalen Modelle liefen strikt nacheinander. Geschützte Dateien bleiben überall
+bytegleich; Luna bestätigt zusätzlich unveränderte native Settings. Der spätere
+Granite-Abbruch ist kein Erfolg und kein Geschwindigkeitsgewinn. Auch eine technisch
+nutzbare Korrekturmöglichkeit garantiert nicht, dass das Modell den anderen Read
+zielgerichtet auswählt oder den eigentlichen Programmfehler behebt. Wiederholte
+erfolglose Verifikationen und Qwens falsche Patch-Operationswahl bleiben offen.
+
+SHA-256 im selben Verzeichnis:
+
+- `granite-live.log`: `dd564cac5093a4e1fd0e869dea4efccfaf6d4d0c5c7b3209b0900fd25ade67ca`
+- `qwen-live.log`: `197c297bede325c1759865c64da2c41e4e2396d7af1d3cc56dfb10fac02121d8`
+- `luna-live.log`: `d2945185b29809e2da070782a8db9c1f80ac840973da8fb9e8368afa7c25641b`
+
+Finale lokale Gates: `cargo fmt --all --check`, `cargo clippy --workspace
+--all-targets --all-features --offline --locked --jobs 2 -- -D warnings`,
+`cargo test --workspace --all-features --offline --locked --jobs 2 -- --test-threads=1`
+und lokale Markdown-Link-/Diff-Prüfung. Alle Rust-Gates enden mit Exit 0;
+Logs `replan-duplicate-repair-final-targeted.log`, `replan-duplicate-repair-clippy.log`
+und `replan-duplicate-repair-workspace.log`. Die finale Serie wurde nach der letzten
+Unit-Testergänzung vollständig neu gebaut und seriell geprüft. Keine plattformfremde
+oder allgemeine Modellabnahme wird daraus abgeleitet.

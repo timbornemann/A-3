@@ -498,7 +498,19 @@ impl DecodeAgentActionTurn {
         raw: &str,
         published: Option<&a3_domain::PublishedIndex>,
     ) -> AgentActionPrimaryOutcome {
-        match self.decoder.decode_envelope_in_snapshot(raw, published) {
+        self.decode_primary_in_state(raw, published, None)
+    }
+
+    pub(crate) fn decode_primary_in_state(
+        self,
+        raw: &str,
+        published: Option<&a3_domain::PublishedIndex>,
+        replan: Option<&crate::ReplanResearchCheckpoint>,
+    ) -> AgentActionPrimaryOutcome {
+        match self
+            .decoder
+            .decode_envelope_in_state(raw, published, replan)
+        {
             Ok(action) => AgentActionPrimaryOutcome::Accepted(action),
             Err(error) => AgentActionPrimaryOutcome::RepairRequired(AgentActionRepair {
                 decoder: self.decoder,
@@ -523,10 +535,15 @@ impl AgentActionRepair {
 
     /// Consumes this sole capability while preparing one content-free correction request.
     pub fn prepare(self) -> Result<PreparedAgentActionRepair, ModelMessageError> {
+        let hint = if self.error == AgentActionDecodeError::RepeatedReplanRead {
+            " This read already has a durable attempt. Choose a different relevant search or inspect target; repeating it is not new evidence."
+        } else {
+            ""
+        };
         let instruction = ModelMessage::try_from_string(
             ModelMessageRole::User,
             format!(
-                "The previous AgentAction V{} output was rejected with code \"{}\". Return exactly one corrected JSON object matching the same schema and no prose.",
+                "The previous AgentAction V{} output was rejected with code \"{}\". Return exactly one corrected JSON object matching the same schema and no prose.{hint}",
                 self.decoder.version().get(),
                 self.repair_code(),
             ),
@@ -571,8 +588,17 @@ impl PreparedAgentActionRepair {
         raw: &str,
         published: Option<&a3_domain::PublishedIndex>,
     ) -> Result<DecodedAgentAction, AgentActionRepairFailure> {
+        self.decode_in_state(raw, published, None)
+    }
+
+    pub(crate) fn decode_in_state(
+        self,
+        raw: &str,
+        published: Option<&a3_domain::PublishedIndex>,
+        replan: Option<&crate::ReplanResearchCheckpoint>,
+    ) -> Result<DecodedAgentAction, AgentActionRepairFailure> {
         self.decoder
-            .decode_envelope_in_snapshot(raw, published)
+            .decode_envelope_in_state(raw, published, replan)
             .map_err(|error| AgentActionRepairFailure { error })
     }
 }

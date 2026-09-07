@@ -316,6 +316,25 @@ impl DecodeAgentAction {
         }
         Ok(decoded)
     }
+
+    pub(crate) fn decode_envelope_in_state(
+        self,
+        raw: &str,
+        published: Option<&a3_domain::PublishedIndex>,
+        replan: Option<&crate::ReplanResearchCheckpoint>,
+    ) -> Result<DecodedAgentAction, AgentActionDecodeError> {
+        let decoded = self.decode_envelope_in_snapshot(raw, published)?;
+        if replan
+            .filter(|state| !state.work.ready_to_finish())
+            .is_some_and(|state| {
+                state.validate_read(decoded.action())
+                    == Err(crate::ReplanReadRejection::RepeatedRead)
+            })
+        {
+            return Err(AgentActionDecodeError::RepeatedReplanRead);
+        }
+        Ok(decoded)
+    }
 }
 
 fn validate_patch_snapshot(
@@ -821,6 +840,8 @@ pub enum AgentActionDecodeError {
     AnchorMismatch,
     /// A structurally valid patch disagrees with the exact published file snapshot.
     PatchConflict(crate::PatchConflictKind),
+    /// An open replan already attempted this exact read; no tool has been called.
+    RepeatedReplanRead,
 }
 
 impl AgentActionDecodeError {
@@ -845,6 +866,7 @@ impl AgentActionDecodeError {
             Self::InvalidPublicNote => "invalid_public_note",
             Self::AnchorMismatch => "anchor_mismatch",
             Self::PatchConflict(kind) => kind.repair_code(),
+            Self::RepeatedReplanRead => "replan_read_repeated",
         }
     }
 }
@@ -871,6 +893,7 @@ impl fmt::Display for AgentActionDecodeError {
             Self::InvalidPublicNote => "AgentAction presentation note violates its contract",
             Self::AnchorMismatch => "AgentAction identities differ from the current turn",
             Self::PatchConflict(_) => "AgentAction patch conflicts with the published source state",
+            Self::RepeatedReplanRead => "AgentAction repeats an already attempted replan read",
         })
     }
 }
@@ -879,6 +902,60 @@ impl Error for AgentActionDecodeError {}
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn replan_duplicate_filter_leaves_finished_and_non_replan_turns_unchanged()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use a3_domain as d;
+        let action = d::AgentAction::Search(d::AgentSearchAction::new(
+            d::AgentSearchQuery::try_from_string("already read".to_owned())?,
+            d::AgentSearchLimit::new(5)?,
+        ));
+        let mut state = crate::ReplanResearchCheckpoint::new(
+            d::TaskStepId::from_bytes([1; 32]),
+            d::SnapshotId::from_bytes([2; 32]),
+            &d::TaskReplanReason::try_from_string("missing return".to_owned())?,
+            "preserve return value",
+        )?;
+        state.record_read(&action, true)?;
+        let raw =
+            r#"{"schema_version":1,"action":{"kind":"search","query":"already read","limit":5}}"#;
+        let decoder = super::DecodeAgentAction::version_one();
+        assert!(decoder.decode_envelope_in_state(raw, None, None).is_ok());
+        assert_eq!(
+            decoder.decode_envelope_in_state(raw, None, Some(&state)),
+            Err(super::AgentActionDecodeError::RepeatedReplanRead)
+        );
+        state.work.resolve(
+            d::ResearchQuestionId::FIRST,
+            d::ResearchResult::new(
+                d::ResearchResultKind::Interpretation,
+                "The supplied original explains the return value.".to_owned(),
+                vec![d::ResearchResultSource {
+                    source_id: d::AskResearchSourceId::from_bytes([3; 32]),
+                    revision: d::FileRevision::new(
+                        d::RepositoryPath::try_from_bytes(b"return.py".to_vec())?,
+                        d::ContentHash::from_bytes([4; 32]),
+                    ),
+                    range: d::SourceRange::new(
+                        0,
+                        1,
+                        d::SourcePosition::new(0, 0),
+                        d::SourcePosition::new(0, 1),
+                    )?,
+                }],
+                None,
+            )?,
+        )?;
+        assert!(state.work.ready_to_finish());
+        assert!(
+            decoder
+                .decode_envelope_in_state(raw, None, Some(&state))
+                .is_ok()
+        );
+        assert_eq!(state.reads(), 1);
+        Ok(())
+    }
+
     #[test]
     fn rejected_identity_and_noop_patch_keep_exact_content_free_reason()
     -> Result<(), Box<dyn std::error::Error>> {

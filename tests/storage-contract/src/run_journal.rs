@@ -231,16 +231,14 @@ where
         &a3_domain::TaskReplanReason::try_from_string("Locate the serializer".to_owned())?,
         "preserve serialized value",
     )?;
-    checkpoint.record_read(
-        &a3_domain::AgentAction::Inspect(a3_domain::AgentInspectAction::new(
-            a3_domain::AgentInspectTarget::File(a3_domain::AgentFileInspection::new(
-                evidence.location().revision().path().clone(),
-                a3_domain::AgentFileStartLine::new(1)?,
-                a3_domain::AgentFileLineCount::new(1)?,
-            )),
+    let original_read = a3_domain::AgentAction::Inspect(a3_domain::AgentInspectAction::new(
+        a3_domain::AgentInspectTarget::File(a3_domain::AgentFileInspection::new(
+            evidence.location().revision().path().clone(),
+            a3_domain::AgentFileStartLine::new(1)?,
+            a3_domain::AgentFileLineCount::new(1)?,
         )),
-        true,
-    )?;
+    ));
+    checkpoint.record_read(&original_read, true)?;
     let read = read.with_replan(checkpoint.clone());
     first_writer
         .append_agent_read(&first, expected_sequence, &current, &read)
@@ -411,11 +409,15 @@ where
             .await
             .is_err()
     );
+    let restored = reopened
+        .load_replan_research(&first, run_id, checkpoint.step_id)
+        .await?
+        .ok_or("replan checkpoint disappeared")?;
+    assert_eq!(restored, checkpoint);
+    assert_eq!(restored.reads(), 1);
     assert_eq!(
-        reopened
-            .load_replan_research(&first, run_id, checkpoint.step_id)
-            .await?,
-        Some(checkpoint.clone())
+        restored.validate_read(&original_read),
+        Err(a3_application::ReplanReadRejection::RepeatedRead)
     );
     assert!(
         reopened

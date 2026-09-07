@@ -49,8 +49,12 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
       Vollständige lokale Gates bestehen; Granite belegt live den gesonderten
       `RepeatedRead`-Pfad, Luna erreicht Done. Duplikatrecovery bleibt ein eigener Schnitt.
 
-- [ ] Den tatsächlich belegten Replan-Leseduplikatfehler innerhalb des vorhandenen
-      Einzelrepairs korrigierbar machen, ohne Vier-Read-Grenze oder Freigaben zu ändern.
+- [x] Den tatsächlich belegten Replan-Leseduplikatfehler innerhalb des vorhandenen
+      Einzelrepairs korrigierbar machen, ohne Vier-Read-Grenze oder Freigaben zu ändern
+      ([ADR-0089](../adrs/0089-replan-leseduplikate-im-einzelrepair.md)).
+      Primär-/Repair-/Wiederanlauf-Grenzen und vollständige lokale Gates bestehen.
+      Luna ist live verifiziert; Granite wiederholt später erneut einen Read und
+      Qwen scheitert vor der Mutation. Diese Modellabnahme bleibt gesondert offen.
 - [ ] Claim-Leseidentitäten von redigierter Debug-Darstellung lösen: unterschiedliche
       `ModuleCardClaimId`-Werte haben derzeit denselben Replan-Accesskey. Alte
       mehrdeutige Quittungen dürfen weder gelöscht noch als neuer Leseplatz behandelt werden.

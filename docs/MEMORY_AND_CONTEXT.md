@@ -919,8 +919,16 @@ bleiben unverändert; eine gültige Interpretation ist kein bestandener Codetest
 Ein bereits bekannter Leseauftrag, ein ausgeschöpftes Readbudget und eine falsche
 Aktionsklasse behalten außerdem ihre getrennten `ReplanReadRejection`-Ursachen.
 Diese Ablehnung geschieht vor dem Toolaufruf; sie wird nicht mehr fälschlich als
-ungültiges tatsächliches Toolresultat bezeichnet. Sie bleibt in diesem Schnitt
-terminal und eröffnet weder Repair noch einen zusätzlichen Read.
+ungültiges tatsächliches Toolresultat bezeichnet. Ausgeschöpftes Budget und falsche
+Aktionsklasse bleiben gesperrt. Nach [ADR-0089](adrs/0089-replan-leseduplikate-im-einzelrepair.md)
+prüft bereits die primäre Aktionszulassung ein offenes Replan auf `RepeatedRead`.
+Genau dieser Fehler kann den vorhandenen Einzelrepair nutzen: eine andere gültige
+Leseaktion wird normal ausgeführt und gezählt, ein weiteres Duplikat bleibt nach
+höchstens zwei Modellantworten terminal. Ein Strukturrepair darf kein Duplikat
+einschleusen und eröffnet keine weitere Korrektur. Die unveränderte nachgelagerte
+Vier-Read-/Duplikatgrenze bleibt zusätzlich bestehen; fertige Replan-Untersuchungen
+und normale Agentturns werden nicht erneut als Lokalisierung gefiltert. Zugelassene
+Lesevorschläge erben weder Faktenstatus noch Freigabe noch Implementierungsverifikation.
 
 Die feste Q1-Planbestandsaufnahme verwendet nach
 [ADR-0054](adrs/0054-vollstaendig-gelieferte-planbestandsaufnahme.md) ausschließlich

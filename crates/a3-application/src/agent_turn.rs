@@ -466,8 +466,9 @@ impl<'a> ExecuteAgentTurn<'a> {
             DecodeAgentActionTurn::current()
         }
         .with_turn_anchors(anchors);
+        let replan = input.replan_research().map(|research| &research.checkpoint);
         let (decoded, prompt_tokens, output_tokens, repair, observed_model_output_bytes) =
-            match decoder.decode_primary_in_snapshot(&primary.raw, self.patch_snapshot) {
+            match decoder.decode_primary_in_state(&primary.raw, self.patch_snapshot, replan) {
                 AgentActionPrimaryOutcome::Accepted(action) => (
                     action,
                     primary.prompt_tokens,
@@ -523,24 +524,26 @@ impl<'a> ExecuteAgentTurn<'a> {
                             observed_model_output_bytes,
                         }));
                     }
-                    let action = match prepared
-                        .decode_in_snapshot(&corrected.raw, self.patch_snapshot)
-                    {
-                        Ok(action) => action,
-                        Err(error) => {
-                            return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
-                                charge: AgentTurnCharge::new(
-                                    prompt_tokens,
-                                    output_tokens,
-                                    None,
-                                    AgentTurnRepairUsage::One,
-                                ),
-                                reason: AgentTurnRejectionReason::InvalidActionAfterRepair(error),
-                                snapshot_id,
-                                observed_model_output_bytes,
-                            }));
-                        }
-                    };
+                    let action =
+                        match prepared.decode_in_state(&corrected.raw, self.patch_snapshot, replan)
+                        {
+                            Ok(action) => action,
+                            Err(error) => {
+                                return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
+                                    charge: AgentTurnCharge::new(
+                                        prompt_tokens,
+                                        output_tokens,
+                                        None,
+                                        AgentTurnRepairUsage::One,
+                                    ),
+                                    reason: AgentTurnRejectionReason::InvalidActionAfterRepair(
+                                        error,
+                                    ),
+                                    snapshot_id,
+                                    observed_model_output_bytes,
+                                }));
+                            }
+                        };
                     (
                         action,
                         prompt_tokens,
@@ -1769,11 +1772,21 @@ mod tests {
             let event = outcome.record(&mut fixture.run, event_id(20), timestamp(20)?)?;
             match (expected, outcome) {
                 (Some(reason), AgentTurnOutcome::Rejected(rejected)) => {
-                    assert_eq!(
-                        rejected.reason(),
-                        AgentTurnRejectionReason::ReplanReadRejected(reason)
-                    );
-                    assert_eq!(event.payload().code(), RunEventCode::ToolFailure);
+                    if reason == crate::ReplanReadRejection::RepeatedRead {
+                        let AgentTurnRejectionReason::InvalidActionAfterRepair(failure) =
+                            rejected.reason()
+                        else {
+                            return Err("repeated read did not use sole repair admission".into());
+                        };
+                        assert_eq!(failure.repair_code(), "replan_read_repeated");
+                        assert_eq!(event.payload().code(), RunEventCode::InvalidModelOutput);
+                    } else {
+                        assert_eq!(
+                            rejected.reason(),
+                            AgentTurnRejectionReason::ReplanReadRejected(reason)
+                        );
+                        assert_eq!(event.payload().code(), RunEventCode::ToolFailure);
+                    }
                     assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
                     assert_eq!(recovery.begins.load(Ordering::SeqCst), 0);
                 }
@@ -1782,8 +1795,122 @@ mod tests {
                 }
                 _ => return Err("incorrect replan read boundary".into()),
             }
-            assert_eq!(fixture.run.usage().repair_count(), 0);
-            assert_eq!(provider.responses.lock().map_err(|_| "responses")?.len(), 1);
+            let repaired = expected == Some(crate::ReplanReadRejection::RepeatedRead);
+            assert_eq!(fixture.run.usage().repair_count(), u32::from(repaired));
+            assert_eq!(
+                provider.responses.lock().map_err(|_| "responses")?.len(),
+                usize::from(!repaired)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn replan_duplicate_read_can_use_only_the_existing_single_repair() -> Result<(), Box<dyn Error>>
+    {
+        let read = |query: &str| {
+            serde_json::json!({"schema_version":4,
+            "public_note":{"goal":"Localize","finding_kind":"hypothesis","finding":"Source needed","finding_source_refs":[],"gap":"Cause","next_step":"Inspect"},
+            "action":{"kind":"search","query":query,"limit":5}}).to_string()
+        };
+        for (primary, correction, succeeds) in [
+            (read("controller"), read("serializer"), true),
+            (read("controller"), read("controller"), false),
+            ("invalid".to_owned(), read("controller"), false),
+        ] {
+            let mut fixture = turn_fixture(vec![
+                provider_response(&primary)?,
+                provider_response(&correction)?,
+                provider_response(&read("unused third attempt"))?,
+            ])?;
+            let reason =
+                a3_domain::TaskReplanReason::try_from_string("missing serializer".to_owned())?;
+            let mut checkpoint = crate::ReplanResearchCheckpoint::new(
+                fixture.input.current_step_id(),
+                snapshot(),
+                &reason,
+                "preserve title",
+            )?;
+            checkpoint.record_read(
+                &AgentAction::Search(AgentSearchAction::new(
+                    a3_domain::AgentSearchQuery::try_from_string("controller".to_owned())?,
+                    a3_domain::AgentSearchLimit::new(5)?,
+                )),
+                true,
+            )?;
+            let input = fixture
+                .input
+                .with_replan_localization(reason)
+                .with_replan_research(crate::ReplanResearchContext {
+                    checkpoint: checkpoint.clone(),
+                    pages: Vec::new(),
+                })?;
+            let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
+            let provider = RecordingReplanProvider {
+                inner: ScriptedProvider {
+                    provider_id: fixture.profile.provider_id().clone(),
+                    responses: Mutex::new(fixture.responses),
+                },
+                requests: Mutex::new(Vec::new()),
+            };
+            let tools = CountingReadTools {
+                calls: AtomicUsize::new(0),
+            };
+            let recovery = TestRecoveryStore::default();
+            let outcome = futures::executor::block_on(
+                ExecuteAgentTurn::new(&compiler, &provider, &tools, &recovery).execute(
+                    &fixture.run,
+                    &input,
+                    timestamp(5)?,
+                    &TestControl,
+                ),
+            )?;
+            outcome.record(&mut fixture.run, event_id(20), timestamp(20)?)?;
+            assert_eq!(fixture.run.usage().repair_count(), 1);
+            assert_eq!(provider.requests.lock().map_err(|_| "requests")?.len(), 2);
+            if primary != "invalid" {
+                let requests = provider.requests.lock().map_err(|_| "requests")?;
+                let messages = requests[1].messages();
+                let feedback = messages.last().ok_or("repair feedback")?.content();
+                assert!(feedback.contains("replan_read_repeated"));
+                assert!(feedback.contains("different relevant search or inspect target"));
+                assert!(feedback.len() <= 512);
+                assert!(!feedback.contains("controller"));
+                assert!(!feedback.contains("serializer"));
+                assert_eq!(&messages[..messages.len() - 1], requests[0].messages());
+                assert_eq!(
+                    requests[0].structured_output(),
+                    requests[1].structured_output()
+                );
+            }
+            assert_eq!(
+                provider
+                    .inner
+                    .responses
+                    .lock()
+                    .map_err(|_| "responses")?
+                    .len(),
+                1
+            );
+            assert_eq!(tools.calls.load(Ordering::SeqCst), usize::from(succeeds));
+            assert_eq!(
+                recovery.begins.load(Ordering::SeqCst),
+                usize::from(succeeds)
+            );
+            assert_eq!(checkpoint.reads(), 1);
+            assert!(!checkpoint.work.ready_to_finish());
+            match outcome {
+                AgentTurnOutcome::Executed(_) if succeeds => {}
+                AgentTurnOutcome::Rejected(rejected) if !succeeds => {
+                    let AgentTurnRejectionReason::InvalidActionAfterRepair(failure) =
+                        rejected.reason()
+                    else {
+                        return Err("duplicate must remain a sole-repair admission failure".into());
+                    };
+                    assert_eq!(failure.repair_code(), "replan_read_repeated");
+                }
+                _ => return Err("incorrect duplicate-read recovery".into()),
+            }
         }
         Ok(())
     }
