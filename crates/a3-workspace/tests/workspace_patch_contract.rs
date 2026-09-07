@@ -3,8 +3,8 @@
 mod support;
 
 use a3_application::{
-    AuthorizedPatchAction, PatchApplyFailure, PatchPreviewFailure, WorkspacePatchControl,
-    WorkspacePatchProgressError, WorkspacePatchTool,
+    AuthorizedPatchAction, PatchApplyFailure, PatchConflictKind, PatchPreviewFailure,
+    WorkspacePatchControl, WorkspacePatchProgressError, WorkspacePatchTool,
 };
 use a3_domain::{
     AgentRunId, AgentRunTimestamp, ApprovalGrant, ApprovalId, ApprovalRequest, ApprovalRequestId,
@@ -219,9 +219,77 @@ fn add_never_overwrites_a_live_path_absent_from_the_snapshot() -> Result<(), Box
             &action,
             &Active::default(),
         )),
-        Err(PatchPreviewFailure::Conflict)
+        Err(PatchPreviewFailure::Conflict(
+            PatchConflictKind::TargetAlreadyExists
+        ))
     );
     assert_eq!(fs::read(root.join("new.txt"))?, b"user content\n");
+    Ok(())
+}
+
+#[test]
+fn preview_conflicts_retain_exact_source_reason_without_mutation() -> Result<(), Box<dyn Error>> {
+    for reason in [
+        PatchConflictKind::SourceNotIndexed,
+        PatchConflictKind::SourceRevisionChanged,
+        PatchConflictKind::TargetAlreadyExists,
+        PatchConflictKind::SourceNotRegularFile,
+        PatchConflictKind::SourceChangedOnDisk,
+    ] {
+        let fixture = TempDirectory::new()?;
+        let root = fixture.path().join("selected");
+        fs::create_dir(&root)?;
+        let source = root.join("private-source.txt");
+        let bytes: &[u8] = if reason == PatchConflictKind::SourceChangedOnDisk {
+            b"user edit\n"
+        } else {
+            b"original\n"
+        };
+        if reason == PatchConflictKind::SourceNotRegularFile {
+            fs::create_dir(&source)?;
+        } else {
+            fs::write(&source, bytes)?;
+        }
+        let revision = FileRevision::new(path(b"private-source.txt")?, hash(b"original\n"));
+        let snapshot_id = SnapshotId::from_bytes([8; 32]);
+        let project = project(&root)?;
+        let published = published_index(
+            snapshot_id,
+            if reason == PatchConflictKind::SourceNotIndexed {
+                Vec::new()
+            } else {
+                vec![revision.clone()]
+            },
+        )?;
+        let content = PatchFileContent::try_from_bytes(b"agent content\n".to_vec())?;
+        let operation = if reason == PatchConflictKind::TargetAlreadyExists {
+            PatchOperation::Add(PatchAdd::new(revision.path().clone(), content))
+        } else {
+            let expected = if reason == PatchConflictKind::SourceRevisionChanged {
+                FileRevision::new(revision.path().clone(), hash(b"wrong expected\n"))
+            } else {
+                revision
+            };
+            PatchOperation::Update(PatchUpdate::new(expected, content)?)
+        };
+        let action = patch_action(project.worktree().id(), snapshot_id, vec![operation])?;
+        let error = futures::executor::block_on(WorkspacePatchAdapter::new().preview(
+            &project,
+            &published,
+            &action,
+            &Active::default(),
+        ))
+        .err()
+        .ok_or("conflict was accepted")?;
+        assert_eq!(error, PatchPreviewFailure::Conflict(reason));
+        assert!(!format!("{error:?} {error}").contains("private-source"));
+        assert!(!format!("{error:?} {error}").contains("agent content"));
+        if reason == PatchConflictKind::SourceNotRegularFile {
+            assert!(source.is_dir());
+        } else {
+            assert_eq!(fs::read(&source)?, bytes);
+        }
+    }
     Ok(())
 }
 

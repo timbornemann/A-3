@@ -549,6 +549,6 @@ pub use workspace_directory::{
 };
 pub use workspace_patch::{
     AuthorizedPatchAction, PatchApplyFailure, PatchApplyFuture, PatchAuthorizationError,
-    PatchPreviewFailure, PatchPreviewFuture, WorkspacePatchControl, WorkspacePatchProgressError,
-    WorkspacePatchTool,
+    PatchConflictKind, PatchPreviewFailure, PatchPreviewFuture, WorkspacePatchControl,
+    WorkspacePatchProgressError, WorkspacePatchTool,
 };

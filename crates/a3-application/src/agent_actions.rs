@@ -228,6 +228,15 @@ impl ApplyAgentLedgerUpdate {
             .map_err(|_| ApplyAgentLedgerUpdateError::InvalidTimestamp)?;
         let (kind, signal) = match action.update() {
             AgentLedgerUpdate::RecordResult(summary) => {
+                if ledger
+                    .step(action.step_id())
+                    .ok_or(ApplyAgentLedgerUpdateError::AnchorMismatch)?
+                    .definition()
+                    .verification_spec()
+                    .is_operational()
+                {
+                    return Err(ApplyAgentLedgerUpdateError::OperationalVerificationRequired);
+                }
                 let evidence = evidence.ok_or(ApplyAgentLedgerUpdateError::EvidenceRequired)?;
                 if evidence.snapshot_id() != snapshot_id {
                     return Err(ApplyAgentLedgerUpdateError::EvidenceSnapshotMismatch);
@@ -296,6 +305,24 @@ impl ApplyAgentLedgerUpdate {
 pub struct RequestAgentFinish;
 
 impl RequestAgentFinish {
+    /// Treats Finish and a current-step result note as requests for the planned check.
+    /// Neither request supplies operational evidence or authorizes process execution.
+    #[must_use]
+    pub fn verification_command_for_request(
+        self,
+        step: &a3_domain::TaskStep,
+        action: &a3_domain::AgentAction,
+    ) -> Option<a3_domain::AgentRunAction> {
+        match action {
+            a3_domain::AgentAction::Finish(_) => {}
+            a3_domain::AgentAction::UpdateLedger(update)
+                if update.step_id() == step.definition().id()
+                    && matches!(update.update(), AgentLedgerUpdate::RecordResult(_)) => {}
+            _ => return None,
+        }
+        self.verification_command(step)
+    }
+
     /// Selects only the current operational verification command; execution still requires
     /// the current manifest catalog, confirmation and central mutation policy (ADR-0079).
     #[must_use]
@@ -371,6 +398,8 @@ pub enum ApplyAgentLedgerUpdateError {
     AnchorMismatch,
     /// `RecordResult` lacked controller-owned current evidence.
     EvidenceRequired,
+    /// An operational spec needs its actual verifier artifact, never a model result note.
+    OperationalVerificationRequired,
     /// Tool evidence belonged to another snapshot.
     EvidenceSnapshotMismatch,
     /// More evidence existed than one Task Ledger attempt can retain.
@@ -393,6 +422,9 @@ impl fmt::Display for ApplyAgentLedgerUpdateError {
             Self::SnapshotMismatch => "agent Ledger update snapshot does not match the run",
             Self::AnchorMismatch => "agent Ledger update does not match run and Ledger anchors",
             Self::EvidenceRequired => "agent result update requires current tool evidence",
+            Self::OperationalVerificationRequired => {
+                "agent result requires the planned operational verification"
+            }
             Self::EvidenceSnapshotMismatch => "agent result evidence belongs to another snapshot",
             Self::TooMuchEvidence { .. } => "agent result exceeds the Ledger evidence boundary",
             Self::InvalidTimestamp => "agent Ledger update timestamp is invalid",
@@ -411,6 +443,7 @@ impl Error for ApplyAgentLedgerUpdateError {
             | Self::SnapshotMismatch
             | Self::AnchorMismatch
             | Self::EvidenceRequired
+            | Self::OperationalVerificationRequired
             | Self::EvidenceSnapshotMismatch
             | Self::TooMuchEvidence { .. }
             | Self::InvalidTimestamp => None,
@@ -929,6 +962,7 @@ mod tests {
             ),
         ];
         for (specification, operational) in specifications {
+            let requires_artifact = specification.is_operational();
             let mut ledger = TaskLedger::new(
                 existing.goal_contract(),
                 vec![TaskStepDefinition::new(
@@ -949,17 +983,87 @@ mod tests {
                     .step(step_id)
                     .and_then(|step| RequestAgentFinish.verification_command(step))
             };
+            let result_request =
+                a3_domain::AgentAction::UpdateLedger(AgentUpdateLedgerAction::new(
+                    step_id,
+                    AgentLedgerUpdate::RecordResult(TaskStepResultSummary::try_from_string(
+                        "ready for verification".to_owned(),
+                    )?),
+                ));
+            let finish_request = a3_domain::AgentAction::Finish(AgentFinishAction);
+            let selected_request = |ledger: &TaskLedger, action: &a3_domain::AgentAction| {
+                ledger.step(step_id).and_then(|step| {
+                    RequestAgentFinish.verification_command_for_request(step, action)
+                })
+            };
             assert_eq!(selected(&ledger), None, "unstarted steps cannot run");
+            for request in [&finish_request, &result_request] {
+                assert_eq!(selected_request(&ledger, request), None);
+            }
             ledger.start_step(step_id, run.id(), TaskLedgerTimestamp::from_unix_millis(5)?)?;
             let before = ledger.clone();
             assert_eq!(
                 selected(&ledger),
                 operational.then_some(a3_domain::AgentRunAction::new(step_id, command_id))
             );
+            for request in [&finish_request, &result_request] {
+                assert_eq!(selected_request(&ledger, request), selected(&ledger));
+            }
+            for rejected in [
+                a3_domain::AgentAction::UpdateLedger(AgentUpdateLedgerAction::new(
+                    TaskStepId::from_bytes([99; 32]),
+                    AgentLedgerUpdate::RecordResult(TaskStepResultSummary::try_from_string(
+                        "other step".to_owned(),
+                    )?),
+                )),
+                a3_domain::AgentAction::UpdateLedger(AgentUpdateLedgerAction::new(
+                    step_id,
+                    AgentLedgerUpdate::ReportBlocked(TaskStepBlockingReason::try_from_string(
+                        "user decision needed".to_owned(),
+                    )?),
+                )),
+                a3_domain::AgentAction::UpdateLedger(AgentUpdateLedgerAction::new(
+                    step_id,
+                    AgentLedgerUpdate::RequestReplan(TaskReplanReason::try_from_string(
+                        "new evidence".to_owned(),
+                    )?),
+                )),
+                a3_domain::AgentAction::Run(a3_domain::AgentRunAction::new(step_id, command_id)),
+            ] {
+                assert_eq!(selected_request(&ledger, &rejected), None);
+            }
             assert_eq!(
                 ledger, before,
                 "selection cannot grant success or modify evidence"
             );
+            if requires_artifact {
+                let mut candidate_run = run.clone();
+                let mut candidate_ledger = ledger.clone();
+                let result = ApplyAgentLedgerUpdate.execute(
+                    &mut candidate_run,
+                    &mut candidate_ledger,
+                    &AgentUpdateLedgerAction::new(
+                        step_id,
+                        AgentLedgerUpdate::RecordResult(TaskStepResultSummary::try_from_string(
+                            "model says implementation is ready".to_owned(),
+                        )?),
+                    ),
+                    Some(&evidence(snapshot())?),
+                    event_id(6),
+                    snapshot(),
+                    timestamp(6)?,
+                    &Active,
+                );
+                assert!(
+                    matches!(
+                        result,
+                        Err(ApplyAgentLedgerUpdateError::OperationalVerificationRequired)
+                    ),
+                    "read evidence cannot prepare an operational verification"
+                );
+                assert_eq!(candidate_run, run);
+                assert_eq!(candidate_ledger, ledger);
+            }
             let evidence_id = TaskEvidenceId::from_bytes([44; 32]);
             ledger.begin_step_verification(
                 step_id,
@@ -973,6 +1077,9 @@ mod tests {
                 None,
                 "ongoing verification cannot run again"
             );
+            for request in [&finish_request, &result_request] {
+                assert_eq!(selected_request(&ledger, request), None);
+            }
             ledger.finish_step_verification(
                 step_id,
                 StepVerification::new(

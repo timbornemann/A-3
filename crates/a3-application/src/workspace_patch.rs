@@ -154,6 +154,21 @@ pub trait WorkspacePatchTool: fmt::Debug + Send + Sync {
     ) -> PatchApplyFuture<'a>;
 }
 
+/// Content-free source of a preview conflict; never permission to rebase a patch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PatchConflictKind {
+    /// The required existing source is absent from the published index.
+    SourceNotIndexed,
+    /// The supplied expected revision disagrees with the published source.
+    SourceRevisionChanged,
+    /// An Add/Move destination already exists in the index or on disk.
+    TargetAlreadyExists,
+    /// The resolved source is not a regular file.
+    SourceNotRegularFile,
+    /// The source changed since its published revision was read.
+    SourceChangedOnDisk,
+}
+
 /// Stable preview failure without paths, file content, or OS diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PatchPreviewFailure {
@@ -162,7 +177,7 @@ pub enum PatchPreviewFailure {
     /// Action no longer targets the current published snapshot.
     StaleSnapshot,
     /// Live absence or expected hash disagreed with the action.
-    Conflict,
+    Conflict(PatchConflictKind),
     /// Owner cancelled before a complete preview existed.
     Cancelled,
     /// Progress could not be delivered.
@@ -178,7 +193,7 @@ impl fmt::Display for PatchPreviewFailure {
         formatter.write_str(match self {
             Self::Denied => "workspace patch preview was denied",
             Self::StaleSnapshot => "workspace patch snapshot is stale",
-            Self::Conflict => "workspace patch preview found a concurrent change",
+            Self::Conflict(_) => "workspace patch preview conflicts with the current source state",
             Self::Cancelled => "workspace patch preview was cancelled",
             Self::ProgressUnavailable => "workspace patch preview progress is unavailable",
             Self::Unavailable => "workspace patch preview source is unavailable",

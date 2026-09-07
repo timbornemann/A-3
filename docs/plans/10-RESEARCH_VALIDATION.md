@@ -1471,3 +1471,95 @@ Agent-Units (16 Ankerfälle), vollständiger Workspace mit allen Features offlin
 Workspace-Clippy mit allen Targets/Features und -D warnings, Formatierung und
 Diff-/Markdown-Linkprüfung. Gesamtlogs: `agent-step-constants-workspace.log` und
 `agent-step-constants-clippy.log`. Keine neue Abhängigkeit, DB- oder Frontendänderung.
+
+### Präzise Ablehnungsgründe und zweite fehlende Prüfanforderung
+
+Der neue Decoder-Regressionstest war mit dem generischen `invalid_value` rot.
+Danach erhalten ungültige 64-Zeichen-Identitäten, No-Content-Change und Same-Move-Path
+geschlossene Einzelrepaircodes; wiederholte ungültige Dokumente bleiben terminal,
+und die Diagnose enthält weder Quelltext, Pfad noch Hash. 69 gezielte Agent-Units
+und sieben echte Patchverträge bestehen, einschließlich fünf unabhängig erzeugter
+Vorschaukonflikte mit unveränderten Dateien und erhaltener Symlink-/Hash-/Apply-Grenze.
+
+Die damalige ausführbare Datei `agent-error-reasons-20260907/agent-tests.exe` hatte
+SHA-256 `353ebcc2c8423907a1e7554155779104281c36431a34c8fbff081e449ab71cc8`.
+Die in den Toolausgaben bestätigten Live-Ergebnisse:
+
+- Luna 1: 25,15 s, Done Sequenz 23, Completed/verified, echter Test Exit 0,
+  unabhängiger physischer Test erfolgreich, geschützte Dateien und Settings gleich.
+- Qwen 1: 43,76 s, Vorschau `Conflict(TargetAlreadyExists)`, Execute Sequenz 5,
+  keine erfolgreiche Änderung, geschützte Dateien gleich. Damit ist ein bereits
+  vorhandenes Ziel belegt; nicht eine bestimmte Datei oder ein angeblich alter Hash.
+- Luna 2: 22,09 s, physisch korrekter Patch, danach Run=Verify Sequenz 20 und
+  Step=Verifying ohne Prozessnachweis. Acceptance verweigert zu Recht das unvollständige
+  Ledger. Der zugehörige Code lässt `record_result` mit bloßer Read-Evidence die
+  operationale Verifikation vorbereiten. Dies wird separat nach ADR-0084 korrigiert.
+
+Das erste Gesamtgate dieses Diagnose-Schnitts scheiterte beim parallelen Kompilieren
+mit Windows OS-Fehler 1455 (Auslagerungsdatei zu klein, mmap-/Allokationsfehler),
+nicht an einer abgeschlossenen Testassertion. Der Nachlauf wurde auf zwei Buildjobs
+begrenzt. Währenddessen verschwand das gesamte lokale `target`-Verzeichnis zwischen
+zwei Checks; in dieser Arbeitsfolge wurde kein Löschbefehl ausgeführt. Der Nachlauf
+endete ebenfalls erfolglos. Quellen und Git-Diff blieben erhalten. Alle historischen
+`target/research-eval`-Pfade sind deshalb aktuell keine lokal verfügbaren Artefaktlinks;
+die oben getrennt aufgezeichneten Toolausgaben ersetzen kein neues vollständiges Gate.
+Die abschließende Abnahme wird aus erhaltenen Quellen neu aufgebaut. Keine
+Speicher-/Systemeinstellung wurde geändert und keine neue Abhängigkeit installiert.
+
+Der Nutzer bestätigte anschließend, `target` wegen mehr als 160 GB SSD-Verbrauch
+selbst gelöscht zu haben. Der noch laufende Debug-Neuaufbau wurde daraufhin über
+seine eigene Exec-Session abgebrochen. Weitere Gates verwenden pro Prozess
+`CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0` und
+`--jobs 2`; Debugassertionen, Overflowchecks und Testumfang bleiben unverändert.
+Keine globale Cargo-/Systemkonfiguration und kein Repositoryprofil werden dafür
+geändert. Weitere Artefakte oder Nutzerdateien wurden nicht gelöscht.
+
+### RecordResult prüft den geplanten Schritt (ADR-0084)
+
+Der erweiterte Selektor-/Ledger-Test reproduziert zuerst rot, dass aktuelle Read-
+Evidence eine operationale Spec in Verifying versetzen konnte. Die korrigierte
+Application-Grenze verweigert dies atomar für alle fünf operationalen Zielarten;
+die neun Agent-Action-Tests bestehen. Finish und aktuelle Result-Notiz wählen bei
+Command/Test/Diagnostic dieselbe exakte vorhandene Command-ID, fremde Steps,
+Blocker, Replan, andere Aktionen und nicht ausführbare Zustände dagegen keinen Run.
+Diff/UserConfirm erhalten keine Prozessfreigabe; Legacy-Read-Verifikation bleibt bestehen.
+
+Neu aufgebaut und eingefroren: `agent-result-request-20260907/agent-tests.exe`, SHA-256
+`5fbe644b68b7744f0ea01f5d35739fc2e10017058b110b31baa27b45f0017290`.
+Luna besteht drei aufeinanderfolgende echte Läufe auf diesem unveränderten Binary
+und Profil (16384/2048, RepeatSchemaInPrompt; tatsächliches Grounding 7045 Bytes):
+
+| Lauf | Dauer | Runsequenz bei Done |
+| --- | --- | --- |
+| 1 | 35,85 s | 27 |
+| 2 | 21,24 s | 23 |
+| 3 | 16,11 s | 23 |
+
+Alle drei erreichen echte Testausführung mit Exit 0, Step=Completed/verified und
+Run=Done. Die unabhängige physische Verifikation besteht; geschützte Dateien und
+native Settings bleiben gleich. Dies belegt Wiederholbarkeit dieser einzelnen
+öffentlichen Aufgabe, nicht allgemeine Fehlerfreiheit oder einen Nachweis aller Modelle.
+Logs unter dem eingefrorenen Verzeichnis, SHA-256:
+
+- `luna-live-1.log`: `eeda80de880474c7225e0143f159155eb0365e480f5fa380b403ade2ebdfecf9`
+- `luna-live-2.log`: `d7aa0e9461ab0b1e6cb480e4bc5308f9066428869426090ab96734f49cf74774`
+- `luna-live-3.log`: `953bf7b587355106dec2302380b17322f1ccbd4736c78212e5eca515ac53b15a`
+
+Der ergänzende Google-Gemma-Agentlauf auf demselben Binary erreicht mit seinem
+unveränderten 16384/4096-FormatFieldOnly-Profil den Context-Preflight, wird aber beim
+ersten Modellturn als ModelFailed(Rejected) beendet (2,42 s, Failed Sequenz 6).
+Die physische Prüfung bleibt rot und die geschützten Dateien bleiben unverändert.
+Der konkrete Provider-Ablehnungsgrund ist weiterhin nicht belegt; kein Schema- oder
+Safetygrund wird aus der generischen Klasse abgeleitet. `google-live-1.log`, SHA-256
+`1baeb89c99011e972ad823908a60dd41bf4c9961eb7f9feace8507972e7bcba2`.
+
+Das abschließende neu aufgebaute Gate dieses Schnitts besteht vollständig:
+`cargo test --workspace --all-features --offline --locked --jobs 2`,
+`cargo clippy --workspace --all-targets --all-features --offline --locked --jobs 2 -- -D warnings`,
+`cargo fmt --all --check`, `node scripts/check-markdown-links.mjs` (128 Dateien,
+498 lokale Links) und `git diff --check`. Test-/Clippylogs sind
+`agent-result-request-workspace.log` und `agent-result-request-clippy.log`.
+Builds verwenden die oben dokumentierten prozesslokalen Debug-/Incremental-Einstellungen;
+der Nutzer erlaubt inzwischen ausdrücklich erneutes Wachstum von `target`. Kein
+Testumfang oder Sicherheitscheck wurde dafür reduziert. Alle Befunde zu den anderen
+Modellen, Vorschaufehlern und fortgesetzter Rechercheabnahme bleiben offen.

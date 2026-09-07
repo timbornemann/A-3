@@ -550,15 +550,15 @@ impl ProductionAgentRunExecutor {
                 }
             };
             let mut action = execution.action().clone();
-            if matches!(action, AgentAction::Finish(_)) {
-                let step = ledger
-                    .step(step_id)
-                    .ok_or(AgentRunExecutionFailure::AnchorsChanged)?;
-                if let Some(verification) = RequestAgentFinish.verification_command(step) {
-                    // Finish requests verification; it cannot skip the still-open current step.
-                    // This Core-selected Run uses exactly the normal policy/approval path below.
-                    action = AgentAction::Run(verification);
-                }
+            let step = ledger
+                .step(step_id)
+                .ok_or(AgentRunExecutionFailure::AnchorsChanged)?;
+            if let Some(verification) =
+                RequestAgentFinish.verification_command_for_request(step, &action)
+            {
+                // Finish/result notes request the actual planned verification, not acceptance.
+                // The Core-selected Run uses the normal policy/approval/evidence path below.
+                action = AgentAction::Run(verification);
             }
             match action {
                 AgentAction::Search(_) | AgentAction::Inspect(_) => {

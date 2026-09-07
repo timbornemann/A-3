@@ -908,3 +908,23 @@ das Schema ersetzt niemals Katalogbestätigung, Freigabe oder zentrale Policy.
 Snapshot- und Dateihashgrenzen bleiben unverändert. Schema-only-Legacy und die
 gesonderten read-only Replan-Phasen werden nicht erweitert. Vollständige tatsächliche
 Schema-Grounding-Bytes zählen vor Retrieval gegen dieselben harten Kontextbudgets.
+
+Aktionsdecoder erhalten die inhaltsfreien Ursachen `invalid_identity`,
+`patch_no_content_change` und `patch_same_move_path` statt sie unter `invalid_value`
+zu verlieren. Genau diese geschlossene Klasse erreicht den bestehenden Einzelrepair;
+ungültige Primär- und Repairdaten bleiben nicht ausführbar. Die Vorschau unterscheidet
+außerdem nicht indexierte Quelle, abweichende publizierte Revision, belegtes Ziel,
+nicht reguläre Quelldatei und seit Publikation geänderte Bytes als `PatchConflictKind`.
+Ein Konflikt beweist nicht automatisch eine gleichzeitige Nutzeränderung: Auch ein
+falscher Modellhash kann widersprechen. Die Klassifikation enthält weder Pfade noch
+Hashes, Quelltext oder OS-Fehlermeldungen und autorisiert keine automatische Übernahme
+aktueller Bytes. Pfad-, Hash-, Snapshot- und Freigabeprüfungen bleiben unverändert.
+
+Nach [ADR-0084](adrs/0084-ergebnisnotizen-fordern-operationale-verifikation-an.md)
+fordert auch `record_result` für den aktuellen operationalen Command-/Test-/Diagnostic-
+Schritt dessen wirkliche geplante Prüfung an. Der Application-Selektor liefert nur
+die exakten Ledger-IDs; der Desktop führt denselben policy- und freigabegebundenen
+Run-Pfad wie bei Finish aus. Unabhängig davon verweigert ApplyAgentLedgerUpdate für
+alle operationalen Specs eine Vorbereitung mittels bloßer Read-Evidence, ohne Run
+oder Ledger zu ändern. Diff/UserConfirm erhalten keinen automatischen Prozess;
+Legacy-Read-Schritte behalten ihren alten Vertrag. Dies ist kein Abschlussbeweis.

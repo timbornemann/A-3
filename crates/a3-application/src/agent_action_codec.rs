@@ -376,7 +376,7 @@ fn decode_patch_operation(
             exact_keys(operation, &["kind", "path", "expected_hash", "content"])?;
             let expected = file_revision(operation)?;
             let update = PatchUpdate::new(expected, patch_content(operation, "content")?)
-                .map_err(|_| AgentActionDecodeError::InvalidValue)?;
+                .map_err(AgentActionDecodeError::InvalidPatchOperation)?;
             Ok(PatchOperation::Update(update))
         }
         "move" => {
@@ -385,7 +385,7 @@ fn decode_patch_operation(
                 file_revision(operation)?,
                 repository_path(operation, "destination")?,
             )
-            .map_err(|_| AgentActionDecodeError::InvalidValue)?;
+            .map_err(AgentActionDecodeError::InvalidPatchOperation)?;
             Ok(PatchOperation::Move(movement))
         }
         "delete" => {
@@ -695,7 +695,7 @@ fn hex_id(value: &str) -> Result<[u8; 32], AgentActionDecodeError> {
             .iter()
             .any(|byte| !byte.is_ascii_digit() && !(b'a'..=b'f').contains(byte))
     {
-        return Err(AgentActionDecodeError::InvalidValue);
+        return Err(AgentActionDecodeError::InvalidIdentity);
     }
     let mut bytes = [0_u8; 32];
     for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
@@ -729,6 +729,10 @@ pub enum AgentActionDecodeError {
     UnknownAction,
     /// A typed ID, path, enum, number, or bounded text value was invalid.
     InvalidValue,
+    /// An identity or revision was not exactly 64 lowercase hexadecimal characters.
+    InvalidIdentity,
+    /// A patch operation violated a content-free local relationship invariant.
+    InvalidPatchOperation(a3_domain::PatchOperationError),
     /// Presentation-only note violated its separate legacy evidence/text contract.
     InvalidPublicNote,
     /// Model-supplied action identities differ from the verified current controller turn.
@@ -747,6 +751,13 @@ impl AgentActionDecodeError {
             Self::UnsupportedVersion => "unsupported_version",
             Self::UnknownAction => "unknown_action",
             Self::InvalidValue => "invalid_value",
+            Self::InvalidIdentity => "invalid_identity",
+            Self::InvalidPatchOperation(a3_domain::PatchOperationError::NoContentChange) => {
+                "patch_no_content_change"
+            }
+            Self::InvalidPatchOperation(a3_domain::PatchOperationError::SameMovePath) => {
+                "patch_same_move_path"
+            }
             Self::InvalidPublicNote => "invalid_public_note",
             Self::AnchorMismatch => "anchor_mismatch",
         }
@@ -763,6 +774,15 @@ impl fmt::Display for AgentActionDecodeError {
             Self::UnsupportedVersion => "AgentAction output uses an unsupported schema version",
             Self::UnknownAction => "AgentAction output names an unknown action",
             Self::InvalidValue => "AgentAction output contains an invalid bounded value",
+            Self::InvalidIdentity => {
+                "AgentAction identity must be exactly 64 lowercase hex characters"
+            }
+            Self::InvalidPatchOperation(a3_domain::PatchOperationError::NoContentChange) => {
+                "AgentAction patch update does not change content"
+            }
+            Self::InvalidPatchOperation(a3_domain::PatchOperationError::SameMovePath) => {
+                "AgentAction patch move source and destination are identical"
+            }
             Self::InvalidPublicNote => "AgentAction presentation note violates its contract",
             Self::AnchorMismatch => "AgentAction identities differ from the current turn",
         })
@@ -773,6 +793,54 @@ impl Error for AgentActionDecodeError {}
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rejected_identity_and_noop_patch_keep_exact_content_free_reason()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let content =
+            a3_domain::PatchFileContent::try_from_bytes(b"private-source-sentinel\n".to_vec())?;
+        let hash: String = content
+            .content_hash()
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let id = "22".repeat(32);
+        let base = serde_json::json!({"schema_version":2,"action":{
+            "kind":"apply_patch","run_id":id,"worktree_id":id,"snapshot_id":id,
+            "step_id":id,"verification_spec_id":id,"rationale":"validate exact change",
+            "operations":[{"kind":"update","path":"source.rs","expected_hash":hash,"content":"private-source-sentinel\n"}]
+        }});
+        let mut movement = base.clone();
+        movement["action"]["operations"] = serde_json::json!([{"kind":"move","path":"source.rs","expected_hash":hash,"destination":"source.rs"}]);
+        let bad_id = serde_json::json!({"schema_version":2,"action":{"kind":"run","step_id":id,"command_id":"invalid-private-id-sentinel"}});
+        for (document, code) in [
+            (base, "patch_no_content_change"),
+            (movement, "patch_same_move_path"),
+            (bad_id, "invalid_identity"),
+        ] {
+            let raw = document.to_string();
+            let error = super::DecodeAgentAction::version_two()
+                .decode(&raw)
+                .err()
+                .ok_or("invalid action accepted")?;
+            assert_eq!(error.repair_code(), code);
+            let crate::AgentActionPrimaryOutcome::RepairRequired(repair) =
+                crate::DecodeAgentActionTurn::version_two().decode_primary(&raw)
+            else {
+                return Err("invalid primary accepted".into());
+            };
+            let repair = repair.prepare()?;
+            assert!(repair.instruction().content().contains(code));
+            for forbidden in ["sentinel", "source.rs", &hash] {
+                assert!(!repair.instruction().content().contains(forbidden));
+                assert!(!format!("{error:?} {error}").contains(forbidden));
+            }
+            let failure = repair.decode(&raw).err().ok_or("invalid repair accepted")?;
+            assert_eq!(failure.repair_code(), code);
+        }
+        Ok(())
+    }
+
     #[test]
     fn version_four_flow_reads_are_bounded_and_never_backported_to_v3()
     -> Result<(), Box<dyn std::error::Error>> {

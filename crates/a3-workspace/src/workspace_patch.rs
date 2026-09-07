@@ -2,8 +2,8 @@ use crate::platform_path;
 use crate::secure_file::{SecureFileReadError, read_verified_text};
 use crate::{PathEntryKind, PathPolicy};
 use a3_application::{
-    AuthorizedPatchAction, PatchApplyFailure, PatchApplyFuture, PatchPreviewFailure,
-    PatchPreviewFuture, WorkspacePatchControl, WorkspacePatchTool,
+    AuthorizedPatchAction, PatchApplyFailure, PatchApplyFuture, PatchConflictKind,
+    PatchPreviewFailure, PatchPreviewFuture, WorkspacePatchControl, WorkspacePatchTool,
 };
 use a3_domain::{
     FileRevision, PatchAction, PatchChange, PatchChangeSet, PatchContentPreview, PatchFileContent,
@@ -203,7 +203,7 @@ struct LiveOperation {
 enum PreflightFailure {
     Denied,
     StaleSnapshot,
-    Conflict,
+    Conflict(PatchConflictKind),
     Cancelled,
     Unavailable,
     InvalidResult,
@@ -284,9 +284,11 @@ fn require_published_revision(
 ) -> Result<(), PreflightFailure> {
     let position = revisions
         .binary_search_by(|revision| revision.path().cmp(expected.path()))
-        .map_err(|_| PreflightFailure::Conflict)?;
+        .map_err(|_| PreflightFailure::Conflict(PatchConflictKind::SourceNotIndexed))?;
     if &revisions[position] != expected {
-        return Err(PreflightFailure::Conflict);
+        return Err(PreflightFailure::Conflict(
+            PatchConflictKind::SourceRevisionChanged,
+        ));
     }
     Ok(())
 }
@@ -299,7 +301,9 @@ fn require_published_absence(
         .binary_search_by(|revision| revision.path().cmp(path))
         .is_ok()
     {
-        return Err(PreflightFailure::Conflict);
+        return Err(PreflightFailure::Conflict(
+            PatchConflictKind::TargetAlreadyExists,
+        ));
     }
     Ok(())
 }
@@ -325,7 +329,9 @@ fn resolve_existing_file(
         .resolve_existing(&relative)
         .map_err(|_| PreflightFailure::Denied)?;
     if canonical.kind() != PathEntryKind::File {
-        return Err(PreflightFailure::Conflict);
+        return Err(PreflightFailure::Conflict(
+            PatchConflictKind::SourceNotRegularFile,
+        ));
     }
     Ok(canonical.as_path().to_path_buf())
 }
@@ -359,7 +365,9 @@ fn resolve_absent_target(
             if is_link_or_reparse(&metadata) {
                 Err(PreflightFailure::Denied)
             } else {
-                Err(PreflightFailure::Conflict)
+                Err(PreflightFailure::Conflict(
+                    PatchConflictKind::TargetAlreadyExists,
+                ))
             }
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(target),
@@ -747,7 +755,9 @@ fn map_secure_read_failure(failure: SecureFileReadError) -> PreflightFailure {
         | SecureFileReadError::InvalidEncoding
         | SecureFileReadError::Binary
         | SecureFileReadError::SecretCandidate => PreflightFailure::Denied,
-        SecureFileReadError::Stale => PreflightFailure::Conflict,
+        SecureFileReadError::Stale => {
+            PreflightFailure::Conflict(PatchConflictKind::SourceChangedOnDisk)
+        }
         SecureFileReadError::Cancelled => PreflightFailure::Cancelled,
         SecureFileReadError::Unavailable | SecureFileReadError::TooLarge => {
             PreflightFailure::Unavailable
@@ -759,7 +769,7 @@ fn preview_failure(failure: PreflightFailure) -> PatchPreviewFailure {
     match failure {
         PreflightFailure::Denied => PatchPreviewFailure::Denied,
         PreflightFailure::StaleSnapshot => PatchPreviewFailure::StaleSnapshot,
-        PreflightFailure::Conflict => PatchPreviewFailure::Conflict,
+        PreflightFailure::Conflict(kind) => PatchPreviewFailure::Conflict(kind),
         PreflightFailure::Cancelled => PatchPreviewFailure::Cancelled,
         PreflightFailure::Unavailable => PatchPreviewFailure::Unavailable,
         PreflightFailure::InvalidResult => PatchPreviewFailure::InvalidResult,
@@ -770,7 +780,7 @@ fn apply_failure(failure: PreflightFailure) -> PatchApplyFailure {
     match failure {
         PreflightFailure::Denied => PatchApplyFailure::Denied,
         PreflightFailure::StaleSnapshot => PatchApplyFailure::StaleSnapshot,
-        PreflightFailure::Conflict => PatchApplyFailure::Conflict,
+        PreflightFailure::Conflict(_) => PatchApplyFailure::Conflict,
         PreflightFailure::Cancelled => PatchApplyFailure::Cancelled,
         PreflightFailure::Unavailable => PatchApplyFailure::Unavailable,
         PreflightFailure::InvalidResult => PatchApplyFailure::InvalidResult,

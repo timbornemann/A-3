@@ -40,6 +40,12 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] `record_result` bei operationalen Specs wie eine konkrete Prüfanforderung führen;
+      Read-Evidence darf keinen operationalen Verifying-Schritt erzeugen
+      ([ADR-0084](../adrs/0084-ergebnisnotizen-fordern-operationale-verifikation-an.md)).
+      Rot→Grün-Regression, vollständige lokale Gates und drei aufeinanderfolgende
+      echte Luna-Done-Läufe; andere Modell-/Vorschauprobleme bleiben getrennt offen.
+
 - [x] Bereits bekannte Schritt-/Run-/Worktree-/Spec- und Verifikationscommand-IDs im
       aktuellen Modellschema festlegen; dieselbe Bindung unabhängig decodieren und live prüfen
       ([ADR-0083](../adrs/0083-bekannte-schrittidentitaeten-als-schemakonstanten.md)).
