@@ -905,6 +905,23 @@ erneute automatische Replan-Kette eröffnen; der Core prüft dafür die dauerhaf
 begrenzt und cancellation-fähig. Es entsteht kein zweiter mutierender Controller.
 Abnahmeumfang und noch offene Schnitte stehen in [Plan 10](plans/10-RESEARCH_WORK_STATE.md).
 
+Die Replan-Analyse erhält im einzigen Repair die konkrete inhaltsfreie Fehlerklasse
+aus dem strikten Decoder beziehungsweise der Originalzulassung. JSON-/Feldfehler,
+unzulässige Entscheidungen, Packetzustand und nicht ausgelieferte Quellen werden
+nicht mehr zu einem leeren Zulassungsergebnis zusammengefasst. Der Hinweis besteht
+ausschließlich aus festen Core-Texten und geschlossenen Enumwerten (höchstens 512
+Bytes); Rohantworten, private Pfade, Quelleninhalt und erfundene Referenzen werden
+nicht zurückgespiegelt. Auch der terminale Turn behält diese Fehlerklasse, während
+das dauerhafte Journal weiterhin den bestehenden `InvalidModelOutput`-Event ohne
+Rohinhalt schreibt. Primärantwort und Repair durchlaufen dieselbe unveränderte
+Zulassung. Vier-Read-Grenze, Snapshotbindung, V5-Replan-Vertrag und Verifikation
+bleiben unverändert; eine gültige Interpretation ist kein bestandener Codetest.
+Ein bereits bekannter Leseauftrag, ein ausgeschöpftes Readbudget und eine falsche
+Aktionsklasse behalten außerdem ihre getrennten `ReplanReadRejection`-Ursachen.
+Diese Ablehnung geschieht vor dem Toolaufruf; sie wird nicht mehr fälschlich als
+ungültiges tatsächliches Toolresultat bezeichnet. Sie bleibt in diesem Schnitt
+terminal und eröffnet weder Repair noch einen zusätzlichen Read.
+
 Die feste Q1-Planbestandsaufnahme verwendet nach
 [ADR-0054](adrs/0054-vollstaendig-gelieferte-planbestandsaufnahme.md) ausschließlich
 bei nachweislich vollständig gelesenen **und aktuell vollständig als E-Fenster

@@ -112,6 +112,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0085](0085-patch-snapshotkonflikte-im-einzelrepair.md) | Patch-Snapshotkonflikte im Einzelrepair |
 | [0086](0086-gemini-projektion-von-vielfachheitsregeln.md) | Gemini-Projektion von Vielfachheitsregeln |
 | [0087](0087-agentaktionen-ohne-modellstatusnotiz.md) | Agentaktionen ohne Modellstatusnotiz |
+| [0088](0088-journalgebundene-ausfuehrungsrueckmeldung.md) | Journalgebundene Ausführungsrückmeldung |
 
 ## Neue ADRs
 

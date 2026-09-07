@@ -17,6 +17,17 @@ pub struct ReplanResearchCheckpoint {
     pub work: ResearchWorkState,
 }
 
+/// Content-free reason a proposed localization read cannot become a new tool attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplanReadRejection {
+    /// The existing durable four-read limit is exhausted.
+    BudgetExhausted,
+    /// The proposed action is outside the read-only localization subset.
+    NotReadAction,
+    /// The same canonical action value already has an access attempt.
+    RepeatedRead,
+}
+
 impl ReplanResearchCheckpoint {
     /// Core creates the fixed obligation from the actual failure and intended outcome.
     pub fn new(
@@ -59,13 +70,26 @@ impl ReplanResearchCheckpoint {
     /// A completed or failed identical read is not a new investigation step.
     #[must_use]
     pub fn permits(&self, action: &AgentAction) -> bool {
-        self.reads() < 4
-            && matches!(action, AgentAction::Search(_) | AgentAction::Inspect(_))
-            && !self
-                .work
-                .accesses()
-                .iter()
-                .any(|a| a.key == read_key(action))
+        self.validate_read(action).is_ok()
+    }
+
+    /// Validates the unchanged read boundary without discarding the reason for rejection.
+    pub fn validate_read(&self, action: &AgentAction) -> Result<(), ReplanReadRejection> {
+        if self.reads() >= 4 {
+            return Err(ReplanReadRejection::BudgetExhausted);
+        }
+        if !matches!(action, AgentAction::Search(_) | AgentAction::Inspect(_)) {
+            return Err(ReplanReadRejection::NotReadAction);
+        }
+        if self
+            .work
+            .accesses()
+            .iter()
+            .any(|a| a.key == read_key(action))
+        {
+            return Err(ReplanReadRejection::RepeatedRead);
+        }
+        Ok(())
     }
 
     /// Records the actually attempted read, not the model's description of progress.
@@ -264,6 +288,14 @@ mod tests {
             );
             checkpoint.record_read(&action, true)?;
             assert!(!checkpoint.permits(&action));
+            assert_eq!(
+                checkpoint.validate_read(&action),
+                Err(if checkpoint.reads() == 4 {
+                    ReplanReadRejection::BudgetExhausted
+                } else {
+                    ReplanReadRejection::RepeatedRead
+                })
+            );
         }
         assert_eq!(checkpoint.clone().reads(), 4);
         assert!(

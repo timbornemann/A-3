@@ -265,6 +265,7 @@ impl AgentTurnOutcome {
                     },
                     AgentTurnRejectionReason::InvalidAfterRepair
                     | AgentTurnRejectionReason::InvalidActionAfterRepair(_)
+                    | AgentTurnRejectionReason::InvalidReplanAnalysisAfterRepair(_)
                     | AgentTurnRejectionReason::IncompleteModelOutput => {
                         (RunEventCode::InvalidModelOutput, RunEventOutcome::Failed)
                     }
@@ -274,7 +275,8 @@ impl AgentTurnOutcome {
                     AgentTurnRejectionReason::CancelledBeforeAction => {
                         (RunEventCode::Cancellation, RunEventOutcome::Cancelled)
                     }
-                    AgentTurnRejectionReason::InvalidReadResult => {
+                    AgentTurnRejectionReason::InvalidReadResult
+                    | AgentTurnRejectionReason::ReplanReadRejected(_) => {
                         (RunEventCode::ToolFailure, RunEventOutcome::Failed)
                     }
                     AgentTurnRejectionReason::ReadFailed(failure) => match failure {
@@ -325,6 +327,8 @@ pub enum AgentTurnRejectionReason {
     InvalidAfterRepair,
     /// The sole action repair failed with a closed, content-free decoder classification.
     InvalidActionAfterRepair(crate::AgentActionRepairFailure),
+    /// The sole replan analysis repair failed with a content-free admission classification.
+    InvalidReplanAnalysisAfterRepair(crate::ReplanAnalysisFailure),
     /// Provider did not report a normal stop, so potentially incomplete JSON was never decoded.
     IncompleteModelOutput,
     /// A Ledger update named a step other than the current anchored step.
@@ -333,6 +337,8 @@ pub enum AgentTurnRejectionReason {
     CancelledBeforeAction,
     /// A read result did not preserve the immutable context snapshot.
     InvalidReadResult,
+    /// Replan denied a proposed read before calling a tool; not a malformed tool result.
+    ReplanReadRejected(crate::ReplanReadRejection),
 }
 
 /// Turn use case composing fresh context, neutral provider, strict decoding, and the bounded read
@@ -547,13 +553,14 @@ impl<'a> ExecuteAgentTurn<'a> {
         let (action, public_note) = decoded.into_parts();
         let action_class = AgentTurnActionClass::from_action(&action);
         let charge = AgentTurnCharge::new(prompt_tokens, output_tokens, Some(action_class), repair);
-        if input
+        if let Some(research) = input
             .replan_research()
-            .is_some_and(|r| !r.checkpoint.work.ready_to_finish() && !r.checkpoint.permits(&action))
+            .filter(|r| !r.checkpoint.work.ready_to_finish())
+            && let Err(reason) = research.checkpoint.validate_read(&action)
         {
             return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
                 charge,
-                reason: AgentTurnRejectionReason::InvalidReadResult,
+                reason: AgentTurnRejectionReason::ReplanReadRejected(reason),
                 snapshot_id,
                 observed_model_output_bytes,
             }));
@@ -713,7 +720,6 @@ async fn analyze_replan<C: AgentControllerControl + ModelOperationControl>(
     timeout: ModelRequestTimeout,
     control: &C,
 ) -> Result<AgentTurnOutcome, ExecuteAgentTurnFailure> {
-    let phase = crate::ResearchOutputPhase::Analyze(a3_domain::ResearchQuestionId::FIRST);
     let mut completion = primary;
     let mut prompt_tokens = completion.prompt_tokens;
     let mut output_tokens = completion.output_tokens;
@@ -738,52 +744,31 @@ async fn analyze_replan<C: AgentControllerControl + ModelOperationControl>(
                 observed_model_output_bytes: observed,
             }));
         }
-        let admitted = (|| {
-            let shape: serde_json::Value = serde_json::from_str(&completion.raw).ok()?;
-            if shape["decision"]["kind"] != "progress" {
-                return None;
+        let failure = match crate::replan_analysis::admit(&completion.raw, research) {
+            Ok(work) => {
+                let mut checkpoint = research.checkpoint.clone();
+                checkpoint.work = work;
+                return Ok(AgentTurnOutcome::Researched(Box::new(AgentResearchTurn {
+                    checkpoint,
+                    charge,
+                    observed_model_output_bytes: observed,
+                })));
             }
-            let decision = crate::DecodeAskResearchDecision
-                .decode_phase(&completion.raw, phase)
-                .ok()?;
-            let crate::AskResearchDecision::Answer { note, .. } = decision else {
-                return None;
-            };
-            let update = note.work.as_ref()?;
-            if update
-                .results
-                .iter()
-                .any(|r| r.kind != a3_domain::ResearchResultKind::Interpretation)
-            {
-                return None;
-            }
-            let windows = research.windows().ok()?;
-            let mut previous = research.checkpoint.work.clone();
-            previous
-                .begin_analysis(a3_domain::ResearchQuestionId::FIRST, research.packet())
-                .ok()?;
-            crate::admit_research_work(previous.objective(), Some(&previous), update, &windows).ok()
-        })();
-        if let Some(work) = admitted {
-            let mut checkpoint = research.checkpoint.clone();
-            checkpoint.work = work;
-            return Ok(AgentTurnOutcome::Researched(Box::new(AgentResearchTurn {
-                checkpoint,
-                charge,
-                observed_model_output_bytes: observed,
-            })));
-        }
+            Err(failure) => failure,
+        };
         if attempt == 1 {
             return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
                 charge,
-                reason: AgentTurnRejectionReason::InvalidAfterRepair,
+                reason: AgentTurnRejectionReason::InvalidReplanAnalysisAfterRepair(failure),
                 snapshot_id: research.checkpoint.snapshot_id,
                 observed_model_output_bytes: observed,
             }));
         }
         let mut messages = request.messages().to_vec();
-        messages.push(crate::ModelMessage::try_from_string(crate::ModelMessageRole::User,
-            "The document was not admitted. Return the exact supplied V5 Analyze schema, progress decision, Q1 only, no new questions. Use only current E anchors for an interpretation, or empty results if evidence is insufficient. This is the single repair.".to_owned())?);
+        messages.push(crate::ModelMessage::try_from_string(
+            crate::ModelMessageRole::User,
+            failure.repair_instruction(),
+        )?);
         let repaired = ModelProviderRequest::new(
             request.profile().clone(),
             messages,
@@ -1204,6 +1189,34 @@ mod tests {
     #[derive(Debug)]
     struct CountingReadTools {
         calls: AtomicUsize,
+    }
+
+    #[derive(Debug)]
+    struct RecordingReplanProvider {
+        inner: ScriptedProvider,
+        requests: Mutex<Vec<ModelProviderRequest>>,
+    }
+
+    impl ModelProvider for RecordingReplanProvider {
+        fn provider_id(&self) -> &ModelProviderId {
+            self.inner.provider_id()
+        }
+
+        fn stream<'a>(
+            &'a self,
+            request: &'a ModelProviderRequest,
+            timeout: ModelRequestTimeout,
+            control: &'a dyn ModelOperationControl,
+        ) -> ModelProviderFuture<'a> {
+            let recorded = self
+                .requests
+                .lock()
+                .map(|mut requests| requests.push(request.clone()));
+            if recorded.is_err() {
+                return Box::pin(async { Err(ModelProviderFailure::Unavailable) });
+            }
+            self.inner.stream(request, timeout, control)
+        }
     }
 
     #[test]
@@ -1689,6 +1702,93 @@ mod tests {
     }
 
     #[test]
+    fn replan_read_rejections_are_not_reported_as_tool_result_failures()
+    -> Result<(), Box<dyn Error>> {
+        for (reads, query, expected) in [
+            (
+                1,
+                "controller",
+                Some(crate::ReplanReadRejection::RepeatedRead),
+            ),
+            (
+                4,
+                "novel",
+                Some(crate::ReplanReadRejection::BudgetExhausted),
+            ),
+            (1, "novel", None),
+        ] {
+            let raw = serde_json::json!({"schema_version":4,
+                "public_note":{"goal":"Localize","finding_kind":"hypothesis","finding":"Source needed","finding_source_refs":[],"gap":"Cause","next_step":"Inspect"},
+                "action":{"kind":"search","query":query,"limit":5}}).to_string();
+            let mut fixture =
+                turn_fixture(vec![provider_response(&raw)?, provider_response(&raw)?])?;
+            let reason =
+                a3_domain::TaskReplanReason::try_from_string("missing serializer".to_owned())?;
+            let mut checkpoint = crate::ReplanResearchCheckpoint::new(
+                fixture.input.current_step_id(),
+                snapshot(),
+                &reason,
+                "preserve title",
+            )?;
+            for prior in ["controller", "alpha", "bravo", "delta"]
+                .into_iter()
+                .take(reads)
+            {
+                checkpoint.record_read(
+                    &AgentAction::Search(AgentSearchAction::new(
+                        a3_domain::AgentSearchQuery::try_from_string(prior.to_owned())?,
+                        a3_domain::AgentSearchLimit::new(5)?,
+                    )),
+                    true,
+                )?;
+            }
+            let input = fixture
+                .input
+                .with_replan_localization(reason)
+                .with_replan_research(crate::ReplanResearchContext {
+                    checkpoint,
+                    pages: Vec::new(),
+                })?;
+            let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
+            let provider = ScriptedProvider {
+                provider_id: fixture.profile.provider_id().clone(),
+                responses: Mutex::new(fixture.responses),
+            };
+            let tools = CountingReadTools {
+                calls: AtomicUsize::new(0),
+            };
+            let recovery = TestRecoveryStore::default();
+            let outcome = futures::executor::block_on(
+                ExecuteAgentTurn::new(&compiler, &provider, &tools, &recovery).execute(
+                    &fixture.run,
+                    &input,
+                    timestamp(5)?,
+                    &TestControl,
+                ),
+            )?;
+            let event = outcome.record(&mut fixture.run, event_id(20), timestamp(20)?)?;
+            match (expected, outcome) {
+                (Some(reason), AgentTurnOutcome::Rejected(rejected)) => {
+                    assert_eq!(
+                        rejected.reason(),
+                        AgentTurnRejectionReason::ReplanReadRejected(reason)
+                    );
+                    assert_eq!(event.payload().code(), RunEventCode::ToolFailure);
+                    assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
+                    assert_eq!(recovery.begins.load(Ordering::SeqCst), 0);
+                }
+                (None, AgentTurnOutcome::Executed(_)) => {
+                    assert_eq!(tools.calls.load(Ordering::SeqCst), 1)
+                }
+                _ => return Err("incorrect replan read boundary".into()),
+            }
+            assert_eq!(fixture.run.usage().repair_count(), 0);
+            assert_eq!(provider.responses.lock().map_err(|_| "responses")?.len(), 1);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn patch_snapshot_conflicts_share_one_repair_before_tools() -> Result<(), Box<dyn Error>> {
         for (operation, code) in [
             (
@@ -2015,14 +2115,24 @@ mod tests {
             AgentFileStartLine, ContentHash, FileRevision, RepositoryPath, ResearchResultKind,
             SourcePosition, SourceRange,
         };
-        for (valid, null_result) in [(true, false), (true, true), (false, false)] {
+        for (valid, null_result, corrected) in [
+            (true, false, false),
+            (true, true, false),
+            (false, false, false),
+            (false, false, true),
+        ] {
             let raw = serde_json::json!({"schema_version":5,
                 "decision":{"kind":"progress","note":{"goal":"Cause","finding_kind":"hypothesis","finding":"Current evidence","finding_source_refs":[],"gap":"Check serializer","next_step":"Resolve cause"}},
                 "work":{"questions":[],"results":if null_result { serde_json::json!([]) } else { serde_json::json!([{"question_id":1,"kind":"interpretation","text":"The serializer drops the title; preserve it and verify a round trip.","evidence":[{"anchor_ref":if valid {"E1"} else {"E8"}}]}]) }}}).to_string();
             let mut fixture = turn_fixture(if valid {
                 vec![provider_response(&raw)?]
             } else {
-                vec![provider_response(&raw)?, provider_response(&raw)?]
+                let repair = if corrected {
+                    raw.replace("E8", "E1")
+                } else {
+                    raw.clone()
+                };
+                vec![provider_response(&raw)?, provider_response(&repair)?]
             })?;
             let checkpoint = crate::ReplanResearchCheckpoint::new(
                 fixture.input.current_step_id(),
@@ -2047,9 +2157,12 @@ mod tests {
             };
             let input = fixture.input.with_replan_research(research.clone())?;
             let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
-            let provider = ScriptedProvider {
-                provider_id: fixture.profile.provider_id().clone(),
-                responses: Mutex::new(fixture.responses),
+            let provider = RecordingReplanProvider {
+                inner: ScriptedProvider {
+                    provider_id: fixture.profile.provider_id().clone(),
+                    responses: Mutex::new(fixture.responses),
+                },
+                requests: Mutex::new(Vec::new()),
             };
             let tools = CountingReadTools {
                 calls: AtomicUsize::new(0),
@@ -2068,12 +2181,36 @@ mod tests {
             assert_eq!(fixture.run.usage().turn_count(), 1);
             assert_eq!(fixture.run.usage().action_count(), 0);
             assert_eq!(fixture.run.usage().repair_count(), u32::from(!valid));
+            let requests = provider.requests.lock().map_err(|_| "requests poisoned")?;
+            assert_eq!(requests.len(), if valid { 1 } else { 2 });
+            assert!(
+                provider
+                    .inner
+                    .responses
+                    .lock()
+                    .map_err(|_| "responses poisoned")?
+                    .is_empty()
+            );
+            if !valid {
+                assert_eq!(
+                    requests[0].structured_output(),
+                    requests[1].structured_output()
+                );
+                let messages = requests[1].messages();
+                assert_eq!(&messages[..messages.len() - 1], requests[0].messages());
+                let feedback = messages.last().ok_or("repair feedback")?.content();
+                assert!(feedback.contains("Admission(UndeliveredQuote)"));
+                assert!(feedback.len() <= 512);
+                assert!(!feedback.contains("serializer.py"));
+                assert!(!feedback.contains("E8"));
+                assert!(!feedback.contains("return 0"));
+            }
             assert!(
                 checkpoint.work.questions()[0].attempts().is_empty(),
                 "input never changes on rejected admission"
             );
             match outcome {
-                AgentTurnOutcome::Researched(result) if valid => {
+                AgentTurnOutcome::Researched(result) if valid || corrected => {
                     assert_eq!(result.checkpoint.work.ready_to_finish(), !null_result);
                     assert_eq!(
                         result.checkpoint.work.questions()[0].attempts(),
@@ -2089,7 +2226,13 @@ mod tests {
                         );
                     }
                 }
-                AgentTurnOutcome::Rejected(_) if !valid => {}
+                AgentTurnOutcome::Rejected(rejected) if !valid => {
+                    assert_eq!(
+                        format!("{:?}", rejected.reason()),
+                        "InvalidReplanAnalysisAfterRepair(Admission(UndeliveredQuote))",
+                        "replan must retain the actual content-free admission failure"
+                    );
+                }
                 _ => return Err("unexpected replan admission".into()),
             }
         }

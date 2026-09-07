@@ -40,6 +40,21 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Replan-Analysefehler nicht mehr zu einem unbestimmten Leerwert reduzieren:
+      bestehende Decoder-/Belegfehler inhaltsfrei klassifizieren und im einzigen
+      Repair konkret zurückmelden; keine Rohantwort, neue Freigabe oder zusätzliche
+      Reparaturrunde. Verweigerte Replan-Lesevorschläge (Duplikat/Budget/Aktionsklasse)
+      von fehlerhaften tatsächlichen Toolresultaten unterscheiden. Grenztests und
+      unveränderte echte Agent-Fixture nachtesten.
+      Vollständige lokale Gates bestehen; Granite belegt live den gesonderten
+      `RepeatedRead`-Pfad, Luna erreicht Done. Duplikatrecovery bleibt ein eigener Schnitt.
+
+- [ ] Den tatsächlich belegten Replan-Leseduplikatfehler innerhalb des vorhandenen
+      Einzelrepairs korrigierbar machen, ohne Vier-Read-Grenze oder Freigaben zu ändern.
+- [ ] Claim-Leseidentitäten von redigierter Debug-Darstellung lösen: unterschiedliche
+      `ModuleCardClaimId`-Werte haben derzeit denselben Replan-Accesskey. Alte
+      mehrdeutige Quittungen dürfen weder gelöscht noch als neuer Leseplatz behandelt werden.
+
 - [x] Ausgeführte Mutationen aus dauerhaftem Journal und Recovery-Attempt im
       nächsten normalen und Post-Mutations-Kontext rekonstruieren; Freshness,
       Wiederanlauf, 8k/2k, Timeout/Cancellation und echte Modellnachtests prüfen

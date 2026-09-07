@@ -1853,3 +1853,80 @@ Logs: `research-rubric-v3-red.log`, `research-rubric-v3-targeted.log`,
 `research-rubric-v3-clippy.log`, `research-rubric-v3-workspace.log`.
 Die verschärfte Auswertung behebt den Messfehler, nicht die jetzt sichtbaren
 Inhaltsdefekte. Diese bleiben Teil der offenen Modellabnahme.
+
+### Replan-Zulassung: konkrete Fehler statt verschluckter Ursachen
+
+`analyze_replan` reduzierte bisher JSON-, Decoder-, Packet- und Originalzulassungs-
+Fehler mit `.ok()?` auf denselben Leerwert. Der einzige Repair enthielt deshalb nur
+die allgemeine Aufforderung, das Schema zu erfüllen. Ein neuer echter Turntest
+scheitert vor der Korrektur mit `InvalidAfterRepair` statt der erwarteten Klassifikation
+`Admission(UndeliveredQuote)`; Log `replan-admission-diagnostics-red.log`.
+
+Die pure Zulassung behält jetzt geschlossene Fehlerklassen. Nur daraus und aus festen
+Core-Texten entsteht der höchstens 512-Byte-Repairhinweis. Der Turntest prüft
+Primärerfolg, weiterhin ungelöste leere Ergebnisse, zwei abgewiesene Antworten und
+eine gültige Korrektur nach abgewiesenem Anker: höchstens zwei Requests, identischer
+ursprünglicher Kontext und Schema, exakt ein Repair, null Tools, unverändertes
+Eingangscheckpoint und weiterhin Interpretation statt Implementierungsverifikation.
+Zwei reine Tests prüfen falsche Entscheidungen, fehlende/zusätzliche Felder,
+erfundene Anker, private Sentinels und die feste Feedbackgrenze.
+
+Erster eingefrorener Stand (noch ohne getrennte Replan-Read-Ursachen):
+`replan-admission-diagnostics-20260907/agent-tests.exe`, SHA-256
+`f2f9620285d81fca3ff3c9f270878daf7ef4cfe302cc1704a9c62a2477517762`.
+
+| Modell | Dauer | Tatsächliches Ergebnis |
+| --- | --- | --- |
+| Luna | 14,32 s | Done 23, echter Test Exit 0, unabhängig geprüft, Completed/verified |
+| Google Gemma | 13,75 s | Weiterhin Unavailable, Failed 16 |
+| Granite | 25,16 s | Zwei Tests Exit 1, danach InvalidReadResult, Failed 26 |
+
+Geschützte Dateien bleiben unverändert; Luna bestätigt außerdem unveränderte native
+Settings. Granite erreicht diesmal einen anderen terminalen Pfad; ohne genauere
+Ursache ist das weder eine Replan-Abnahme noch ein Nachweis, dass das neue Feedback
+den früheren Fehler ursächlich behoben hat.
+
+SHA-256 im selben Verzeichnis:
+
+- `luna-live.log`: `db2d085502c7caa63385b99bbddcc4f92e9a7d9601b0768dc071cd6a4258546f`
+- `google-live.log`: `3c639886d7a65d6776fe2ae63367983cba1aa231e40983dfbc55b44bfefdd3d2`
+- `granite-live.log`: `8e40dcba776068119f2c5d634e3cb5389c4e06a5b6571aa9eb7432ed04635315`
+
+Der folgende Schnitt unterscheidet zusätzlich den bereits vor dem Tool verweigerten
+Lesevorschlag (Duplikat, vier Reads ausgeschöpft, falsche Aktionsklasse) von einem
+tatsächlich fehlerhaften Toolresultat. Die bisherigen Grenzen und der terminale
+Verlauf sind unverändert. Eine Wiederholung wird nicht zu einem weiteren Read.
+
+Der finale Diagnose-Stand ist in `replan-read-diagnostics-20260907/agent-tests.exe`
+eingefroren, SHA-256
+`d0671e15b2925178d6a9f82f1ebfe296302abca58e2193c4cb24e39891592316`.
+Granite endet nach 22,43 s mit `ReplanReadRejected(RepeatedRead)`, Failed 26, zweimal
+Test Exit 1, unabhängiger Prüfung rot und unveränderten geschützten Dateien. Log
+`replan-read-diagnostics-20260907/granite-live.log`, SHA-256
+`6390d199d5377946fec80082dcd94f0d7eb19cec186adabc8bede31cec03d74b`.
+Damit ist dieser konkrete terminale Ablehnungszweig nachgewiesen; noch kein Erfolg
+bei der Fehlerbehebung der öffentlichen Coding-Aufgabe.
+
+Der neue vollständige Turn-Grenztest unterscheidet verweigertes Duplikat,
+ausgeschöpftes Budget und tatsächlich erlaubten neuen Read. Abgewiesene Vorschläge
+erzeugen null Tool-/Recovery-Aufrufe und keine zusätzliche Reparatur; ein neuer
+Read erreicht genau einen Toolaufruf. Bestehende Journalcodes bleiben erhalten.
+Die gezielte finale Serie umfasst neun Application-, drei Context-, drei Desktop-
+sowie je einen Domain- und libSQL-Migrations-Replantest. `cargo fmt --all --check`, die vollständige
+Workspace-Clippy-Prüfung mit `-D warnings` und die vollständige Workspace-Testsuite
+(`--all-features --offline --locked --jobs 2 -- --test-threads=1`) bestehen.
+Finale Logs: `replan-admission-diagnostics-serial-targeted.log`,
+`replan-admission-diagnostics-serial-clippy.log` und
+`replan-admission-diagnostics-serial-workspace.log`.
+
+Ein vorher parallel zum laufenden Workspace-Test gestarteter Wiederaufbau scheiterte
+mit Windows LNK1104 an der noch geöffneten `index_repository_contract`-Testdatei.
+Nach Ende der alten Suite wurden alle obigen Gates seriell neu ausgeführt; keine
+Datei wurde dafür gelöscht und keine Prüfung ausgelassen. Die zuvor grüne Suite
+allein wurde nicht als finale Abnahme des ergänzten Read-Diagnosecodes verwendet.
+
+Bei der weiteren Codeprüfung fiel getrennt auf: `read_key` verwendet für Claim-
+Inspektionen Debug-Text, während `ModuleCardClaimId` dort absichtlich redigiert wird.
+Dadurch kollidieren unterschiedliche Claim-Ziele. Das ist nicht als Ursache des
+Granite-Fixtures nachgewiesen und wird separat mit dauerhafter Legacy-Behandlung
+bearbeitet; es darf nicht durch Lockerung des Duplikatschutzes verdeckt werden.
