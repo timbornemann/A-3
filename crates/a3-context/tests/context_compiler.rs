@@ -306,6 +306,126 @@ fn executable_context_supplies_exact_current_patch_run_and_worktree_ids()
 }
 
 #[test]
+fn current_step_constants_match_provider_schema_and_exact_grounding() -> Result<(), Box<dyn Error>>
+{
+    let fixture = Fixture::new()?;
+    let calls = Mutex::new(Vec::new());
+    let store = StubStore {
+        published: fixture.published.clone(),
+        symbol_id: fixture.symbol_id,
+        module_id: fixture.module_id,
+        calls: &calls,
+    };
+    let compiler =
+        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    for grounding in [
+        ModelPromptSchemaGrounding::FormatFieldOnly,
+        ModelPromptSchemaGrounding::RepeatSchemaInPrompt,
+    ] {
+        for started in [false, true] {
+            let base = input(fixture.snapshot_id)?;
+            let mut ledger = base.task_ledger().clone();
+            let run = AgentRunId::from_bytes([42; 32]);
+            if started {
+                ledger.start_step(
+                    base.current_step_id(),
+                    run,
+                    TaskLedgerTimestamp::from_unix_millis(10)?,
+                )?;
+            }
+            let profile = profile_with_grounding(16_384, 2_048, grounding)?;
+            let input = AgentContextCompileInput::new(
+                base.project().clone(),
+                base.goal_contract().clone(),
+                ledger,
+                base.current_step_id(),
+                profile.clone(),
+                None,
+                Vec::new(),
+                Vec::new(),
+            )?;
+            let step = input
+                .task_ledger()
+                .step(input.current_step_id())
+                .ok_or(TestError("step"))?;
+            let compiled = block_on(compiler.compile(&input, &RecordingControl::default()))?;
+            let schema = compiled
+                .request()
+                .structured_output()
+                .ok_or(TestError("schema"))?
+                .value();
+            let mut expected = a3_application::AgentActionJsonSchema::current().as_json()?;
+            for (definition, field, value) in [
+                ("applyPatch", "run_id", run.to_string()),
+                (
+                    "applyPatch",
+                    "worktree_id",
+                    input.project().worktree().id().to_string(),
+                ),
+                ("applyPatch", "step_id", input.current_step_id().to_string()),
+                (
+                    "applyPatch",
+                    "verification_spec_id",
+                    step.definition().verification_spec().id().to_string(),
+                ),
+                ("run", "step_id", input.current_step_id().to_string()),
+                (
+                    "run",
+                    "command_id",
+                    DiscoveredCommandId::from_bytes([94; 32]).to_string(),
+                ),
+                (
+                    "updateLedger",
+                    "step_id",
+                    input.current_step_id().to_string(),
+                ),
+            ] {
+                if !started && matches!(field, "run_id" | "command_id") {
+                    continue;
+                }
+                let property = expected["$defs"][definition]["properties"][field]
+                    .as_object_mut()
+                    .ok_or(TestError("schema property"))?;
+                property.clear();
+                property.insert("const".to_owned(), value.into());
+            }
+            assert_eq!(
+                schema, &expected,
+                "only known current identities may become constants"
+            );
+            let exact_grounding = format!("The exact AgentAction V4 JSON Schema is:\n{expected}");
+            assert_eq!(
+                compiled
+                    .request()
+                    .messages()
+                    .iter()
+                    .any(|m| m.content() == exact_grounding),
+                grounding == ModelPromptSchemaGrounding::RepeatSchemaInPrompt
+            );
+            assert_eq!(input.model_profile(), &profile);
+            let bytes: usize = compiled
+                .request()
+                .messages()
+                .iter()
+                .map(|m| m.content().len())
+                .sum();
+            assert_eq!(bytes, compiled.budget_usage().prompt_total() as usize);
+            assert!(
+                bytes
+                    + compiled.budget_plan().output_reserve() as usize
+                    + compiled.budget_plan().safety_reserve() as usize
+                    <= 16_384
+            );
+            assert_eq!(
+                compiled.digest(),
+                block_on(compiler.compile(&input, &RecordingControl::default()))?.digest()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn small_context_and_low_output_keep_full_mandatory_anchors() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     let calls = Mutex::new(Vec::new());

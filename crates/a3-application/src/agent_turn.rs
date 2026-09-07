@@ -424,24 +424,28 @@ impl<'a> ExecuteAgentTurn<'a> {
             )
             .await;
         }
+        let current_step = input
+            .task_ledger()
+            .step(current_step_id)
+            .ok_or(ExecuteAgentTurnFailure::InputMismatch)?;
+        let anchors = crate::agent_action_codec::AgentActionTurnAnchors::new(
+            run.id(),
+            input.project().worktree().id(),
+            snapshot_id,
+            current_step_id,
+            current_step.definition().verification_spec().id(),
+        )
+        .with_verification_command(
+            crate::RequestAgentFinish
+                .verification_command(current_step)
+                .map(|command| command.command_id()),
+        );
         let decoder = if input.replan_localization().is_some() {
             DecodeAgentActionTurn::for_replan_localization()
         } else {
             DecodeAgentActionTurn::current()
         }
-        .with_turn_anchors(crate::agent_action_codec::AgentActionTurnAnchors::new(
-            run.id(),
-            input.project().worktree().id(),
-            snapshot_id,
-            current_step_id,
-            input
-                .task_ledger()
-                .step(current_step_id)
-                .ok_or(ExecuteAgentTurnFailure::InputMismatch)?
-                .definition()
-                .verification_spec()
-                .id(),
-        ));
+        .with_turn_anchors(anchors);
         let (decoded, prompt_tokens, output_tokens, repair, observed_model_output_bytes) =
             match decoder.decode_primary(&primary.raw) {
                 AgentActionPrimaryOutcome::Accepted(action) => (
@@ -1527,10 +1531,15 @@ mod tests {
             ("apply_patch", "step_id"),
             ("apply_patch", "verification_spec_id"),
             ("run", "step_id"),
+            ("run", "command_id"),
             ("update_ledger", "step_id"),
         ] {
             for corrected in [false, true] {
-                let mut fixture = turn_fixture(Vec::new())?;
+                let mut fixture = turn_fixture_with_command(
+                    Vec::new(),
+                    (field == "command_id")
+                        .then_some(a3_domain::DiscoveredCommandId::from_bytes([0xad; 32])),
+                )?;
                 let step = fixture.input.current_step_id();
                 let action = match kind {
                     "apply_patch" => serde_json::json!({
@@ -1854,13 +1863,20 @@ mod tests {
     }
 
     fn turn_fixture(responses: Vec<Vec<ProviderEvent>>) -> Result<TurnFixture, Box<dyn Error>> {
+        turn_fixture_with_command(responses, None)
+    }
+
+    fn turn_fixture_with_command(
+        responses: Vec<Vec<ProviderEvent>>,
+        command: Option<a3_domain::DiscoveredCommandId>,
+    ) -> Result<TurnFixture, Box<dyn Error>> {
         let project = project()?;
         let goal = goal()?;
         let profile = profile()?;
         let step_id = TaskStepId::from_bytes([5; 32]);
         let mut ledger = TaskLedger::new(
             goal.reference(),
-            vec![step_definition(step_id)?],
+            vec![step_definition_with_command(step_id, command)?],
             TaskLedgerTimestamp::from_unix_millis(1)?,
         )?;
         let (mut run, _) = AgentRun::start(
@@ -1939,7 +1955,24 @@ mod tests {
         ])
     }
 
-    fn step_definition(step_id: TaskStepId) -> Result<TaskStepDefinition, Box<dyn Error>> {
+    fn step_definition_with_command(
+        step_id: TaskStepId,
+        command: Option<a3_domain::DiscoveredCommandId>,
+    ) -> Result<TaskStepDefinition, Box<dyn Error>> {
+        let verification_id = VerificationSpecId::from_bytes([6; 32]);
+        let requirement =
+            VerificationRequirement::try_from_string("read result is current".to_owned())?;
+        let verification = match command {
+            Some(command) => VerificationSpec::command(
+                verification_id,
+                requirement,
+                command,
+                a3_domain::VerificationScope::Targeted,
+            ),
+            None => {
+                VerificationSpec::new(verification_id, VerificationMethod::Diagnostic, requirement)
+            }
+        };
         Ok(TaskStepDefinition::new(
             step_id,
             None,
@@ -1949,11 +1982,7 @@ mod tests {
             vec![ExpectedTaskEvidence::try_from_string(
                 "bounded read evidence".to_owned(),
             )?],
-            VerificationSpec::new(
-                VerificationSpecId::from_bytes([6; 32]),
-                VerificationMethod::Diagnostic,
-                VerificationRequirement::try_from_string("read result is current".to_owned())?,
-            ),
+            verification,
         )?)
     }
 

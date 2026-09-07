@@ -898,3 +898,13 @@ Step- oder Verification-Spec-ID sowie Run-/Ledgeraktionen für einen anderen Sch
 werden bereits als `anchor_mismatch` abgewiesen. Der Core korrigiert keine ID selbst.
 Struktur- und Ankerfehler teilen sich genau einen Repair; an der Mutationsgrenze werden
 Aktualität, Anker, Policy, Pfade und Hashes unverändert erneut geprüft.
+
+Nach [ADR-0083](adrs/0083-bekannte-schrittidentitaeten-als-schemakonstanten.md) enthält
+das normale aktuelle V4-Modellschema die bereits bekannten Worktree-/Step-/Spec-IDs
+und gegebenenfalls die letzte Run-ID als Konstanten. Für einen laufenden operationalen
+Schritt ist auch die geplante Verifikationscommand-ID konstant und unabhängig im
+Decoder gebunden. Andere Befehle benötigen einen entsprechend bestätigten Plan;
+das Schema ersetzt niemals Katalogbestätigung, Freigabe oder zentrale Policy.
+Snapshot- und Dateihashgrenzen bleiben unverändert. Schema-only-Legacy und die
+gesonderten read-only Replan-Phasen werden nicht erweitert. Vollständige tatsächliche
+Schema-Grounding-Bytes zählen vor Retrieval gegen dieselben harten Kontextbudgets.

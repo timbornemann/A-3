@@ -107,6 +107,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0080](0080-pflichtmemory-vor-optionaler-kontextverteilung.md) | Pflichtmemory vor optionaler Kontextverteilung |
 | [0081](0081-optionale-portable-tempvariablen.md) | Optionale portable Tempvariablen |
 | [0082](0082-aktuelle-aktionsanker-innerhalb-des-einzelrepairs.md) | Aktuelle Aktionsanker innerhalb des Einzelrepairs |
+| [0083](0083-bekannte-schrittidentitaeten-als-schemakonstanten.md) | Bekannte Schrittidentitäten als Schemakonstanten |
 
 ## Neue ADRs
 

@@ -59,12 +59,17 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
         let profile = input.model_profile();
         let budget_plan =
             ContextBudgetPlan::for_profile(profile).map_err(ContextCompileFailure::Budget)?;
+        let current_step = input
+            .task_ledger()
+            .step(input.current_step_id())
+            .filter(|step| step.is_active_plan_step())
+            .ok_or(ContextCompileFailure::StaleOrMismatchedInput)?;
         let prompt = if input.replan_research().is_some_and(|r| r.should_analyze()) {
             AgentPromptContract::current().prepare_replan_analysis(profile)
         } else if input.replan_localization().is_some() {
             AgentPromptContract::current().prepare_replan_localization(profile)
         } else {
-            AgentPromptContract::current().prepare(profile)
+            AgentPromptContract::prepare_current_step(profile, input.project(), current_step)
         }
         .map_err(|_| ContextCompileFailure::PromptUnavailable)?;
         let (system_message, schema_grounding, structured_output) = prompt.into_parts();
@@ -74,11 +79,6 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
                 None => 0,
             })
             .ok_or(ContextCompileFailure::InvalidPack)?;
-        let current_step = input
-            .task_ledger()
-            .step(input.current_step_id())
-            .filter(|step| step.is_active_plan_step())
-            .ok_or(ContextCompileFailure::StaleOrMismatchedInput)?;
         let command_profile = input
             .research_handoff()
             .and_then(|handoff| handoff.command())

@@ -476,7 +476,11 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
         store.as_ref(),
         store.as_ref(),
     ));
-    let prompt = AgentPromptContract::current().prepare(&live.profile)?;
+    let prompt = AgentPromptContract::prepare_current_step(
+        &live.profile,
+        &project,
+        ledger.step(step_id).ok_or("missing current step")?,
+    )?;
     println!(
         "A3_LIVE_CODING grounding={:?} static_bytes={} grounding_bytes={}",
         live.profile.settings().schema_grounding(),

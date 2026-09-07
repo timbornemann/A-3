@@ -1429,3 +1429,45 @@ Diffprüfung und 488 lokale Links in 126 Markdown-Dateien bestehen. Gesamtlogs:
 Die abgehakten Implementierungsschnitte sind damit lokal verifiziert; die getrennte
 fortgesetzte Modell-/Inhaltsabnahme bleibt offen. Insbesondere werden die übrigen
 ungültigen Aktionswerte und Qwens Patchvorschau-Konflikt nicht als behoben ausgewiesen.
+
+### Bekannte Identitäten als V4-Schemakonstanten (ADR-0083)
+
+Der aktuelle Vertrag setzt nur die fünf bekannten Step-/Worktree-/Spec-Felder sowie
+bei laufendem Versuch dessen Run-ID und den operationalen Verifikationscommand fest.
+Der Kontexttest war vor Implementation rot; Pending/InProgress und beide Grounding-
+Modi prüfen danach das gesamte exakte Schema, unveränderte übrige Felder, tatsächliche
+Bytes, deterministischen Digest und unverändertes Profil. Die Turnmatrix prüft nun
+16 Fälle einschließlich eines abweichenden Command im Primär- und Einzelrepair.
+
+Eingefroren: `agent-step-constants-20260907/agent-tests.exe`, SHA-256
+`430fdae06636362cd7fec70d38319657b63f2500fe7e2e07484d4aa6005c568f`.
+Lunas tatsächliches wiederholtes Schema wächst von 6681 auf 7045 Bytes; dieser
+Mehrbedarf wird im unveränderten 16384/2048-Profil vollständig gezählt.
+Alle fünf nachfolgenden Preflights gelingen. Die lokalen Modelle liefen strikt
+nacheinander; Einstellungen, Providerorigin und öffentliche Fixture blieben gleich.
+
+| Modell | Beobachteter echter Agent-Nachtest | Dauer |
+| --- | --- | --- |
+| Luna | Patch physisch korrekt, danach InvalidActionAfterRepair(InvalidValue), Failed Sequenz 24 | 34,55 s |
+| Qwen 8k | PatchPreview Conflict vor Änderung, Execute Sequenz 5 | 35,90 s |
+| Ornith | AwaitApproval Sequenz 7; Fixture verweigert Aktion außerhalb des exakt erlaubten Testumfangs | 31,33 s |
+| GPT-OSS | Zwei echte Tests Exit 1, dann ModelFailed(InvalidResponse), Failed Sequenz 21 | 29,59 s |
+| Granite | Zwei echte Tests Exit 1, dann InvalidReadResult, Failed Sequenz 26 | 36,19 s |
+
+Kein neuer Done-Nachweis. Luna, Qwen, GPT-OSS und Granite bestätigen zusätzlich
+physisch unveränderte geschützte Dateien; Ornith wird bereits vor der nicht erlaubten
+Freigabe gestoppt. Keine dieser Fehlerklassen beweist allein ihre genaue Unterursache.
+Die Schemakorrektur wird deshalb nicht als Behebung dieser Restfehler bewertet.
+Logs im eingefrorenen Verzeichnis, SHA-256:
+
+- `luna-live-1.log`: `9d9257dff4632439cc75d169286631d4b51c2704103654a4f1bd119ada519d02`
+- `qwen-live-1.log`: `5bb702ac8b2be1b9a8c99e14beb372d75fbe7ea00ff23e3026665be4f2bfb0bb`
+- `ornith-live-1.log`: `75fce45b71901ff57f50ed58c91b90d2f02f102ce1f26e4fa5c97a6cdc8abe66`
+- `gptoss-live-1.log`: `53411f0c33e21e568e58b3302a58ebec4c5cfd83820aa233ef51318e191098cf`
+- `granite-live-1.log`: `4ed0370688e22e969a02b1f639d19769047c977e2692afd8e3c745b65777d15f`
+
+Lokale Gates bestehen: sechs Context-Units, 13 Context-Integrationen, 68 gezielte
+Agent-Units (16 Ankerfälle), vollständiger Workspace mit allen Features offline/locked,
+Workspace-Clippy mit allen Targets/Features und -D warnings, Formatierung und
+Diff-/Markdown-Linkprüfung. Gesamtlogs: `agent-step-constants-workspace.log` und
+`agent-step-constants-clippy.log`. Keine neue Abhängigkeit, DB- oder Frontendänderung.

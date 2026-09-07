@@ -326,6 +326,15 @@ Decoder und seine einzige Reparatur an diese aktuellen Controller-IDs. Fremde
 Anker werden nicht erst als ausführbarer Modellvorschlag weitergereicht und
 auch nicht vom Core still ersetzt. Historische Schema-only-Decodierung bleibt erhalten.
 
+[ADR-0083](adrs/0083-bekannte-schrittidentitaeten-als-schemakonstanten.md) schränkt
+dieselben bereits bekannten IDs vor Retrieval zusätzlich als Literalkonstanten im
+aktuellen AgentAction-V4-Schema ein. Ein laufender operationaler Schritt bindet auch
+seine geplante Verifikationscommand-ID. Ohne entsprechenden Versuch oder operationalen
+Schritt werden keine Werte erfunden. Formatfeld und optionaler Schema-Grounding-Text
+enthalten denselben Vertrag; seine vollständigen tatsächlichen Bytes werden gezählt.
+Noch unbekannte Snapshot- und Dateihashwerte sowie gesonderte Replan-Schemata bleiben
+unverändert. Auch ein Provider, der Konstanten ignoriert, passiert den Decoder nicht.
+
 `ContextCompilerPolicyVersion::V5` behält den vollständigen kompakten L0-Repository-Anchor aus V2
 vor allen optionalen gerankten L1-/L2-Einträgen. Package- und Entrypointmengen erscheinen in L0 als
 Anzahlen; konkrete IDs werden nicht dort und später erneut bezahlt, sondern bleiben in den

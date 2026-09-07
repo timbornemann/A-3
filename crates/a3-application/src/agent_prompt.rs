@@ -92,6 +92,67 @@ impl AgentPromptContract {
         self.prepare_phase(profile, false)
     }
 
+    /// Restricts the current action contract to identities already owned by the Core.
+    /// Snapshot and file revisions remain independent runtime/freshness boundaries.
+    pub fn prepare_current_step(
+        profile: &ModelProfile,
+        project: &a3_domain::ProjectIdentity,
+        step: &a3_domain::TaskStep,
+    ) -> Result<PreparedAgentPrompt, AgentPromptPrepareError> {
+        let mut prepared = Self::current().prepare(profile)?;
+        let mut schema = prepared.structured_output.value().clone();
+        for (definition, field, value) in [
+            (
+                "applyPatch",
+                "worktree_id",
+                project.worktree().id().to_string(),
+            ),
+            ("applyPatch", "step_id", step.definition().id().to_string()),
+            (
+                "applyPatch",
+                "verification_spec_id",
+                step.definition().verification_spec().id().to_string(),
+            ),
+            ("run", "step_id", step.definition().id().to_string()),
+            (
+                "updateLedger",
+                "step_id",
+                step.definition().id().to_string(),
+            ),
+        ] {
+            bind_schema_identity(&mut schema, definition, field, value)?;
+        }
+        if let Some(attempt) = step.attempts().last() {
+            bind_schema_identity(
+                &mut schema,
+                "applyPatch",
+                "run_id",
+                attempt.run_id().to_string(),
+            )?;
+        }
+        if let Some(command) = crate::RequestAgentFinish.verification_command(step) {
+            bind_schema_identity(
+                &mut schema,
+                "run",
+                "command_id",
+                command.command_id().to_string(),
+            )?;
+        }
+        prepared.schema_grounding = match profile.settings().schema_grounding() {
+            ModelPromptSchemaGrounding::FormatFieldOnly => None,
+            ModelPromptSchemaGrounding::RepeatSchemaInPrompt => Some(
+                ModelMessage::try_from_string(
+                    ModelMessageRole::User,
+                    format!("The exact AgentAction V4 JSON Schema is:\n{schema}"),
+                )
+                .map_err(AgentPromptPrepareError::Message)?,
+            ),
+        };
+        prepared.structured_output =
+            StructuredOutputSchema::new(schema).map_err(AgentPromptPrepareError::ProviderSchema)?;
+        Ok(prepared)
+    }
+
     /// Prepares a V4 read-only localization request under the existing profile budget.
     pub fn prepare_replan_localization(
         self,
@@ -203,6 +264,22 @@ impl AgentPromptContract {
             structured_output,
         })
     }
+}
+
+fn bind_schema_identity(
+    schema: &mut serde_json::Value,
+    definition: &str,
+    field: &str,
+    value: String,
+) -> Result<(), AgentPromptPrepareError> {
+    let property = schema
+        .get_mut("$defs")
+        .and_then(|defs| defs.get_mut(definition))
+        .and_then(|definition| definition.get_mut("properties"))
+        .and_then(|properties| properties.get_mut(field))
+        .ok_or(AgentPromptPrepareError::SchemaEncoding)?;
+    *property = serde_json::json!({"const": value});
+    Ok(())
 }
 
 /// Validated prompt components ready to combine with an H7 Context Pack.

@@ -40,6 +40,15 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Bereits bekannte Schritt-/Run-/Worktree-/Spec- und Verifikationscommand-IDs im
+      aktuellen Modellschema festlegen; dieselbe Bindung unabhängig decodieren und live prüfen
+      ([ADR-0083](../adrs/0083-bekannte-schrittidentitaeten-als-schemakonstanten.md)).
+      Lokal vollständig verifiziert; fünf echte Nachtests gelaufen, die getrennten
+      InvalidValue-/Preview-/Provider-/Read-Restfehler sind weiterhin offen.
+
+- [ ] Verdeckte Aktionswert-/Patchkonfliktursachen inhaltsfrei unterscheiden,
+      regressionsprüfen und die konkret belegten Fortsetzungsfehler beheben.
+
 - [x] Modellaktionen vor Freigabe durch denselben Einzelrepair gegen aktuelle Core-Anker
       prüfen; falsche IDs niemals überschreiben und Sicherheitsgrenzen erneut prüfen
       ([ADR-0082](../adrs/0082-aktuelle-aktionsanker-innerhalb-des-einzelrepairs.md)).

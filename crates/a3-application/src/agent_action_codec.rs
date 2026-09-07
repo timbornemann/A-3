@@ -102,6 +102,7 @@ pub(crate) struct AgentActionTurnAnchors {
     snapshot: SnapshotId,
     step: TaskStepId,
     verification: VerificationSpecId,
+    command: Option<DiscoveredCommandId>,
 }
 
 impl AgentActionTurnAnchors {
@@ -118,7 +119,16 @@ impl AgentActionTurnAnchors {
             snapshot,
             step,
             verification,
+            command: None,
         }
+    }
+
+    pub(crate) const fn with_verification_command(
+        mut self,
+        command: Option<DiscoveredCommandId>,
+    ) -> Self {
+        self.command = command;
+        self
     }
 
     fn matches(self, action: &AgentAction) -> bool {
@@ -130,7 +140,12 @@ impl AgentActionTurnAnchors {
                     && patch.task_step_id() == self.step
                     && patch.verification_spec_id() == self.verification
             }
-            AgentAction::Run(command) => command.step_id() == self.step,
+            AgentAction::Run(command) => {
+                command.step_id() == self.step
+                    && self
+                        .command
+                        .is_none_or(|expected| command.command_id() == expected)
+            }
             AgentAction::UpdateLedger(update) => update.step_id() == self.step,
             AgentAction::Search(_) | AgentAction::Inspect(_) | AgentAction::Finish(_) => true,
         }
