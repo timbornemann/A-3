@@ -233,6 +233,75 @@ const FIXTURES: &[FixtureDefinition] = &[
 ];
 
 #[test]
+fn normal_context_materializes_real_originals_and_rejects_a_live_edit() -> Result<(), Box<dyn Error>>
+{
+    use a3_application::AgentContextCompiler;
+    run_libsql_test(async {
+        let fixture = IndexedFixture::new(FIXTURES[0]).await?;
+        let durable = DurableRun::new(&fixture).await?;
+        let compiler = DeterministicAgentContextCompiler::new(
+            CompileTaskLens::new(
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+            ),
+            &WorkspaceAgentSourceReader,
+        );
+        let input = durable.context_input(&fixture, Vec::new())?;
+        let before = compiler.compile(&input, &ActiveControl).await?;
+        let header = format!(
+            "[ORIGINAL_SOURCE path={} ",
+            fixture.definition.expected_path
+        );
+        let source_message = before
+            .request()
+            .messages()
+            .iter()
+            .find(|message| message.content().contains(&header))
+            .ok_or("original source missing")?;
+        let original = fixture
+            .definition
+            .files
+            .iter()
+            .find(|(path, _)| *path == fixture.definition.expected_path)
+            .ok_or("fixture source")?
+            .1;
+        let original_text = std::str::from_utf8(original)?;
+        // Actual implementation bytes, not merely the name already supplied by the goal.
+        let excerpt = source_message
+            .content()
+            .split(&header)
+            .nth(1)
+            .ok_or("source header")?
+            .split_once('\n')
+            .ok_or("source body")?
+            .1
+            .split("\n[/ORIGINAL_SOURCE]")
+            .next()
+            .ok_or("source body terminator")?;
+        assert!(!excerpt.trim().is_empty());
+        assert!(original_text.contains(excerpt));
+        assert_eq!(
+            fixture.repository_tree,
+            fixture.repository.repository_tree()?
+        );
+        assert_eq!(
+            before.digest(),
+            compiler.compile(&input, &ActiveControl).await?.digest()
+        );
+        fixture.repository.write(
+            fixture.definition.expected_path,
+            b"// changed after index publication\n",
+        )?;
+        assert!(matches!(
+            compiler.compile(&input, &ActiveControl).await,
+            Err(a3_application::ContextCompileFailure::StaleOrMismatchedInput)
+        ));
+        Ok(())
+    })
+}
+
+#[test]
 fn read_only_agent_reaches_verified_done_on_all_fixture_languages() -> Result<(), Box<dyn Error>> {
     run_libsql_test(async {
         for fixture in FIXTURES {
@@ -265,11 +334,14 @@ fn invalid_primary_and_repair_never_execute_the_real_read_tools() -> Result<(), 
             inner: actual_tools,
             calls: AtomicUsize::new(0),
         };
-        let compiler = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
-            fixture.store.as_ref(),
-            fixture.store.as_ref(),
-            fixture.store.as_ref(),
-        ));
+        let compiler = DeterministicAgentContextCompiler::new(
+            CompileTaskLens::new(
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+            ),
+            &a3_workspace::WorkspaceAgentSourceReader,
+        );
         let provider = StubModelProvider::new(
             durable.profile.provider_id().clone(),
             StubModelProviderBehavior::Events(provider_events("not-json")?),
@@ -367,11 +439,14 @@ fn controller_reads_real_flow_evidence_and_rejects_a_live_unindexed_edit()
             &source,
         )
         .with_function_flows(&flows);
-        let compiler = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
-            fixture.store.as_ref(),
-            fixture.store.as_ref(),
-            fixture.store.as_ref(),
-        ));
+        let compiler = DeterministicAgentContextCompiler::new(
+            CompileTaskLens::new(
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+            ),
+            &a3_workspace::WorkspaceAgentSourceReader,
+        );
         let provider = StubModelProvider::new(
             durable.profile.provider_id().clone(),
             StubModelProviderBehavior::Events(provider_events(&format!(
@@ -436,11 +511,14 @@ async fn evaluate_fixture(fixture: FixtureDefinition) -> Result<(), Box<dyn Erro
         fixture.store.as_ref(),
         &source,
     );
-    let compiler = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
-        fixture.store.as_ref(),
-        fixture.store.as_ref(),
-        fixture.store.as_ref(),
-    ));
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+        ),
+        &a3_workspace::WorkspaceAgentSourceReader,
+    );
 
     let search_provider = StubModelProvider::new(
         durable.profile.provider_id().clone(),

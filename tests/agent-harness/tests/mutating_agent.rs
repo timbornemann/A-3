@@ -92,11 +92,14 @@ fn patch_waits_for_approval_then_reindexes_before_compiling_context() -> Result<
         )?;
 
         let refresh = refresh(fixture.store.clone());
-        let context = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
-            fixture.store.as_ref(),
-            fixture.store.as_ref(),
-            fixture.store.as_ref(),
-        ));
+        let context = DeterministicAgentContextCompiler::new(
+            CompileTaskLens::new(
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+            ),
+            &a3_workspace::WorkspaceAgentSourceReader,
+        );
         let coordinator = WorktreeMutationCoordinator::new();
         let patch_tool = WorkspacePatchAdapter::new();
         let process_runner = FailingProcessRunner::default();
@@ -446,11 +449,14 @@ fn approval_denial_blocks_the_exact_step_without_a_tool_effect() -> Result<(), B
         )?;
 
         let refresh = refresh(fixture.store.clone());
-        let context = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
-            fixture.store.as_ref(),
-            fixture.store.as_ref(),
-            fixture.store.as_ref(),
-        ));
+        let context = DeterministicAgentContextCompiler::new(
+            CompileTaskLens::new(
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+            ),
+            &a3_workspace::WorkspaceAgentSourceReader,
+        );
         let coordinator = WorktreeMutationCoordinator::new();
         let patch_tool = WorkspacePatchAdapter::new();
         let process_runner = FailingProcessRunner::default();
@@ -620,11 +626,14 @@ fn diff_patch_completes_step_only_after_typed_current_verification() -> Result<(
             )?)],
         )?;
         let refresh = refresh(fixture.store.clone());
-        let context = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
-            fixture.store.as_ref(),
-            fixture.store.as_ref(),
-            fixture.store.as_ref(),
-        ));
+        let context = DeterministicAgentContextCompiler::new(
+            CompileTaskLens::new(
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+            ),
+            &a3_workspace::WorkspaceAgentSourceReader,
+        );
         let coordinator = WorktreeMutationCoordinator::new();
         let patch_tool = WorkspacePatchAdapter::new();
         let process_runner = FailingProcessRunner::default();
@@ -753,11 +762,14 @@ fn patch_conflict_is_not_applied_and_preserves_foreign_content() -> Result<(), B
             )?)],
         )?;
         let refresh = refresh(fixture.store.clone());
-        let context = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
-            fixture.store.as_ref(),
-            fixture.store.as_ref(),
-            fixture.store.as_ref(),
-        ));
+        let context = DeterministicAgentContextCompiler::new(
+            CompileTaskLens::new(
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+            ),
+            &a3_workspace::WorkspaceAgentSourceReader,
+        );
         let coordinator = WorktreeMutationCoordinator::new();
         let real_patch = WorkspacePatchAdapter::new();
         let patch_tool = ConflictingPatchTool {
@@ -893,11 +905,14 @@ fn crash_between_patch_and_journal_requires_full_scan_then_replan() -> Result<()
             )?)],
         )?;
         let refresh = refresh(fixture.store.clone());
-        let context = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
-            fixture.store.as_ref(),
-            fixture.store.as_ref(),
-            fixture.store.as_ref(),
-        ));
+        let context = DeterministicAgentContextCompiler::new(
+            CompileTaskLens::new(
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+            ),
+            &a3_workspace::WorkspaceAgentSourceReader,
+        );
         let coordinator = WorktreeMutationCoordinator::new();
         let patch_tool = WorkspacePatchAdapter::new();
         let process_runner = FailingProcessRunner::default();
@@ -1162,11 +1177,14 @@ fn recovery_store_unavailable_or_corrupt_never_opens_process_boundary() -> Resul
             let action = AgentAction::Run(AgentRunAction::new(step_id, command.id()));
             let selection = MutationCommandSelection::new(&catalog, &confirmation);
             let refresh = refresh(fixture.store.clone());
-            let context = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
-                fixture.store.as_ref(),
-                fixture.store.as_ref(),
-                fixture.store.as_ref(),
-            ));
+            let context = DeterministicAgentContextCompiler::new(
+                CompileTaskLens::new(
+                    fixture.store.as_ref(),
+                    fixture.store.as_ref(),
+                    fixture.store.as_ref(),
+                ),
+                &a3_workspace::WorkspaceAgentSourceReader,
+            );
             let coordinator = WorktreeMutationCoordinator::new();
             let patch_tool = WorkspacePatchAdapter::new();
             let process_runner = FailingProcessRunner::default();
@@ -1289,11 +1307,14 @@ fn process_failure_timeout_and_cancellation_have_explicit_dispositions()
             let action = AgentAction::Run(AgentRunAction::new(step_id, command.id()));
             let selection = MutationCommandSelection::new(&catalog, &confirmation);
             let refresh = refresh(fixture.store.clone());
-            let context = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
-                fixture.store.as_ref(),
-                fixture.store.as_ref(),
-                fixture.store.as_ref(),
-            ));
+            let context = DeterministicAgentContextCompiler::new(
+                CompileTaskLens::new(
+                    fixture.store.as_ref(),
+                    fixture.store.as_ref(),
+                    fixture.store.as_ref(),
+                ),
+                &a3_workspace::WorkspaceAgentSourceReader,
+            );
             let coordinator = WorktreeMutationCoordinator::new();
             let patch_tool = WorkspacePatchAdapter::new();
             let process_runner = ScriptedProcessRunner::new(mode);
@@ -1428,11 +1449,14 @@ fn one_worktree_lock_and_repeated_failed_run_force_replan() -> Result<(), Box<dy
         let action = AgentAction::Run(AgentRunAction::new(step_id, command.id()));
         let selection = MutationCommandSelection::new(&catalog, &confirmation);
         let refresh = refresh(fixture.store.clone());
-        let context = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
-            fixture.store.as_ref(),
-            fixture.store.as_ref(),
-            fixture.store.as_ref(),
-        ));
+        let context = DeterministicAgentContextCompiler::new(
+            CompileTaskLens::new(
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+            ),
+            &a3_workspace::WorkspaceAgentSourceReader,
+        );
         let coordinator = WorktreeMutationCoordinator::new();
         let patch_tool = WorkspacePatchAdapter::new();
         let process_runner = FailingProcessRunner::default();

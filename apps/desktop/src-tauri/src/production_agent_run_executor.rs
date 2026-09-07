@@ -173,11 +173,14 @@ impl ProductionAgentRunExecutor {
             &source,
         )
         .with_function_flows(&flows);
-        let context_compiler = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
-            self.ports.lens_index.as_ref(),
-            self.ports.search.as_ref(),
-            self.ports.claims.as_ref(),
-        ));
+        let context_compiler = DeterministicAgentContextCompiler::new(
+            CompileTaskLens::new(
+                self.ports.lens_index.as_ref(),
+                self.ports.search.as_ref(),
+                self.ports.claims.as_ref(),
+            ),
+            &source,
+        );
         let refresh = RefreshRepositoryIndex::new(
             Arc::new(Blake3RepositorySnapshotBuilder::new()),
             Arc::clone(&self.ports.index),

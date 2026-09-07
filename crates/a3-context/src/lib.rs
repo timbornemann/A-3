@@ -2,6 +2,7 @@
 
 mod agent_read_tools;
 mod digest;
+mod originals;
 mod security;
 
 pub use agent_read_tools::DeterministicAgentReadTools;
@@ -39,13 +40,17 @@ const CODE_AND_EVIDENCE_HEADER: &str = "[CODE_AND_EVIDENCE]\n";
 #[derive(Debug, Clone, Copy)]
 pub struct DeterministicAgentContextCompiler<'a> {
     task_lens: CompileTaskLens<'a>,
+    source: &'a dyn a3_application::AgentSourceReader,
 }
 
 impl<'a> DeterministicAgentContextCompiler<'a> {
     /// Uses the existing exact through optional-semantic Task Lens as the sole Retrieve/Rank path.
     #[must_use]
-    pub const fn new(task_lens: CompileTaskLens<'a>) -> Self {
-        Self { task_lens }
+    pub const fn new(
+        task_lens: CompileTaskLens<'a>,
+        source: &'a dyn a3_application::AgentSourceReader,
+    ) -> Self {
+        Self { task_lens, source }
     }
 
     async fn execute(
@@ -224,13 +229,27 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
                 )
             })
             .map_err(ContextCompileFailure::Budget)?;
-        // Current investigation obligations precede optional historical summaries.
+        report(control, ContextCompilePhase::Pack)?;
+        let originals = originals::materialize(
+            self.source,
+            input,
+            &lens,
+            budget_plan
+                .allowance(ContextSection::CodeAndEvidence)
+                .saturating_sub(mandatory_evidence_tokens)
+                / 2,
+            control,
+        )
+        .await?;
+        // Current obligations and current originals precede optional historical summaries.
         let mut run_memory = pack_run_memory(
             input.run_memory(),
             &lens,
             profile,
             budget_plan,
-            mandatory_research_tokens,
+            mandatory_research_tokens
+                .checked_add(originals.tokens)
+                .ok_or(ContextCompileFailure::InvalidPack)?,
             mandatory_memory,
         )?;
         if !replan_contract.is_empty() {
@@ -245,7 +264,9 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
         }
         if let Some(work) = &work {
             let allowance = budget_plan.allowance(ContextSection::CodeAndEvidence);
-            let reserved = count(profile, CODE_AND_EVIDENCE_HEADER)?;
+            let reserved = count(profile, CODE_AND_EVIDENCE_HEADER)?
+                .checked_add(originals.tokens)
+                .ok_or(ContextCompileFailure::InvalidPack)?;
             append_mandatory_memory_item(
                 &mut run_memory.text,
                 &mut run_memory.tokens,
@@ -290,7 +311,6 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
         }
 
         check_cancelled(control)?;
-        report(control, ContextCompilePhase::Pack)?;
         if system_tokens > budget_plan.allowance(ContextSection::SystemAndTools) {
             return Err(ContextCompileFailure::Budget(
                 a3_domain::ContextBudgetError::SectionExceeded {
@@ -303,6 +323,7 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
 
         let packed = pack_ranked_context(
             &lens,
+            &originals,
             &run_memory.claim_ids,
             run_memory.tokens,
             input.tool_results(),
@@ -934,6 +955,7 @@ fn mandatory_project_tokens(
 
 fn pack_ranked_context(
     lens: &TaskLens,
+    originals: &originals::PackedOriginals,
     run_memory_claim_ids: &BTreeSet<ModuleCardClaimId>,
     run_memory_tokens: u32,
     tool_results: &[ContextToolResult],
@@ -942,6 +964,7 @@ fn pack_ranked_context(
 ) -> Result<PackedSections, ContextCompileFailure> {
     let mut project_map = String::from("[PROJECT_MAP]\n");
     let mut code_and_evidence = String::from(CODE_AND_EVIDENCE_HEADER);
+    code_and_evidence.push_str(&originals.text);
     let framing_reserve = project_framing_tokens(lens, profile)?;
     let mut project_tokens = count(profile, &project_map)?
         .checked_add(framing_reserve)
@@ -951,7 +974,7 @@ fn pack_ranked_context(
         .ok_or(ContextCompileFailure::InvalidPack)?;
     let mut target_keys = BTreeSet::new();
     let mut spans = Vec::new();
-    let mut truncated = false;
+    let mut truncated = originals.truncated;
 
     // The repository card is the untruncatable L0 project anchor. Retrieval rank can place an
     // optional L1 module before it, so reserve L0 first while preserving rank within both groups.
@@ -1031,8 +1054,13 @@ fn pack_ranked_context(
         code_tokens = next;
     }
 
-    let (tool_results, tool_tokens, tool_truncated) =
-        pack_tool_results(tool_results, lens.snapshot_id(), profile, budget)?;
+    let (tool_results, tool_tokens, tool_truncated) = pack_tool_results(
+        tool_results,
+        lens.snapshot_id(),
+        profile,
+        budget,
+        originals.replan,
+    )?;
     truncated |= tool_truncated;
     let pack_state = render_pack_state(lens, truncated);
     let actual_framing = count(profile, CONTEXT_PACK_HEADER)?
@@ -1059,6 +1087,7 @@ fn pack_tool_results(
     snapshot_id: SnapshotId,
     profile: &ModelProfile,
     budget: ContextBudgetPlan,
+    replan: bool,
 ) -> Result<(String, u32, bool), ContextCompileFailure> {
     let header = String::from("[TOOL_RESULTS]\n");
     let header_tokens = count(profile, &header)?;
@@ -1074,7 +1103,17 @@ fn pack_tool_results(
             truncated = true;
             continue;
         }
-        let rendered = render_tool_result(result);
+        let rendered = if !replan && result.original_source().is_some() {
+            format!(
+                "tool sequence={} id={} status={} digest={} original_preview=omitted; only ORIGINAL_SOURCE contains freshly delivered source\n",
+                result.sequence().get(),
+                result.tool_run_id(),
+                tool_status(result.status()),
+                result.digest()
+            )
+        } else {
+            render_tool_result(result)
+        };
         reject_secret_candidate(&rendered)?;
         let cost = count(profile, &rendered)?;
         let next = tokens

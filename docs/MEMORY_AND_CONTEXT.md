@@ -1,5 +1,20 @@
 # Memory System und Context Compiler
 
+## Ergänzung: Originalquellen im normalen Agententurn
+
+[ADR-0093](adrs/0093-originalquellen-im-agentenkontext.md) ergänzt Context-Policy V7:
+Der Compiler materialisiert vor optionaler Historie bis zu zwei ausgewählte aktuelle
+Quellseiten über den bestehenden Safe-Reader-Port. Tatsächliche jüngste Originalmarker
+haben Vorrang vor der vorhandenen Task-Lens-Rangfolge. Pro Datei gelten 64 vollständige
+Zeilen und 12 KiB; alle Reads teilen zehn Sekunden kooperative Frist und Cancellation.
+Nur vollständig ins halbe verbleibende CodeAndEvidence-Budget passende Seiten gelangen
+mit Pfad, Hash, echtem Bereich und Fortsetzung ins Pack. Der Kontextdigest bindet
+ihre tatsächlichen Bytes. Alte Original-Toolpreviews werden durch Metadaten ersetzt.
+Nicht gelieferte Quellen bleiben Lücken, veraltete oder inkonsistente Quellen sperren
+die Aufnahme. Es werden keine neuen Originalbytes persistiert. Replan erhält keine
+automatischen Reads: seine bestehenden Originalpakete, Quittungen und Budgets bleiben
+allein maßgeblich. Kontextmaterialisierung autorisiert weder Mutation noch Abschluss.
+
 ## Ergänzung: Core-Planpflichten und rungebundene Recherche
 
 [ADR-0048](adrs/0048-rungebundene-replan-recherche.md) bindet die Replan-Recherche an

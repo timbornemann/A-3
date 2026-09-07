@@ -118,8 +118,10 @@ fn execution_receipt_is_mandatory_counted_deterministic_and_not_verification()
         module_id: fixture.module_id,
         calls: &calls,
     };
-    let compiler =
-        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(&store, &store, &store),
+        &UnavailableSource,
+    );
     for (context, output) in [(8192, 2048), (16384, 4096)] {
         let (base, run, events, attempt) = receipt_fixture(fixture.snapshot_id, context, output)?;
         let before = block_on(compiler.compile(&base, &RecordingControl::default()))?;
@@ -291,8 +293,10 @@ fn execution_receipt_rejects_foreign_run_ledger_project_and_stale_publication()
         module_id: fixture.module_id,
         calls: &calls,
     };
-    let compiler =
-        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(&store, &store, &store),
+        &UnavailableSource,
+    );
     assert!(matches!(
         block_on(compiler.compile(
             &stale_input.with_execution_checkpoint(stale)?,

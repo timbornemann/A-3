@@ -156,6 +156,13 @@ impl AgentReadResult {
             Some(RunEventSubject::Tool(self.tool_run_id)),
             observed_at,
         )?;
+        let original_source = self.original_evidence.and_then(|id| {
+            self.evidence
+                .evidence()
+                .iter()
+                .find(|item| item.id() == id)
+                .cloned()
+        });
         let context_result = ContextToolResult::new(
             event.sequence(),
             self.tool_run_id,
@@ -165,7 +172,8 @@ impl AgentReadResult {
             self.truncated,
             self.snapshot_id,
             self.snapshot_id,
-        );
+        )
+        .with_original_source(original_source);
         Ok(RecordedAgentRead {
             event,
             context_result,

@@ -70,11 +70,14 @@ pub(super) async fn evaluate() -> Result<CodingEvalResult, Box<dyn Error>> {
     .await?;
 
     let refresh = refresh(fixture.store.clone());
-    let context = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
-        fixture.store.as_ref(),
-        fixture.store.as_ref(),
-        fixture.store.as_ref(),
-    ));
+    let context = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+        ),
+        &a3_workspace::WorkspaceAgentSourceReader,
+    );
     let coordinator = WorktreeMutationCoordinator::new();
     let patch_tool = WorkspacePatchAdapter::new();
     let process_runner = WorkspaceProcessRunner::new(process_environment()?);

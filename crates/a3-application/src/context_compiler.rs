@@ -183,6 +183,7 @@ pub struct ContextToolResult {
     truncated: bool,
     snapshot_before: SnapshotId,
     snapshot_after: SnapshotId,
+    original_source: Option<a3_domain::AgentToolEvidence>,
 }
 
 impl ContextToolResult {
@@ -208,6 +209,7 @@ impl ContextToolResult {
             truncated,
             snapshot_before,
             snapshot_after,
+            original_source: None,
         }
     }
 
@@ -257,6 +259,20 @@ impl ContextToolResult {
     #[must_use]
     pub const fn snapshot_after(&self) -> SnapshotId {
         self.snapshot_after
+    }
+
+    /// Source locator from an actual reader page, never inferred from preview text.
+    #[must_use]
+    pub const fn original_source(&self) -> Option<&a3_domain::AgentToolEvidence> {
+        self.original_source.as_ref()
+    }
+
+    pub(crate) fn with_original_source(
+        mut self,
+        source: Option<a3_domain::AgentToolEvidence>,
+    ) -> Self {
+        self.original_source = source;
+        self
     }
 }
 
@@ -698,7 +714,8 @@ impl fmt::Debug for CompiledAgentContext {
 
 /// Inbound port implemented by the deterministic `a3-context` feature.
 pub trait AgentContextCompiler: fmt::Debug + Send + Sync {
-    /// Compiles a fresh context and provider request without invoking a model or tool.
+    /// Compiles a fresh request without invoking a model or executing an agent action.
+    /// Selected originals may be materialized through the bounded read-only source port.
     fn compile<'a>(
         &'a self,
         input: &'a AgentContextCompileInput,

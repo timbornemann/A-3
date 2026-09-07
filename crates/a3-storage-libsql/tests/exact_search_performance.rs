@@ -57,6 +57,20 @@ const CONTEXT_COMPILE_P95_TARGET: Duration = Duration::from_millis(300);
 #[derive(Debug)]
 struct SilentControl;
 
+// This synthetic index/metadata benchmark has no corresponding source files.
+// It does not measure production source materialization or filesystem latency.
+impl a3_application::AgentSourceReader for SilentControl {
+    fn read_page<'a>(
+        &'a self,
+        _: &'a ProjectIdentity,
+        _: &'a FileRevision,
+        _: &'a a3_domain::AgentFileInspection,
+        _: &'a dyn a3_application::AgentSourceReadControl,
+    ) -> a3_application::AgentSourceReaderFuture<'a> {
+        Box::pin(async { Err(a3_application::AgentSourceReadFailure::Unavailable) })
+    }
+}
+
 impl KnowledgeSearchControl for SilentControl {
     fn is_cancelled(&self) -> bool {
         false
@@ -189,10 +203,12 @@ fn exact_symbol_search_meets_the_100_millisecond_p95_target() -> Result<(), Box<
                 &SilentControl,
             )
             .await?;
-        let _warm_context =
-            DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store))
-                .compile(&context_input, &SilentControl)
-                .await?;
+        let _warm_context = DeterministicAgentContextCompiler::new(
+            CompileTaskLens::new(&store, &store, &store),
+            &SilentControl,
+        )
+        .compile(&context_input, &SilentControl)
+        .await?;
 
         let mut baseline_samples = Vec::with_capacity(BASELINE_SAMPLES);
         for _ in 0..BASELINE_SAMPLES {
@@ -265,9 +281,10 @@ fn exact_symbol_search_meets_the_100_millisecond_p95_target() -> Result<(), Box<
         let mut context_compile_samples = Vec::with_capacity(CONTEXT_COMPILE_SAMPLES);
         for _ in 0..CONTEXT_COMPILE_SAMPLES {
             let started = Instant::now();
-            let context = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
-                &store, &store, &store,
-            ))
+            let context = DeterministicAgentContextCompiler::new(
+                CompileTaskLens::new(&store, &store, &store),
+                &SilentControl,
+            )
             .compile(&context_input, &SilentControl)
             .await?;
             context_compile_samples.push(started.elapsed());

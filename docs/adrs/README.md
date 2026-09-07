@@ -117,6 +117,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0090](0090-wertgebundene-claim-leseidentitaeten.md) | Wertgebundene Claim-Leseidentitäten |
 | [0091](0091-statusfreie-replan-lokalisierung.md) | Statusfreie Replan-Lokalisierung |
 | [0092](0092-dauerhafter-replan-belegbedarf.md) | Dauerhafter typisierter Replan-Belegbedarf |
+| [0093](0093-originalquellen-im-agentenkontext.md) | Begrenzte Originalquellen im normalen Agentenkontext |
 
 ## Neue ADRs
 

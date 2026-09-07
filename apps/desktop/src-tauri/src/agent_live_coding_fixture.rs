@@ -40,6 +40,25 @@ const FILES: [(&str, &str); 5] = [
     ),
 ];
 
+fn original_preflight_delivered(text: &str) -> bool {
+    text.contains("[ORIGINAL_SOURCE path=increment.py ") && text.contains(FILES[0].1.trim_end())
+}
+
+#[test]
+fn original_preflight_checks_actual_typed_fixture_body() {
+    let current = format!(
+        "[ORIGINAL_SOURCE path=increment.py hash=fixture]\n{}\n[/ORIGINAL_SOURCE]",
+        FILES[0].1
+    );
+    assert!(original_preflight_delivered(&current));
+    assert!(!original_preflight_delivered(
+        "L3 file path=increment.py hash=fixture"
+    ));
+    assert!(!original_preflight_delivered(
+        "[ORIGINAL_SOURCE path=increment.py hash=fixture]\ndef increment(value):\n    return value + 2"
+    ));
+}
+
 #[derive(Debug)]
 struct ReadOnlySettings(StoredDesktopSettings);
 
@@ -471,11 +490,10 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
             .await?;
     }
     let inspection = Arc::new(AgentInspectionBuffer::new());
-    let preflight = a3_context::DeterministicAgentContextCompiler::new(CompileTaskLens::new(
-        store.as_ref(),
-        store.as_ref(),
-        store.as_ref(),
-    ));
+    let preflight = a3_context::DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(store.as_ref(), store.as_ref(), store.as_ref()),
+        &a3_workspace::WorkspaceAgentSourceReader,
+    );
     let prompt = AgentPromptContract::prepare_current_step(
         &live.profile,
         &project,
@@ -501,7 +519,39 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
     )?;
     // A diagnostic compile must not complete the production attempt's monotone progress.
     match preflight.compile(&input, &PreflightControl(control)).await {
-        Ok(_) => println!("A3_LIVE_CODING context_preflight=passed"),
+        Ok(compiled) => {
+            let original_delivered = compiled
+                .request()
+                .messages()
+                .iter()
+                .any(|message| original_preflight_delivered(message.content()));
+            if !original_delivered {
+                println!(
+                    "A3_LIVE_CODING preflight_code_allowance={} prompt_tokens={}",
+                    compiled
+                        .budget_plan()
+                        .allowance(a3_domain::ContextSection::CodeAndEvidence),
+                    compiled.budget_usage().prompt_total()
+                );
+                // Only known public-fixture source metadata; never print a model response or credentials.
+                for line in compiled
+                    .request()
+                    .messages()
+                    .iter()
+                    .flat_map(|m| m.content().lines())
+                    .filter(|line| {
+                        line.starts_with("L3 ")
+                            || line.starts_with("L2 ")
+                            || line.starts_with("[ORIGINAL_SOURCE ")
+                    })
+                    .take(16)
+                {
+                    println!("A3_LIVE_CODING preflight_source={line}");
+                }
+                return Err("normal agent preflight omitted the current original source".into());
+            }
+            println!("A3_LIVE_CODING context_preflight=passed original_source=delivered");
+        }
         Err(error) => {
             println!("A3_LIVE_CODING context_preflight={error:?}");
             return Err(error.into());

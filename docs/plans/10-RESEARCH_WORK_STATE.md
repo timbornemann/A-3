@@ -40,6 +40,15 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Begrenzte aktuelle Originalversorgung des normalen Agenten nach
+      [ADR-0093](../adrs/0093-originalquellen-im-agentenkontext.md) umsetzen und
+      mit echtem Safe Reader, vollständigen Gates und Modellnachläufen prüfen;
+      Replan-Budgets und unabhängige Implementierungsverifikation unverändert lassen.
+      V7, Safe-Reader-/Budget-/Provenienzregressionen und alle lokalen Gates sind
+      geprüft. Sechs Coding-Lives erhalten aktuelle Originale, nur Luna besteht
+      die Umsetzung. Luna-/Ornith-Ask-/Plan-Matrizen enden jeweils 12/12 ohne
+      Nutzerhalt; lokale Coding- und inhaltliche Praxisabnahme bleiben offen.
+
 - [x] Falsche Aktions-/Patchwahl anhand eines öffentlichen, nicht ausführenden
       Wirevergleichs von flachen und Kind-zuerst-Umschlägen untersuchen. Identische
       Auswahl und Anker, begrenzte gegenbalancierte Aufrufe, keine Repairs oder
@@ -73,7 +82,7 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
       sind ausgewertet; die getrennte inhaltliche und lokale Coding-Abnahme bleibt offen.
 
 - [ ] Die verbleibenden Grenzen aus dem ADR-0092-Nachtest gezielt auflösen:
-      tatsächliche Originalversorgung im normalen Agentkontext und vorzeitige
+      nach nun nachgewiesener Originalversorgung die vorzeitige
       Blockierung ohne Patch untersuchen; Granites V7-Wertfehler vor weiteren
       Schemaänderungen genau klassifizieren. Audit-Aussagen über nicht gelieferte
       Callee-Effekte sowie erfundene Inline-Zeilenangaben gesondert gegen Originale

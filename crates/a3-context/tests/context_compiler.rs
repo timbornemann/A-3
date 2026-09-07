@@ -3,6 +3,9 @@
 #[path = "support/execution_checkpoint.rs"]
 mod execution_checkpoint;
 
+#[path = "support/originals.rs"]
+mod originals;
+
 use a3_application::{
     AgentContextCompileInput, AgentContextCompiler, CompileTaskLens, ContextCompileControl,
     ContextCompileFailure, ContextCompilePhase, KnowledgeSearchControl, KnowledgeSearchFailure,
@@ -47,6 +50,22 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
+/// Existing metadata/packing fixtures intentionally do not pretend to provide originals.
+#[derive(Debug)]
+struct UnavailableSource;
+
+impl a3_application::AgentSourceReader for UnavailableSource {
+    fn read_page<'a>(
+        &'a self,
+        _: &'a ProjectIdentity,
+        _: &'a FileRevision,
+        _: &'a a3_domain::AgentFileInspection,
+        _: &'a dyn a3_application::AgentSourceReadControl,
+    ) -> a3_application::AgentSourceReaderFuture<'a> {
+        Box::pin(async { Err(a3_application::AgentSourceReadFailure::Unavailable) })
+    }
+}
+
 #[test]
 fn replan_localization_is_in_the_counted_anchor_digest_and_restricted_schema()
 -> Result<(), Box<dyn Error>> {
@@ -58,8 +77,10 @@ fn replan_localization_is_in_the_counted_anchor_digest_and_restricted_schema()
         module_id: fixture.module_id,
         calls: &calls,
     };
-    let compiler =
-        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(&store, &store, &store),
+        &UnavailableSource,
+    );
     let normal = input(fixture.snapshot_id)?;
     let localized =
         normal
@@ -118,8 +139,10 @@ fn replan_shared_analysis_packs_actual_originals_and_v7_without_mutation_schema(
         module_id: fixture.module_id,
         calls: &calls,
     };
-    let compiler =
-        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(&store, &store, &store),
+        &UnavailableSource,
+    );
     let normal = input(fixture.snapshot_id)?;
     let reason =
         a3_domain::TaskReplanReason::try_from_string("Find the serializer source".to_owned())?;
@@ -268,8 +291,10 @@ fn replan_originals_reserve_space_before_optional_run_summaries() -> Result<(), 
         module_id: fixture.module_id,
         calls: &calls,
     };
-    let compiler =
-        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(&store, &store, &store),
+        &UnavailableSource,
+    );
     let historical = "historical optional summary ".repeat(110);
     let (normal, _, _) = input_with_run_memory(&fixture, &historical)?;
     let before = block_on(compiler.compile(&normal, &RecordingControl::default()))?;
@@ -359,8 +384,10 @@ fn executable_context_supplies_exact_current_patch_run_and_worktree_ids()
         Vec::new(),
         Vec::new(),
     )?;
-    let compiler =
-        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(&store, &store, &store),
+        &UnavailableSource,
+    );
     let compiled = block_on(compiler.compile(&input, &RecordingControl::default()))?;
     let pack = compiled
         .request()
@@ -387,8 +414,10 @@ fn current_step_constants_match_provider_schema_and_exact_grounding() -> Result<
         module_id: fixture.module_id,
         calls: &calls,
     };
-    let compiler =
-        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(&store, &store, &store),
+        &UnavailableSource,
+    );
     for grounding in [
         ModelPromptSchemaGrounding::FormatFieldOnly,
         ModelPromptSchemaGrounding::RepeatSchemaInPrompt,
@@ -506,8 +535,10 @@ fn small_context_and_low_output_keep_full_mandatory_anchors() -> Result<(), Box<
         module_id: fixture.module_id,
         calls: &calls,
     };
-    let compiler =
-        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(&store, &store, &store),
+        &UnavailableSource,
+    );
     let base = input(fixture.snapshot_id)?;
     for (context, output, grounding) in [
         (8_192, 2_048, ModelPromptSchemaGrounding::FormatFieldOnly),
@@ -599,15 +630,17 @@ fn context_pack_is_fresh_bounded_and_deterministic() -> Result<(), Box<dyn Error
     };
     let input = input(fixture.snapshot_id)?;
     let control = RecordingControl::default();
-    let compiler =
-        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(&store, &store, &store),
+        &UnavailableSource,
+    );
 
     let first = block_on(compiler.compile(&input, &control))?;
     let second = block_on(compiler.compile(&input, &RecordingControl::default()))?;
 
     assert_eq!(first.digest(), second.digest());
     assert_eq!(first.request(), second.request());
-    assert_eq!(first.policy_version(), ContextCompilerPolicyVersion::V6);
+    assert_eq!(first.policy_version(), ContextCompilerPolicyVersion::V7);
     assert_eq!(first.snapshot_id(), fixture.snapshot_id);
     assert_eq!(first.excluded_stale_claims(), 1);
     assert_eq!(first.budget_plan().context_limit(), 16_384);
@@ -682,8 +715,10 @@ fn research_handoff_is_digest_bound_and_rejected_after_anchor_change() -> Result
         module_id: fixture.module_id,
         calls: &calls,
     };
-    let compiler =
-        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(&store, &store, &store),
+        &UnavailableSource,
+    );
     let revision = fixture.published.publication().graph().files()[0].clone();
     let handoff = ResearchHandoff::new(
         fixture.published.run().id(),
@@ -799,8 +834,10 @@ fn run_memory_reinjects_original_sources_without_duplicate_claims() -> Result<()
     };
     let (input, memory_digest, run_sequence) =
         input_with_run_memory(&fixture, "completed H7 groundwork")?;
-    let compiler =
-        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(&store, &store, &store),
+        &UnavailableSource,
+    );
 
     let first = block_on(compiler.compile(&input, &RecordingControl::default()))?;
     let repeated = block_on(compiler.compile(&input, &RecordingControl::default()))?;
@@ -851,8 +888,10 @@ fn run_memory_secret_candidate_never_reaches_provider_request() -> Result<(), Bo
         calls: &calls,
     };
     let (input, _, _) = input_with_run_memory(&fixture, "AKIAIOSFODNN7EXAMPLE")?;
-    let compiler =
-        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(&store, &store, &store),
+        &UnavailableSource,
+    );
 
     let result = block_on(compiler.compile(&input, &RecordingControl::default()));
 
@@ -873,8 +912,10 @@ fn mandatory_repository_anchor_survives_large_goal_and_open_memory() -> Result<(
         module_id: fixture.module_id,
         calls: &calls,
     };
-    let compiler =
-        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(&store, &store, &store),
+        &UnavailableSource,
+    );
     let profile = profile_with_grounding(
         16_384,
         2_048,
@@ -915,8 +956,10 @@ fn repeated_schema_reserves_open_failure_memory_before_optional_sections()
         module_id: fixture.module_id,
         calls: &calls,
     };
-    let compiler =
-        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(&store, &store, &store),
+        &UnavailableSource,
+    );
     let profile = profile_with_grounding(
         16_384,
         2_048,
@@ -971,8 +1014,10 @@ fn cancellation_stops_before_retrieval() -> Result<(), Box<dyn Error>> {
         cancelled: true,
         phases: Mutex::new(Vec::new()),
     };
-    let compiler =
-        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(&store, &store, &store),
+        &UnavailableSource,
+    );
     let result = block_on(compiler.compile(&input(fixture.snapshot_id)?, &control));
 
     assert!(matches!(result, Err(ContextCompileFailure::Cancelled)));

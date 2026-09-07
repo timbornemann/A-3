@@ -37,7 +37,10 @@ impl ContextCompilerPolicyVersion {
     pub const V6: Self = Self(6);
 
     /// Policy emitted by the current deterministic compiler implementation.
-    pub const CURRENT: Self = Self::V6;
+    pub const CURRENT: Self = Self::V7;
+
+    /// ADR-0093 materializes bounded current originals before optional context.
+    pub const V7: Self = Self(7);
 
     /// Returns the stable persisted integer.
     #[must_use]
@@ -477,7 +480,7 @@ mod tests {
     fn sixteen_k_budget_keeps_v5_allocation_under_v6_rendering() -> Result<(), Box<dyn Error>> {
         assert_eq!(
             ContextCompilerPolicyVersion::CURRENT,
-            ContextCompilerPolicyVersion::V6
+            ContextCompilerPolicyVersion::V7
         );
         let plan = ContextBudgetPlan::for_profile(&profile(16_384, 4_096)?)?;
         assert_eq!(plan.allowance(ContextSection::SystemAndTools), 900);

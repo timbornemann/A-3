@@ -1,5 +1,125 @@
 # Plan 10: Verifikationsprotokoll
 
+## 2026-09-07: Aktuelle Originalquellen im normalen Agenten (ADR-0093)
+
+Ausgangspunkt `6cbbd97`. Die Codeinspektion belegt den bisherigen reinen
+Metadatenpfad der normalen Task Lens. Die erste zusätzliche Live-Vorprüfung
+war jedoch selbst fehlerhaft: Sie suchte eine nicht typisierte Funktionssignatur,
+während die öffentliche Fixture `def increment(value: int) -> int:` enthält.
+Ihre roten Logs (`original-context-preflight-red-visible.log` und der erste
+`original-context-20260907/luna-coding.log`) sind deshalb **kein unabhängiger
+Nachweis** einer fehlenden Originalversorgung. Der erste Log ohne
+`RUST_TEST_NOCAPTURE` enthält zusätzlich nur den isolierten Prozessfehler.
+Die korrigierte Vorprüfung vergleicht mit den tatsächlichen unveränderten
+Fixture-Bytes; ein eigener Regressionstest verhindert die veraltete Erwartung.
+Die Produktionshydration wurde für diese Testkorrektur nicht verändert.
+
+Context-Policy V7 injiziert den vorhandenen Safe Reader verpflichtend in den
+Compiler. Höchstens zwei aktuelle Originalseiten werden innerhalb des bisherigen
+Budgets materialisiert; typisierte Originalmarker früherer Reads erhalten Vorrang,
+ihre alten Vorschauen dagegen keine Originalautorität. Replan erhält null
+automatische Zusatzreads. Keine neue Datenbankmigration, Dependency, Mutations-
+befugnis, Repair-Runde oder persistierte Source-Bytes.
+
+Die gezielten Compiler-Tests prüfen Originalbytes, Digest, genaue Tokenrechnung,
+8k-/16k-Profile, Vorrang vor optionaler Historie, übergroße Seiten, zwei Quellen
+mit jüngsten tatsächlichen Lesemarkern, Deduplication, Marker nach Entnahme der
+Quellseite, nicht-originale Suchspans, Fehlerklassen und Replan ohne zusätzliche
+Reads. Der Deadline-Test unterscheidet kooperative Frist von Nutzerabbruch ohne
+Sleep. Der reale multilingual-indizierte Harness prüft tatsächlichen Code,
+unveränderten Worktree und Ablehnung eines anschließenden Live-Edits.
+
+Vorhandene synthetische Metadata-/Rankingtests injizieren ausdrücklich einen
+nicht verfügbaren Reader; sie behaupten keine Dateisystemmessung. Alle echten
+Harness- und Desktoppfade verwenden den WorkspaceAgentSourceReader.
+
+Die finalen Gates bestehen: `cargo fmt --all -- --check`,
+`cargo clippy --workspace --all-targets --all-features --offline --locked --jobs 2 -- -D warnings`,
+`cargo test --workspace --all-features --offline --locked --jobs 2 -- --test-threads=1`
+einschließlich `connection_lifecycle`, sowie `pnpm check:links`.
+Pro Prozess gelten unverändert `CARGO_INCREMENTAL=0`,
+`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`. Keine Frontend-Änderung.
+Die bekannte Node-Versionabweichung 25.6.1 statt 24.14.0 bleibt beim Linkcheck sichtbar.
+Die ersten Clippy-Logs bewahren die korrigierten Test-`expect_err`-/`unwrap`-
+und Variablenscopefehler; die Regeln wurden nicht abgeschwächt.
+Finale Logs: `target/reports/original-context-clippy-final3.log` (SHA256
+`c3a28eb151c6e97c00aaf0f1ac001ad2901b870dd8ce589bc4d60b28a3ba03e1`)
+und `target/reports/original-context-workspace-final.log` (SHA256
+`b3be57803f56b8df56cb67103ba07676c9f902a9521a9979c32b63cb90f2cc74`).
+
+Eingefrorener korrigierter Live-Teststand:
+`target/reports/original-context-20260907/agent-tests-v2.exe`, SHA256
+`02c3a1c6f8dfc9cc74f7fe435f00b3d4ed310e8bd462cc36a473ab2d0f09b76c`.
+Der erste Build mit fehlerhafter Vorprüfung bleibt separat erhalten; er wird
+nicht als Coding-Modellergebnis gezählt. Alle folgenden Lives verwenden v2,
+dieselbe öffentliche unveränderte Fixture und nur die vorher fest freigegebene
+Dateiänderung plus Testausführung. Es ist weiterhin kein vollständiger
+Plan→Agent-Handoff-Test. Lokale Modelle liefen ausschließlich nacheinander.
+
+| Modell | Sekunden | Tatsächliches Ergebnis |
+| --- | ---: | --- |
+| gpt-5.6-luna | 17,48 | Original geliefert; Done, Sequenz 23, genau ein Patch und ein erfolgreicher Test; aktive Verifikation und unabhängiger Test grün, geschützte Dateien und Settings unverändert |
+| Google gemma-4-26b-a4b-it | 10,99 | Original geliefert; ModelFailed(Unavailable), kein Repair, Failed/16, keine Mutation |
+| ornith-1.5:9b | 44,02 | Original geliefert; IncompleteModelOutput(OutputLimit), kein Repair, Failed/6, keine Mutation |
+| qwen38-8k:latest | 55,20 | Original geliefert; ein Test mit Exit 1, kein Patch; RepeatedReplanRead nach Einzelrepair, Failed/21 |
+| gpt-oss:20b | 19,58 | Fähigkeitstest bestanden, Original geliefert; ModelFailed(InvalidResponse), kein Repair, Failed/6, keine Mutation |
+| granite4.2:8b | 17,85 | Original geliefert; zwei Tests mit Exit 1, kein Patch; Replan-V7 Decode(InvalidValue) nach Einzelrepair, Failed/23 |
+
+Die Dateien `*-coding-v2.log` liegen beim eingefrorenen Build. SHA256:
+
+- Luna: `13b38d25b4a1ea2b3586fceb5cdaeabc2783f4e237fa375314aad21f88fa5b84`
+- Google: `a044e786b130154677d50999a0a6636ec9cd74f96479ec47e11b4b197ee33363`
+- Ornith: `b568bd2e7c4f9d8acc3ebb03da5a4e99d5f333da7f8f44e5b0e1e41f5a366cae`
+- Qwen: `231fdfa99762dd8201f768707780f1864787d80dc70f67f879e594350070304d`
+- GPT-OSS: `e5b5a38484fc797a83abc90a56cc5882e386d1fa92fccc2667a90832e9193b5d`
+- Granite: `83c2c2dbd8b69aae33a5b460d1767b7393a9768474a80ba00af89743874e27e2`
+
+Alle fehlgeschlagenen Coding-Lives bewahrten die geschützten Dateien und
+bestanden den unabhängigen Test nicht. Process/Applied bedeutet ausdrücklich
+nicht Test bestanden. Googles konkrete Transport-/HTTP-Ursache und Granites
+ungültiges V7-Feld bleiben unbekannt; die geschlossenen Fehlerklassen belegen
+weder einen 400-Schemafehler noch ein zu altes Modell. Die Zeiten sind einzelne
+Gesamtläufe, keine isolierte Vorher-/Nachher-Leistungsmessung. Belegt ist die
+Originalversorgung, nicht eine allgemein verbesserte Erfolgsquote.
+
+Die vollständige Luna-Ask-/Plan-Matrix (vier Familien × drei Varianten, eine
+Wiederholung, kein Fallfilter) beendet 12/12 Fälle mit WorkReady und null
+Nutzerhalten beziehungsweise adaptiven Reads. Rubrik V3 besteht 10/12;
+Audit 1:1 und 1:2 fehlen jeweils `write`. Manuell gegengeprüft: 1:0 liefert die
+konkrete Aufrufkette einschließlich `output.write` korrekt, dupliziert aber große
+Teile der Antwort. 1:1 und 1:2 behaupten eine Speicherung durch `save_tasks`,
+obwohl die Fixture-Implementierungen in `storage.py` nur Tupel zurückgeben.
+Der konkret schreibende File-Handle beziehungsweise `.write` wird nicht in
+beiden Antworten vollständig benannt. Alle drei Planvarianten liefern Pläne.
+Bericht: `target/research-eval/eval-1788809883739.jsonl`, SHA256
+`5d2fc3a70b5553dfb01d04e7ed4e8fa946506d458d1f4519b4493260decf5bcb`.
+Gesamtlauf 141,65 Sekunden; Exit 101 wegen der zwei Rubrikfehler, nicht wegen
+einer Endlosschleife. Ungeprüfte Callee-Effekte bleiben eine offene Inhaltslücke.
+
+Auch die vollständige Ornith-Matrix beendet 12/12 mit WorkReady und null
+Nutzerhalten beziehungsweise adaptiven Reads. Rubrik V3: 10/12; Audit 1:0
+und 1:1 fehlen `write`. Manuelle Kontrolle verhindert eine falsche Abnahme:
+1:1/1:2 behaupten Persistenz, 1:2 erfindet einen Dateinamenbezug von `Task.title`
+und nennt unter anderem `output.write` in Zeile 25 einer tatsächlich nur
+20-zeiligen `plugins.py`. Diese freien E-/S-/Zeilenbehauptungen sind keine vom
+Core zugeordneten Zitate. 1:0 nennt zunächst drei Methoden, zählt dann nur zwei
+auf und enthält ebenfalls fehlerhafte freie Zeilenangaben. Die bereits bekannte
+Inhaltslücke bleibt trotz des Rubrikerfolgs von 1:2 erhalten.
+
+Plan 3:0 benötigt den bestehenden Einzelrepair für einen 4558-Byte-Entwurf;
+3:2 nutzt ihn nach OutputTruncated. Beide liefern anschließend einen Plan,
+ohne zusätzliche Reads oder Nutzerhalt. Bericht:
+`target/research-eval/eval-1788810081373.jsonl`, SHA256
+`e2ebc202b9d00d0f3adb2f106fa7348fcc43c7e7b6f7ec2ebe9f9d6c100658c6`.
+Gesamtlauf 187,74 Sekunden, Exit 101 wegen der zwei Rubrikfehler.
+
+Die Originalversorgung ist als vertikaler Schnitt verifiziert. Die insgesamt
+offene Nutzbarkeitsabnahme wird weder durch die grünen Offline-Gates noch durch
+die technisch abgeschlossenen Recherchefälle ersetzt. Nächste Arbeit muss
+konkret die Aktionswahl vor einer Änderung, die bislang groben Provider-/
+V7-Wertfehler und unbelegte Callee-Effekte beziehungsweise freie Quellenkoordinaten
+adressieren; eine weitere pauschale Budgeterhöhung ist durch diese Daten nicht belegt.
+
 ## 2026-09-07: Dauerhafter Replan-Belegbedarf (ADR-0092)
 
 Ausgangspunkt `15242b0`. Neue Replan-Analysen verwenden die eingeschränkte V7-Union
