@@ -530,7 +530,11 @@ impl ProductionAgentRunExecutor {
                 AgentTurnOutcome::Executed(execution) => execution,
                 AgentTurnOutcome::Rejected(rejected) => {
                     #[cfg(test)]
-                    eprintln!("A3_AGENT_TURN_REJECTED {:?}", rejected.reason());
+                    eprintln!(
+                        "A3_AGENT_TURN_REJECTED {:?} repair={:?}",
+                        rejected.reason(),
+                        rejected.charge().repair()
+                    );
                     let signal = if matches!(
                         rejected.reason(),
                         AgentTurnRejectionReason::CancelledBeforeAction

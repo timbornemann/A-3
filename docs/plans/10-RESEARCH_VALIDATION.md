@@ -2253,3 +2253,47 @@ SHA-256 der Logs im selben Verzeichnis:
 - `granite-live.log`: `f794ec1b9d187a4aed679d653499225c66f5d90bedf9e872084c35c9e776f55c`
 - `ornith-live.log`: `8943c711233ebd483e58dfd288c0c15ce2acdb0e7245cb59197e280ccd6694ee`
 - `gpt-oss-live.log`: `2e5bb2579d3899e497fd3f2e9cde9a7fb689fd3948aaf3e73cf63cc8443ae7e3`
+
+### Live-Quittungen trennen tatsächliche Mutation, Test und aktiven Schritt
+
+Test-only-Instrumentierung liest die bereits begrenzte durable Mutationshistorie
+und druckt höchstens 32 inhaltsfreie Einträge plus Gesamt-/Auslassungszahl. Die
+Eintragsnummer beschreibt die Speicherreihenfolge, **nicht** die Ausführungszeit.
+`Process/Succeeded/Applied` belegt Prozessanwendung, nicht Test-Erfolg. Der separate
+Prozessbefund enthält weiterhin Exitcode und Erfolg. Tatsächliche Source- und
+Snapshotänderungen werden als unabhängige Bits, Ledger-Schritte mit Aktivstatus
+ausgegeben. Die Ablehnungsdiagnose nennt nun auch den Repairverbrauch dieses Turns.
+Ein terminaler Failed-Lauf wird nicht mehr irreführend als fehlende Freigabe eines
+noch nicht terminalen Laufs bezeichnet. Produktionsverhalten, Modellrequests,
+Read-/Repair-/Zeitbudgets und Sicherheitsgrenzen wurden nicht verändert.
+
+Die zwei bestehenden Scope-Tests bestehen (`live-coding-receipts-targeted.log`);
+die Lives bleiben ausdrücklich opt-in. Formatprüfung, vollständiges Workspace-
+Clippy mit `-D warnings` und vollständige Workspace-Tests bestehen mit
+`--all-features --offline --locked --jobs 2`, Tests zusätzlich `--test-threads=1`.
+Logs: `live-coding-receipts-clippy.log`, `live-coding-receipts-workspace.log`, Exit 0.
+Link- und Diff-Prüfung bestehen. Keine neue Produktionslogik oder Adaptergrenze.
+
+Eingefrorenes Binary `live-coding-receipts-20260907/agent-tests.exe`, SHA-256
+`99d8358c96eeb0616a29fb6375f3968de8c18ce480e1230b55f6aede7c105785`.
+
+| Modell / Lauf | Dauer | Unabhängig beobachteter Befund |
+| --- | --- | --- |
+| Luna | 15,56 s | Done 25; Patch und Process angewendet, Source/Snapshot geändert, Test Exit 0, aktiver Schritt verifiziert, unabhängig grün |
+| Ornith | 20,73 s | Failed 6, aktiver Schritt Blocked, keine Mutationsquittung, Source/Snapshot unverändert, unabhängig rot |
+| Qwen / 1 | 41,31 s | SameMovePath, Repair One, Failed 6, keine Mutationsquittung, Source/Snapshot unverändert, unabhängig rot |
+| Qwen / 2 | 88,38 s | SameMovePath, Repair One, Failed 21, genau ein angewendeter Process mit Test Exit 1, kein Patch, Source/Snapshot unverändert, unabhängig rot |
+
+Alle lokalen Läufe waren sequenziell, geschützte Dateien bleiben bytegleich;
+Luna bestätigt unveränderte native Settings. Bei Qwen / 2 ist der alte Blocked-
+Schritt inaktiv und der neue InProgress-Schritt aktiv. Der fehlgeschlagene Test
+darf trotz angewendetem Prozess nicht als Erfolg erscheinen. Orniths früheres
+OutputLimit wurde in diesem Nachtest nicht reproduziert; dessen Primär-/Repairphase
+bleibt offen. Die Instrumentierung selbst verbessert keine Modellentscheidung.
+
+SHA-256 der Logs im selben Verzeichnis:
+
+- `luna-live.log`: `f0f5b3bbcdaa42a882008d05076b61b28d9ff2d6f4c3620e0d2a4ded601ab31e`
+- `ornith-live.log`: `57b712535f2ac9fef088f140d9abad81d177099bef37fcfefc3ff90262f6a570`
+- `qwen-live.log`: `cb6d011040d3f55a1a2f6c0f406efc7795ce596b7e830cdb4e691241f1f4440b`
+- `qwen-live-2.log`: `a2b011d7c3aadf1149a9657fbd5b63aa0f0d22ec370c710af8dadc1b53f5a30a`

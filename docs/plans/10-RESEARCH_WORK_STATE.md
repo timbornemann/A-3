@@ -40,6 +40,13 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Live-Coding-Berichte um begrenzte dauerhafte Mutationsquittungen, aktiven
+      Schritt, physische Änderungsbits und die betroffene Einzelrepairphase erweitern.
+      Prozessanwendung darf nicht als Test- oder Patch-Erfolg erscheinen. Danach
+      die beobachteten Testwiederholungen und OutputLimit-Abbrüche gezielt einordnen.
+      Vollständige Gates und Live-Nachtests bestehen für die Instrumentierung;
+      Qwen zeigt nun belegbar einen Test ohne Patch vor SameMovePath im Einzelrepair.
+
 - [x] Replan-Leseturns auf den bestehenden statusfreien AgentAction-V5-Vertrag
       umstellen; Search/Inspect allein, strikte historische Decoder, Einzelrepair,
       Vier-Read- und Legacy-Duplikatgrenzen erhalten

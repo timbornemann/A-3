@@ -559,6 +559,25 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
             run.state(),
             run.last_event_sequence()
         );
+        let mutations = store.load_agent_mutation_attempts(&project, run_id).await?;
+        // Only durable, content-free receipts; process application is not test success.
+        // The store bounds the history, and at most 32 entries are printed per attempt.
+        println!(
+            "A3_LIVE_CODING mutation_receipts={} omitted={} source_changed={} snapshot_changed={}",
+            mutations.len(),
+            mutations.len().saturating_sub(32),
+            std::fs::read(repository.path().join(FILES[0].0))? != FILES[0].1.as_bytes(),
+            run.current_snapshot_id() != indexed.published_index().run().snapshot_id()
+        );
+        for (ordinal, mutation) in mutations.iter().take(32).enumerate() {
+            println!(
+                "A3_LIVE_CODING receipt={} kind={:?} status={:?} application={:?}",
+                ordinal + 1,
+                mutation.kind(),
+                mutation.tool_attempt().status(),
+                mutation.disposition().application_state()
+            );
+        }
         let observed = store
             .load_task_ledger(&project, task_id)
             .await?
@@ -574,8 +593,9 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
         }
         for step in observed.ledger().steps() {
             println!(
-                "A3_LIVE_CODING step={:?} verified={}",
+                "A3_LIVE_CODING step={:?} active={} verified={}",
                 step.status(),
+                step.is_active_plan_step(),
                 step.attempts()
                     .last()
                     .and_then(TaskStepAttempt::verification)
@@ -593,6 +613,9 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
             );
         }
         outcome?;
+        if run.state() == AgentControllerState::Failed {
+            return Err("live Agent reached terminal Failed; recorded failure and physical verification above".into());
+        }
         if run.state() == AgentControllerState::Done {
             break;
         }
