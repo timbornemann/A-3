@@ -1,5 +1,8 @@
 //! H7 end-to-end Context Compiler contract tests over the real ordered Task Lens.
 
+#[path = "support/execution_checkpoint.rs"]
+mod execution_checkpoint;
+
 use a3_application::{
     AgentContextCompileInput, AgentContextCompiler, CompileTaskLens, ContextCompileControl,
     ContextCompileFailure, ContextCompilePhase, KnowledgeSearchControl, KnowledgeSearchFailure,
@@ -536,7 +539,7 @@ fn context_pack_is_fresh_bounded_and_deterministic() -> Result<(), Box<dyn Error
 
     assert_eq!(first.digest(), second.digest());
     assert_eq!(first.request(), second.request());
-    assert_eq!(first.policy_version(), ContextCompilerPolicyVersion::V5);
+    assert_eq!(first.policy_version(), ContextCompilerPolicyVersion::V6);
     assert_eq!(first.snapshot_id(), fixture.snapshot_id);
     assert_eq!(first.excluded_stale_claims(), 1);
     assert_eq!(first.budget_plan().context_limit(), 16_384);

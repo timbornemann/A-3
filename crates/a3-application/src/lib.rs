@@ -6,6 +6,11 @@ mod agent_activity;
 mod agent_approval;
 mod agent_ask_research;
 mod agent_controller;
+mod agent_execution_checkpoint;
+pub use agent_execution_checkpoint::{
+    AgentExecutionCheckpoint, AgentExecutionCheckpointError, ExecutedAgentMutation,
+    LoadAgentExecutionCheckpoint,
+};
 mod agent_goal;
 mod agent_inspection;
 mod agent_prompt;

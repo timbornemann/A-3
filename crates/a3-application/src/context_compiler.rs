@@ -285,6 +285,7 @@ pub struct AgentContextCompileInput {
     current_step_id: TaskStepId,
     model_profile: ModelProfile,
     run_memory: Option<RunMemoryCheckpoint>,
+    execution_checkpoint: Option<crate::AgentExecutionCheckpoint>,
     research_handoff: Option<ResearchHandoff>,
     replan_localization: Option<a3_domain::TaskReplanReason>,
     replan_research: Option<crate::ReplanResearchContext>,
@@ -355,12 +356,31 @@ impl AgentContextCompileInput {
             current_step_id,
             model_profile,
             run_memory,
+            execution_checkpoint: None,
             research_handoff: None,
             replan_localization: None,
             replan_research: None,
             supplemental_seeds,
             tool_results,
         })
+    }
+
+    /// Attaches actual execution metadata after checking the current durable ownership.
+    pub fn with_execution_checkpoint(
+        mut self,
+        checkpoint: crate::AgentExecutionCheckpoint,
+    ) -> Result<Self, AgentContextCompileInputError> {
+        if !checkpoint.matches(&self) {
+            return Err(AgentContextCompileInputError::ExecutionCheckpointMismatch);
+        }
+        self.execution_checkpoint = Some(checkpoint);
+        Ok(self)
+    }
+
+    /// Returns content-free actual execution metadata, never source/verification evidence.
+    #[must_use]
+    pub const fn execution_checkpoint(&self) -> Option<&crate::AgentExecutionCheckpoint> {
+        self.execution_checkpoint.as_ref()
     }
 
     /// Carries a previously revalidated research source set into the next Agent context compile.
@@ -471,6 +491,8 @@ pub enum AgentContextCompileInputError {
     CurrentStepRetired,
     /// Optional run memory belongs to another Goal or Ledger revision.
     RunMemoryMismatch,
+    /// Execution receipt does not match this project's current run, Goal or Ledger.
+    ExecutionCheckpointMismatch,
     /// More than 64 supplemental retrieval seeds were supplied.
     TooManySupplementalSeeds(usize),
     /// Supplemental seed set contained a duplicate.
@@ -490,6 +512,7 @@ impl fmt::Display for AgentContextCompileInputError {
             Self::CurrentStepUnavailable => "context current step is absent from the Task Ledger",
             Self::CurrentStepRetired => "context current step was retired by a replan",
             Self::RunMemoryMismatch => "context run memory does not match Goal and Task Ledger",
+            Self::ExecutionCheckpointMismatch => "context execution checkpoint ownership mismatch",
             Self::TooManySupplementalSeeds(_) => "context has too many supplemental seeds",
             Self::DuplicateSupplementalSeed => "context has a duplicate supplemental seed",
             Self::TooManyToolResults(_) => "context has too many recent tool results",

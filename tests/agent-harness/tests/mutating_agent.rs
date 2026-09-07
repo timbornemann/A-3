@@ -304,6 +304,17 @@ fn patch_waits_for_approval_then_reindexes_before_compiling_context() -> Result<
                 "non-diff patch did not request fresh verification context",
             ));
         };
+        if !compiled.request().messages().iter().any(|message| {
+            message.content().contains("[EXECUTION_CHECKPOINT]")
+                && message
+                    .content()
+                    .contains("last_confirmed_run_action=patch_applied")
+                && message.content().contains("step_verified=false")
+        }) {
+            return Err(test_error(
+                "fresh patch context lost the durable execution receipt",
+            ));
+        }
         let latest = fixture
             .store
             .latest_published_index(&fixture.project, &ActiveControl)
@@ -353,6 +364,54 @@ fn patch_waits_for_approval_then_reindexes_before_compiling_context() -> Result<
         {
             return Err(test_error(
                 "context was recorded before patch invalidation completed",
+            ));
+        }
+        // Rebuild from a separately opened store, without controller-local tool results.
+        let reopened = LibsqlKnowledgeStore::open(&StorageLayout::prepare(
+            fixture._app_data.path().join("app-data"),
+        )?)
+        .await?;
+        let restored_run = reopened
+            .load_agent_run(&fixture.project, durable.run.id())
+            .await?
+            .ok_or_else(|| test_error("durable run missing after reopening"))?;
+        let receipt_started = std::time::Instant::now();
+        let checkpoint = a3_application::LoadAgentExecutionCheckpoint::new(&reopened, &reopened)
+            .execute(&fixture.project, &restored_run, &ActiveControl)
+            .await?
+            .ok_or_else(|| test_error("durable execution receipt missing after reopening"))?;
+        eprintln!(
+            "A3_EXECUTION_CHECKPOINT_MEASURE reopened_load_micros={}",
+            receipt_started.elapsed().as_micros()
+        );
+        if checkpoint.snapshot_id() != latest.run().snapshot_id()
+            || checkpoint.event_sequence() != page.events()[tool_position].sequence()
+            || checkpoint.mutation() != a3_application::ExecutedAgentMutation::PatchApplied
+        {
+            return Err(test_error(
+                "reopened execution receipt changed the observed result",
+            ));
+        }
+        let restored_input = a3_application::AgentContextCompileInput::new(
+            fixture.project.clone(),
+            durable.goal.clone(),
+            durable.ledger.clone(),
+            step_id,
+            durable.profile.clone(),
+            None,
+            Vec::new(),
+            Vec::new(),
+        )?
+        .with_execution_checkpoint(checkpoint)?;
+        let restored_context = a3_application::AgentContextCompiler::compile(
+            &context,
+            &restored_input,
+            &ActiveControl,
+        )
+        .await?;
+        if restored_context.digest() != compiled.digest() {
+            return Err(test_error(
+                "reopening changed the deterministic post-patch context",
             ));
         }
         Ok(())

@@ -3,7 +3,6 @@
     reason = "acceptance scenarios use different subsets of the shared fixture helpers"
 )]
 
-use futures::executor::block_on;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::ffi::OsStr;
@@ -167,7 +166,10 @@ where
         ))
         .into());
     }
-    let result = block_on(future);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()?;
+    let result = runtime.block_on(future);
     #[cfg(windows)]
     match result {
         Ok(()) => {

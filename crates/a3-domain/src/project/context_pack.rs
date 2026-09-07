@@ -33,8 +33,11 @@ impl ContextCompilerPolicyVersion {
     /// ADR-0077 reserves the configured output cap and fits complete mandatory sections.
     pub const V5: Self = Self(5);
 
+    /// ADR-0088 includes durable execution receipts in the mandatory Goal/Ledger anchor.
+    pub const V6: Self = Self(6);
+
     /// Policy emitted by the current deterministic compiler implementation.
-    pub const CURRENT: Self = Self::V5;
+    pub const CURRENT: Self = Self::V6;
 
     /// Returns the stable persisted integer.
     #[must_use]
@@ -471,10 +474,10 @@ mod tests {
     }
 
     #[test]
-    fn sixteen_k_budget_matches_the_documented_v5_profile() -> Result<(), Box<dyn Error>> {
+    fn sixteen_k_budget_keeps_v5_allocation_under_v6_rendering() -> Result<(), Box<dyn Error>> {
         assert_eq!(
             ContextCompilerPolicyVersion::CURRENT,
-            ContextCompilerPolicyVersion::V5
+            ContextCompilerPolicyVersion::V6
         );
         let plan = ContextBudgetPlan::for_profile(&profile(16_384, 4_096)?)?;
         assert_eq!(plan.allowance(ContextSection::SystemAndTools), 900);

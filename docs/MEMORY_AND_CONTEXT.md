@@ -1038,6 +1038,25 @@ Dies ist eine Darstellung der tatsächlich gelieferten Referenzen, kein Einfüge
 von Belegen in die Modellausgabe. Quellenbindung und inhaltliche Erläuterung bleiben
 erforderlich, der einmalige Repair und alle übrigen Grenzen unverändert.
 
+## Ausführungsrückmeldung im Agentkontext
+
+Der ausführende Agent erhält nach [ADR-0088](adrs/0088-journalgebundene-ausfuehrungsrueckmeldung.md)
+eine separate, inhaltsfreie Ausführungsrückmeldung. Context-Policy V6 zählt sie als
+Pflichtmetadaten im Goal/Ledger-Anker; RunMemory und Quellenbelege bleiben getrennt.
+Die jüngste bestätigte Runmutation wird aus höchstens 64 Journalereignissen und
+4096 vorhandenen Recovery-Attempts rekonstruiert. Das Toolereignis muss mit genau
+einem abgeschlossenen Succeeded/Applied-Attempt übereinstimmen. Ein anderer aktueller
+Snapshot verwirft die Rückmeldung, ein unbekannter oder partieller Effekt liefert
+keinen Erfolgsbeleg. Die Rekonstruktion besitzt fünf Sekunden Timeout und prüft
+Cancellation auch während ausstehender Reads im 50-ms-Takt, ohne Hintergrundtask.
+
+Ein bestätigter Patch ist keine bestätigte Implementierung; ein beobachtetes
+Prozessresultat ist kein bestandener Test. Der aktuelle Verifikationsstatus stammt
+aus dem Ledger. Weder die Rückmeldung noch eine ungültige wiederholte Patchaktion
+führt automatisch einen Test aus oder vervollständigt einen Schritt. Ein Neustart
+kann dieselbe Rückmeldung aus dem bestehenden Speicher herstellen, ohne flüchtige
+Modellnotizen, Quelltexte oder einen neuen Index zu benötigen.
+
 ## Erfolgsmetriken des Prüfstands
 
 - Goal-Retention über lange Runs

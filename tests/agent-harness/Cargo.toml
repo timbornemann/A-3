@@ -17,6 +17,7 @@ a3-storage-libsql.workspace = true
 a3-workspace.workspace = true
 blake3.workspace = true
 futures.workspace = true
+tokio = { workspace = true, features = ["rt", "time"] }
 
 [lints]
 workspace = true

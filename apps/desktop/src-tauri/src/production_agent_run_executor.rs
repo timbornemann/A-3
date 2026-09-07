@@ -422,6 +422,23 @@ impl ProductionAgentRunExecutor {
                 Some(reason) => input.with_replan_localization(reason.clone()),
                 None => input,
             };
+            let input = if localization_reason.is_none() && replan_research.is_none() {
+                let checkpoint = a3_application::LoadAgentExecutionCheckpoint::new(
+                    self.ports.journal.as_ref(),
+                    self.ports.recovery.as_ref(),
+                )
+                .execute(project, &run, &attempt_control)
+                .await
+                .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+                match checkpoint {
+                    Some(checkpoint) => input
+                        .with_execution_checkpoint(checkpoint)
+                        .map_err(|_| AgentRunExecutionFailure::AnchorsChanged)?,
+                    None => input,
+                }
+            } else {
+                input
+            };
             let input = if let Some(research) = &replan_research {
                 validate_replan_originals(project, research, control).await?;
                 input

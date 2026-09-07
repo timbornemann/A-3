@@ -1697,3 +1697,117 @@ und Clippy erneut vollständig ausgeführt; abschließende Logs sind
 `agent-v5-core-status-final-workspace.log` und `agent-v5-core-status-final-clippy.log`.
 Die letzte Änderung betrifft nur diese Testassertion; die Live-Binaries enthalten
 denselben Produktionscode. Keine neuen Abhängigkeiten, UI- oder Storage-Migrationen.
+
+### Abschluss der V5-Lokalserie vor ADR-0088
+
+Dasselbe eingefrorene V5-Binary wurde anschließend weiter strikt sequentiell geprüft:
+
+| Modell | Dauer | Nachweis |
+| --- | --- | --- |
+| Ornith 9B | 22,36 s | InvalidActionAfterRepair InvalidValue, Failed Sequenz 6 |
+| GPT-OSS 20B | 18,48 s | ModelFailed(InvalidResponse), Failed Sequenz 6 |
+| Granite 8B | 23,37 s | Zwei echte Testresultate Exit 1, danach InvalidReadResult, Failed Sequenz 26 |
+
+Alle drei unabhängigen physischen Prüfungen bleiben rot, geschützte Dateien bytegleich.
+Diese Fehler werden nicht durch das Modellalter erklärt; eine konkrete Ursache muss
+separat aus dem jeweiligen Vertrag nachgewiesen werden.
+
+SHA-256 im Verzeichnis `agent-v5-core-status-20260907`:
+
+- `ornith-live-1.log`: `27d99180f44c7272f0072af4a0c6acd203ea08de7cd29f7bea52fd1056eb437b`
+- `gptoss-live-1.log`: `86bd675a8f7d8cd746f27b339d4e60ca6fa04d9826596c75a9c57855e3058932`
+- `granite-live-1.log`: `8edb68458d08544a84fe33115d072e4c549e894064cc963a8d44591d2e4f8f0f`
+
+### ADR-0088: Ausführungsrückmeldung
+
+Der echte `patch_waits_for_approval_then_reindexes_before_compiling_context`-Test
+scheiterte vor der Korrektur mit `fresh patch context lost the durable execution receipt`.
+Nach der Korrektur besteht er einschließlich Rekonstruktion aus separat geöffnetem
+libSQL-Store und identischem Kontextdigest. Die gesamten acht mutierenden, drei
+read-only und der Coding-Eval-Vertrag bestehen. Die bisherigen 13 Context-Verträge
+bleiben grün; drei neue prüfen die wirklichen Kontext-/Budget-/Freshness-/History-Grenzen.
+Zwei Application-Tests prüfen fehlende Laufzeit, Cancellation und Timeout mit
+nachweislichem Drop des besessenen ausstehenden Reads. Kein Timeout wird umgangen.
+
+Der Harness-Testtreiber nutzt jetzt direkt die bereits vorhandene Tokio-Workspace-
+Version als Dev-Abhängigkeit, damit auch diese Tests dieselbe Timer-Voraussetzung
+wie der Produktionslauf erfüllen. Keine neue Bibliotheksversion, Produktabhängigkeit,
+Migration, Provider-/Profiländerung oder Freigabeerweiterung.
+
+Die reproduzierbare Context-Fixture misst vor/nach Zuschaltung der Rückmeldung
+2283→2712 Packbytes (8k/2k) und 2502→2931 (16k/4k). Der vollständig gezählte
+Pflichtanker wächst jeweils um 429 konservative Einheiten; Output- und Safety-
+Reserve bleiben gleich. Der zusätzliche echte Wiederaufbau aus dem neu geöffneten
+Store benötigt im einzelnen separaten Messlauf 11275 µs. Das ist zusätzlicher
+lokaler Aufwand, kein Geschwindigkeitsgewinn; weder ein Einzellauf noch concurrent
+Buildzeiten sind portable Benchmarks. Reproduktion: die beiden Tests mit
+`execution_receipt_is_mandatory` beziehungsweise
+`patch_waits_for_approval_then_reindexes_before_compiling_context` und `--nocapture`.
+Messlogs: `agent-execution-checkpoint-context-measure.log` und
+`agent-execution-checkpoint-reopen-measure.log`.
+
+Eingefrorenes Binary `agent-execution-checkpoint-20260907/agent-tests.exe`, SHA-256
+`434fca74ec0359a7e0ad8cd5eeb1ad14f05cfde5fb3cb2eab279681bf19943bc`.
+
+| Modell/Lauf | Dauer | Tatsächliches Ergebnis |
+| --- | --- | --- |
+| Luna 1 | 14,16 s | Done 21, echter Test Exit 0, Completed/verified |
+| Luna 2 | 12,05 s | Done 21, echter Test Exit 0, Completed/verified |
+| Luna 3 | 12,20 s | Done 21, echter Test Exit 0, Completed/verified |
+| Google Gemma | 12,06 s | ModelFailed(Unavailable), Failed 16 |
+| Qwen 8k | 189,34 s inkl. Probe | Modellaufruf durch Versuchstimeout beendet, Cancelled 6 |
+| Ornith 9B | 138,18 s inkl. Probe | Modellaufruf durch Versuchstimeout beendet, Cancelled 6 |
+| GPT-OSS 20B | 74,28 s | Test Exit 1, anschließend InvalidResponse, Failed 12 |
+| Granite 8B | 25,91 s | Zwei Tests Exit 1, danach InvalidAfterRepair, Failed 23 |
+
+Alle drei Luna-Läufe bestätigen zusätzlich unabhängige physische Verifikation,
+unveränderte geschützte Dateien und unveränderte Settings. Alle übrigen physischen
+Prüfungen bleiben rot, geschützte Dateien unverändert. Lokale Modelle liefen strikt
+nacheinander. Keine zusätzlichen Repairs, Modellwechsel oder Profileinstellungen
+haben einen fehlgeschlagenen Fall in einen Erfolg umgewandelt. Die neue Rückmeldung
+beweist keine Lösung der separaten Provider-/Aktions-/Replanfehler und drei Luna-
+Erfolge sind keine allgemeine Agentabnahme.
+
+SHA-256 der Live-Logs im selben Verzeichnis:
+
+- `luna-live-1.log`: `1e5dc6e4528860bef7f5886286f6b653307ef72e6fcdbb0f77447c07fec3209e`
+- `luna-live-2.log`: `46863826fc488503adc0216abaa87fca6fc58a8d92f2c4b46c81cc17ec734acc`
+- `luna-live-3.log`: `53dbb52f5affe5470ea21112357ee6c3ea4af1c150ff9f2a8c50fdc09aa466bf`
+- `google-live-1.log`: `84788c7d8c565c4b257960d7851eddf4749b1e85ff8218beafa98e3d46ac2356`
+- `qwen-live-1.log`: `90d5e958f66b9494afcf3cc6f6ec68be6bc6ef3024f976cb79e6e7cdcc95001f`
+- `ornith-live-1.log`: `cbe97fd60aa1869a150996fd2b5762e52076d111f25ef739185bbf9c111b2a64`
+- `gptoss-live-1.log`: `f9064f41f98df4707bc55daecafd7266f287d23f4bcfeeeda596af3cef7f19ce`
+- `granite-live-1.log`: `76c6223c6d9d72e675bcdba5c02e00f63da79340e9384690e4f4dea69431687c`
+
+### Erneute Luna-Ask-/Plan-Matrix auf dem ADR-0088-Binary
+
+Eine vollständige Zwölfermatrix endet in 161,00 s mit 12/12 abgeschlossenen,
+durabel fertigen Fällen, null Nutzerhalten und null adaptiven Reads. Die bestehende
+Rubrik v2 meldet 12/12 Treffer. Originale bleiben unverändert. Report
+`eval-1788793090398.jsonl`, SHA-256
+`b699407429a34c8c35f929829c5cbfb04d6fc87f24c4031697056f3f41740f15`;
+Log `agent-execution-checkpoint-20260907/luna-research-matrix.log`, SHA-256
+`92b5832e978af046fbe8d2e6af8caa603fe1fc4048719745db67e80b209668fe`.
+
+Die Sichtprüfung widerspricht einer vollständigen Inhaltsabnahme: Audit 1:1 nennt
+Speichern der Liste; Plan 3:0 behauptet in der Recherchegrundlage, jeder erfolgreiche
+add_task-Aufruf persistiere. `JsonStorage.save_tasks` und `SQLiteStorage.save_tasks`
+geben im tatsächlichen Original aber lediglich ein Tupel zurück. Manager ruft sie
+auf; Aufrufnachweis ist kein Persistenznachweis. Außerdem akzeptiert v2 das Wort
+„Writer“ als Teilstringtreffer für die gesonderte Methode `write`. Dieser Rubrikfehler
+und die nicht belegten Nebenwirkungen bleiben ausdrücklich offen. Ein höherer
+Abschlusszähler schließt diese Gegenbeispiele nicht.
+
+ADR-0088 ist lokal vollständig verifiziert: `cargo fmt --all --check`,
+`cargo clippy --workspace --all-targets --all-features --offline --locked --jobs 2
+-- -D warnings`, `cargo test --workspace --all-features --offline --locked --jobs 2
+-- --test-threads=1`, `node scripts/check-markdown-links.mjs` (132 Dateien/526 lokale
+Links) und `git diff --check`. Abschließende Rust-Logs sind
+`agent-execution-checkpoint-complete-clippy.log` und
+`agent-execution-checkpoint-complete-workspace.log`; beide enden mit Exit 0.
+Zuvor wurden eine veraltete Policy-Versionsassertion und zwei nicht erlaubte
+explizite Panic-Wächter sowie die komplexe Fixture-Tupelsignatur korrigiert, ohne
+Produktionsverhalten oder Prüfumfang zu lockern. Danach liefen beide Gates erneut
+vollständig. Das eingefrorene Live-Binary enthält denselben Produktionscode;
+die letzten Änderungen betreffen ausschließlich Tests. Keine Frontend-Änderung,
+keine plattformübergreifende UI-/Releaseabnahme behauptet.

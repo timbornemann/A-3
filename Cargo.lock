@@ -15,6 +15,7 @@ dependencies = [
  "a3-workspace",
  "blake3",
  "futures",
+ "tokio",
 ]
 
 [[package]]

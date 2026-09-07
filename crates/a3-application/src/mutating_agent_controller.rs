@@ -1884,6 +1884,15 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             return Err(MutationControllerFailure::InvalidContextState);
         }
         let input = seed.compile_input(project, ledger, step_id)?;
+        let checkpoint = crate::LoadAgentExecutionCheckpoint::new(self.journal, self.recovery)
+            .execute(project, run, control)
+            .await?;
+        let input = match checkpoint {
+            Some(checkpoint) => input
+                .with_execution_checkpoint(checkpoint)
+                .map_err(|_| MutationControllerFailure::StaleCompiledContext)?,
+            None => input,
+        };
         let compiled = self.context_compiler.compile(&input, control).await?;
         if compiled.snapshot_id() != run.current_snapshot_id()
             || compiled.goal_contract() != run.goal_contract()
@@ -2311,6 +2320,8 @@ pub enum MutationControllerFailure {
     Controller(AgentControllerError),
     /// Context compilation failed.
     Context(ContextCompileFailure),
+    /// Durable execution receipt could not be reconstructed safely.
+    ExecutionCheckpoint(crate::AgentExecutionCheckpointError),
     /// Run event construction failed.
     Run(a3_domain::AgentRunError),
 }
@@ -2350,6 +2361,7 @@ impl fmt::Display for MutationControllerFailure {
             Self::Ledger(_) => "mutation Task Ledger transition failed",
             Self::Controller(_) => "mutation controller transition failed",
             Self::Context(_) => "post-mutation context compilation failed",
+            Self::ExecutionCheckpoint(_) => "post-mutation execution checkpoint failed",
             Self::Run(_) => "mutation run event failed",
         })
     }
@@ -2372,6 +2384,7 @@ impl MutationControllerFailure {
             | Self::Ledger(_)
             | Self::Controller(_)
             | Self::Context(_)
+            | Self::ExecutionCheckpoint(_)
             | Self::Run(_) => MutationApplicationState::Unknown,
             Self::NotMutatingAction
             | Self::AnchorMismatch
@@ -2421,6 +2434,7 @@ impl Error for MutationControllerFailure {
             Self::Ledger(error) => Some(error),
             Self::Controller(error) => Some(error),
             Self::Context(error) => Some(error),
+            Self::ExecutionCheckpoint(error) => Some(error),
             Self::Run(error) => Some(error),
             Self::NotMutatingAction
             | Self::AnchorMismatch
@@ -2466,4 +2480,5 @@ failure_from!(EvaluateStepVerificationError, Verification);
 failure_from!(a3_domain::TaskLedgerError, Ledger);
 failure_from!(AgentControllerError, Controller);
 failure_from!(ContextCompileFailure, Context);
+failure_from!(crate::AgentExecutionCheckpointError, ExecutionCheckpoint);
 failure_from!(a3_domain::AgentRunError, Run);

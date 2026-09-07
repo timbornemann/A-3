@@ -40,6 +40,17 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Ausgeführte Mutationen aus dauerhaftem Journal und Recovery-Attempt im
+      nächsten normalen und Post-Mutations-Kontext rekonstruieren; Freshness,
+      Wiederanlauf, 8k/2k, Timeout/Cancellation und echte Modellnachtests prüfen
+      ([ADR-0088](../adrs/0088-journalgebundene-ausfuehrungsrueckmeldung.md)).
+      Rot→Grün, vollständige lokale Gates, Wiederanlauf und drei echte Luna-Done-
+      Läufe bestehen. Die übrigen Modellfehler bleiben gesondert offen.
+
+- [ ] Begriffsrubrik gegen Teilstring-Falschpositive härten: konkrete Methoden wie
+      `write`, `_log` und `get_task` müssen als vollständige Bezeichner vorkommen;
+      alte Berichte nicht umschreiben und semantische Gegenbeispiele getrennt halten.
+
 - [x] Redundante Modellstatusnotiz aus neuen normalen AgentAction-V5-Turns entfernen;
       Core-Fortschritt, strikte Legacy-/Replan-Verträge und alle Aktionsgrenzen erhalten,
       Google und Luna live nachtesten
@@ -96,12 +107,18 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
       Modellprofils beheben ([ADR-0077](../adrs/0077-vollstaendige-agent-anker-im-konfigurierten-kontext.md),
       [ADR-0078](../adrs/0078-freien-kontext-vor-pflichtabbruch-nutzen.md)).
 
-- [ ] Disjunkte V7-Phasenantworten gegen leeren Fortschritt implementieren und mit
+- [x] Disjunkte V7-Phasenantworten gegen leeren Fortschritt implementieren und mit
       striktem Legacy-/Provider-/Mehrmodusvertrag sowie unveränderten öffentlichen
       Modellfällen nachtesten ([ADR-0075](../adrs/0075-disjunkte-rechercheantworten-statt-leerfortschritt.md)).
-- [ ] Den live gescheiterten flachen V7-Unionarm durch eine discriminator-first
+- [x] Den live gescheiterten flachen V7-Unionarm durch eine discriminator-first
       Ergebnisdarstellung korrigieren, ohne Bedarf oder Evidenzregeln zu entfernen
       ([ADR-0076](../adrs/0076-entscheidungstyp-vor-ergebnisdaten-im-v7-vertrag.md)).
+
+Die beiden V7-Implementierungsnachweise wurden gegen die im Prüfprotokoll bereits
+dokumentierten Rot→Grün-/Provider-/Mehrmodus-/8k-Gates und vollständigen lokalen
+Nachtestmatrizen abgeglichen. Die aktuellen vollständigen Gates und die erneute
+Luna-Zwölfermatrix bestätigen diese technischen Schnitte. Das schließt ausdrücklich
+nicht die unten weiterhin offene Modell-/Inhaltsabnahme oder den separaten V5-Replan.
 
 Fortsetzung mit Mehrprovider-Einstellungen (ADR-0066):
 

@@ -98,6 +98,30 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
         if let Some(attempt) = current_step.attempts().last() {
             push_line(&mut anchor, format_args!("run_id={}", attempt.run_id()));
         }
+        if let Some(checkpoint) = input.execution_checkpoint() {
+            let action = match checkpoint.mutation() {
+                a3_application::ExecutedAgentMutation::PatchApplied => "patch_applied",
+                a3_application::ExecutedAgentMutation::ProcessObserved => "process_result_observed",
+            };
+            anchor.push_str("[EXECUTION_CHECKPOINT] Core execution metadata; not source evidence or test success.\n");
+            push_line(
+                &mut anchor,
+                format_args!(
+                    "last_confirmed_run_action={action} event={} tool={} snapshot={}",
+                    checkpoint.event_sequence().get(),
+                    checkpoint.tool_run_id(),
+                    checkpoint.snapshot_id()
+                ),
+            );
+            let verified = current_step.status() == TaskStepStatus::Completed
+                && current_step
+                    .attempts()
+                    .last()
+                    .and_then(|attempt| attempt.verification())
+                    .is_some_and(|verification| verification.passed());
+            push_line(&mut anchor, format_args!("step_verified={verified}"));
+            anchor.push_str("Continue only missing work; when implementation is ready, request the planned verification. Do not repeat an already applied patch.\n");
+        }
         if let Some(reason) = input.replan_localization() {
             anchor.push_str(&format!(
                 "[REPLAN_LOCALIZATION] read-only; not implementation verification\ncause={}\n",
@@ -172,6 +196,12 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
             handoff.index_run_id() != lens.index_run_id()
                 || handoff.snapshot_id() != lens.snapshot_id()
         }) {
+            return Err(ContextCompileFailure::StaleOrMismatchedInput);
+        }
+        if input
+            .execution_checkpoint()
+            .is_some_and(|checkpoint| checkpoint.snapshot_id() != lens.snapshot_id())
+        {
             return Err(ContextCompileFailure::StaleOrMismatchedInput);
         }
 
