@@ -529,6 +529,16 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Providerstatus führt außerdem über eine zugängliche Statushilfe zu einer content-freien
   Erklärung und einem konkreten nächsten Schritt; insbesondere erläutert `Capability fehlt` die
   fehlende Live-Verifikation von strukturiertem JSON, ohne rohe Providerantworten preiszugeben.
+- Für die Mehrprovider-Oberfläche aus ADR-0066 ergänzt Plan 11 die Settings-Contracts:
+  drei unabhängige Karten, zusammengehörige Eingaben und Speicheraktionen, unveränderte
+  One-way-Credentials sowie ein nativer Rollenwahldialog mit lokaler Suche, Anbieterfilter
+  und höchstens 40 Modellzeilen. Gleiche Modellnamen verschiedener Provider bleiben getrennt;
+  Filtern und Auswählen starten keine Probe. Gespeicherte Limits und tatsächliche
+  Capabilityzustände bleiben erhalten. Fehler-Retry liest die durch fehlgeschlagene Probes
+  gegebenenfalls erhöhte lokale Revision neu; Cancellation hält bis zum Originalabschluss
+  die bestehende Operationssperre. Das Offline-Browserfixture
+  `apps/desktop/fixtures/settings-layout.html` prüft innere Scrollgrenzen, erhaltene
+  Seitengröße beim Dialogöffnen, beide Themes, Fokus und kleine Fenster.
 - Der U9-Designsystemvertrag extrahiert globale und sämtliche scoped Svelte-Styles. Außerhalb der
   zentralen Tokenquelle sind Hex-, RGB- und benannte Rohfarben verboten. Light und Dark müssen
   dieselben semantischen Rollen für Text, Flächen, Status, Fokus, Info, Erfolg, Warnung, Gefahr,

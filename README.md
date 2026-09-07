@@ -330,6 +330,13 @@ Technische Prüfanker bleiben aufklappbar, während Aktion, Risiko und konkrete 
 bleiben. Native Dialoge, 44-Pixel-Controls, Fokusrahmen und Reduced Motion gelten durchgehend.
 Die Abnahme ist in [Plan 09](docs/plans/09-COHESIVE_DESKTOP_UI.md) dokumentiert.
 
+Die Mehrprovider-Einstellungen besitzen kompakte, unabhängig bedienbare Verbindungskarten.
+Adresse und API-Key werden neben dem jeweiligen Eingabefeld gespeichert. Modelle wählen
+Nutzer in einem nativen Dialog mit Suche, Anbieterfilter und separat scrollbarer Liste
+(höchstens 40 Zeilen pro Seite). Die Einstellungsnavigation und die Prüfaktion bleiben
+erreichbar; Kataloge werden ausschließlich ausdrücklich geladen. Layout und Regressionen
+sind in [Plan 11](docs/plans/11-SETTINGS_MODEL_LAYOUT.md) dokumentiert.
+
 Der zusätzliche Hauptbereich **Abläufe** erschließt aufrufstellenbezogene Schritte,
 Skriptübergänge und Wertabhängigkeiten aus dem normalen Fast Index. Quellen und
 Karte sind verlinkt; Ask, Plan, Agent und Deep Map verwenden dieselben aktuellen

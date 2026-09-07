@@ -3,6 +3,8 @@
   import { parseCommandErrorV1 } from './command-error';
   import ProjectSettingsPanel from './ProjectSettingsPanel.svelte';
   import ThemeControls from './ThemeControls.svelte';
+  import ModelProviderCard from './ModelProviderCard.svelte';
+  import ModelSelectionDialog, { type ModelOption } from './ModelSelectionDialog.svelte';
   import { queryHealth, type HealthResponseV1 } from './health';
   import {
     cancelModelProbe,
@@ -140,16 +142,12 @@
   let v2Settings = $state<SettingsV2 | null>(null);
   let v2Catalogs = $state<Partial<Record<ModelProviderKindV1, ProviderModelsResponseV2>>>({});
   let v2Action = $state<string | null>(null);
-  let v2ApiKeys = $state<Record<ModelProviderKindV1, string>>({
-    ollama: '',
-    gemini: '',
-    openai: '',
-  });
-  let v2Origins = $state<Record<ModelProviderKindV1, string>>({
-    ollama: 'http://127.0.0.1:11434',
-    gemini: 'https://generativelanguage.googleapis.com',
-    openai: 'https://api.openai.com',
-  });
+  let v2Error = $state<{ kind: ModelProviderKindV1; message: string } | null>(null);
+  let v2RoleDialog = $state<ModelRoleV1 | null>(null);
+  let v2Cancelling = $state(false);
+  let v2CancellationFailed = $state(false);
+  const v2Busy = $derived(v2Action !== null || v2Settings?.probeActive === true);
+  const v2Options = $derived(v2ModelOptions());
   let healthView = $state<HealthView>({ kind: 'idle' });
   let action = $state<Action>({ kind: 'idle' });
   let settingsView = $state<SettingsSection>('general');
@@ -177,6 +175,20 @@
   });
 
   function applyV2Settings(settings: SettingsV2): void {
+    if (v2Settings !== null) {
+      const catalogs = { ...v2Catalogs };
+      for (const slot of settings.providers) {
+        const previous = v2Settings.providers.find(
+          (candidate) => candidate.providerKind === slot.providerKind,
+        );
+        if (
+          previous?.configurationRevision !== slot.configurationRevision ||
+          previous?.endpoint?.origin !== slot.endpoint?.origin
+        )
+          delete catalogs[slot.providerKind];
+      }
+      v2Catalogs = catalogs;
+    }
     v2Settings = settings;
     const selectedSlot =
       settings.providers.find((slot) => slot.enabled && slot.endpoint !== null) ??
@@ -202,14 +214,11 @@
     try {
       const response = await settingsLoaderV2();
       applyV2Settings(response.settings);
-      v2Origins = Object.fromEntries(
-        response.settings.providers.map((slot) => [
-          slot.providerKind,
-          slot.endpoint?.origin ?? slot.defaultOrigin,
-        ]),
-      ) as Record<ModelProviderKindV1, string>;
       v2Catalogs = {};
       v2Action = null;
+      v2Error = null;
+      v2Cancelling = false;
+      v2CancellationFailed = false;
     } catch (error) {
       view = { kind: 'error', message: recoveryMessage(error) };
     }
@@ -242,8 +251,20 @@
     return labels[status] ?? 'Nicht geprüft';
   }
 
+  async function reportV2Error(kind: ModelProviderKindV1, error: unknown): Promise<void> {
+    v2Error = { kind, message: recoveryMessage(error) };
+    try {
+      // Failed probes can still persist health and advance the settings revision.
+      // Refresh local metadata before allowing a retry; never reload provider catalogs here.
+      applyV2Settings((await settingsLoaderV2()).settings);
+    } catch {
+      // Preserve the original actionable error if the local status cannot be refreshed.
+    }
+  }
+
   async function configureProviderV2(kind: ModelProviderKindV1, origin: string): Promise<void> {
-    if (v2Settings === null) return;
+    if (v2Settings === null || v2Busy) return;
+    v2Error = null;
     v2Action = `configuring:${kind}`;
     try {
       const response = await providerConfigurerV2(v2Settings.revision, kind, origin.trim() || null);
@@ -252,16 +273,18 @@
       delete remainingCatalogs[kind];
       v2Catalogs = remainingCatalogs;
     } catch (error) {
-      v2Action = recoveryMessage(error);
+      await reportV2Error(kind, error);
     } finally {
       if (v2Action?.startsWith('configuring:')) v2Action = null;
     }
   }
 
-  async function saveProviderCredentialV2(kind: ModelProviderKindV1): Promise<void> {
-    if (v2Settings === null || !requiresApiKey(kind) || !v2ApiKeys[kind]) return;
-    const bytes = new TextEncoder().encode(v2ApiKeys[kind]);
-    v2ApiKeys[kind] = '';
+  async function saveProviderCredentialV2(
+    kind: ModelProviderKindV1,
+    bytes: Uint8Array,
+  ): Promise<void> {
+    if (v2Settings === null || v2Busy || !requiresApiKey(kind) || bytes.length === 0) return;
+    v2Error = null;
     v2Action = `credential:${kind}`;
     try {
       const response = await credentialSetterV2(v2Settings.revision, kind, bytes);
@@ -270,7 +293,7 @@
       delete remainingCatalogs[kind];
       v2Catalogs = remainingCatalogs;
     } catch (error) {
-      v2Action = recoveryMessage(error);
+      await reportV2Error(kind, error);
     } finally {
       bytes.fill(0);
       if (v2Action?.startsWith('credential:')) v2Action = null;
@@ -278,7 +301,8 @@
   }
 
   async function deleteProviderCredentialV2(kind: ModelProviderKindV1): Promise<void> {
-    if (v2Settings === null) return;
+    if (v2Settings === null || v2Busy) return;
+    v2Error = null;
     v2Action = `deleteCredential:${kind}`;
     try {
       applyV2Settings((await credentialDeleterV2(v2Settings.revision, kind)).settings);
@@ -286,14 +310,17 @@
       delete remainingCatalogs[kind];
       v2Catalogs = remainingCatalogs;
     } catch (error) {
-      v2Action = recoveryMessage(error);
+      await reportV2Error(kind, error);
     } finally {
       if (v2Action?.startsWith('deleteCredential:')) v2Action = null;
     }
   }
 
   async function discoverProviderV2(kind: ModelProviderKindV1): Promise<void> {
-    if (v2Settings === null) return;
+    if (v2Settings === null || v2Busy) return;
+    v2Error = null;
+    v2CancellationFailed = false;
+    v2Cancelling = false;
     v2Action = `discovering:${kind}`;
     try {
       const result = await modelDiscovererV2(v2Settings.revision, kind);
@@ -305,19 +332,22 @@
       applyV2Settings(result.settings);
       v2Catalogs = { ...v2Catalogs, [kind]: result };
     } catch (error) {
-      v2Action = recoveryMessage(error);
+      await reportV2Error(kind, error);
     } finally {
       if (v2Action?.startsWith('discovering:')) v2Action = null;
+      v2Cancelling = false;
+      v2CancellationFailed = false;
     }
   }
 
   async function enableProviderV2(kind: ModelProviderKindV1, enabled: boolean): Promise<void> {
-    if (v2Settings === null) return;
+    if (v2Settings === null || v2Busy) return;
+    v2Error = null;
     v2Action = `enabled:${kind}`;
     try {
       applyV2Settings((await providerEnablerV2(v2Settings.revision, kind, enabled)).settings);
     } catch (error) {
-      v2Action = recoveryMessage(error);
+      await reportV2Error(kind, error);
     } finally {
       if (v2Action?.startsWith('enabled:')) v2Action = null;
     }
@@ -330,48 +360,54 @@
     return v2Settings.embeddingProfile;
   }
 
-  function v2ModelOptions(): { kind: ModelProviderKindV1; modelId: string }[] {
+  function v2ModelOptions(): ModelOption[] {
     return providerSlotsV2().flatMap((slot) =>
-      slot.enabled
+      slot.enabled && slot.endpoint !== null
         ? (v2Catalogs[slot.providerKind]?.modelIds.map((modelId) => ({
             kind: slot.providerKind,
             modelId,
+            label: providerLabel(slot.providerKind),
           })) ?? [])
         : [],
     );
   }
 
-  async function probeProviderRoleV2(
-    kind: ModelProviderKindV1,
-    role: ModelRoleV1,
-    modelId: string,
-  ): Promise<void> {
-    if (v2Settings === null) return;
-    const input: ModelProbeInputV1 =
-      role === 'embedding'
-        ? { maxBatchSize: embeddingBatchSize, modelId, role }
-        : role === 'coding'
-          ? {
-              contextTokens: codingContextTokens,
-              modelId,
-              outputTokens: codingOutputTokens,
-              parallelism: codingParallelism,
-              role,
-            }
-          : {
-              contextTokens: mappingContextTokens,
-              modelId,
-              outputTokens: mappingOutputTokens,
-              parallelism: mappingParallelism,
-              role,
-            };
-    v2Action = `probing:${kind}:${role}`;
+  async function probeProviderRoleV2(option: ModelOption, input: ModelProbeInputV1): Promise<void> {
+    if (
+      v2Settings === null ||
+      v2Busy ||
+      !v2Options.some(
+        (candidate) => candidate.kind === option.kind && candidate.modelId === input.modelId,
+      )
+    )
+      return;
+    const kind = option.kind;
+    v2Error = null;
+    v2CancellationFailed = false;
+    v2Cancelling = false;
+    v2Action = `probing:${kind}:${input.role}`;
     try {
       applyV2Settings((await roleProberV2(v2Settings.revision, kind, input)).settings);
+      v2RoleDialog = null;
     } catch (error) {
-      v2Action = recoveryMessage(error);
+      await reportV2Error(kind, error);
     } finally {
       if (v2Action?.startsWith('probing:')) v2Action = null;
+      v2Cancelling = false;
+      v2CancellationFailed = false;
+    }
+  }
+
+  async function cancelV2Operation(): Promise<void> {
+    if (v2Cancelling) return;
+    v2Cancelling = true;
+    v2CancellationFailed = false;
+    try {
+      await operationCanceller();
+      // Keep the operation owned until its original promise settles.
+    } catch {
+      v2Cancelling = false;
+      v2CancellationFailed = true;
     }
   }
 
@@ -972,7 +1008,9 @@
     {:else if view.kind === 'error'}
       <div class="settings-error" role="status" aria-live="polite">
         <p>{view.message}</p>
-        <button type="button" onclick={loadSettings}>Erneut laden</button>
+        <button type="button" onclick={legacyLoaderProvided ? loadSettings : loadSettingsV2}
+          >Erneut laden</button
+        >
       </div>
     {:else}
       {#if settingsView === 'general'}
@@ -1001,103 +1039,60 @@
           </header>
 
           {#if v2Settings !== null}
+            {#if v2CancellationFailed && v2RoleDialog === null}
+              <p class="settings-error-message" role="alert">
+                Der Abbruch konnte nicht angefordert werden. Versuche es erneut.
+              </p>
+            {/if}
+            {#if v2Settings.probeActive && v2Action === null}
+              <div class="setup-pending-state" role="status">
+                <p>
+                  Eine Modellprüfung läuft. Aktualisiere den Status nach ihrem Abschluss oder
+                  fordere den Abbruch an.
+                </p>
+                <div class="provider-actions">
+                  <button type="button" onclick={loadSettingsV2}>Status aktualisieren</button>
+                  <button type="button" disabled={v2Cancelling} onclick={cancelV2Operation}
+                    >{v2Cancelling ? 'Abbruch angefordert …' : 'Prüfung abbrechen'}</button
+                  >
+                </div>
+              </div>
+            {/if}
             <section class="model-setup-section" aria-labelledby="provider-v2-heading">
               <header class="setup-section-heading">
                 <div>
                   <span class="setup-step" aria-hidden="true">1</span>
                   <div>
-                    <h4 id="provider-v2-heading">Provider verbinden und aktivieren</h4>
+                    <h4 id="provider-v2-heading">Deine KI-Verbindungen</h4>
                     <p>
-                      Jeder Provider wird unabhängig geprüft. Aktivierung ist erst nach
-                      erfolgreichem Modellabruf möglich.
+                      Verbinde einen oder mehrere Anbieter. Nach einem erfolgreichen Test kannst du
+                      sie aktivieren.
                     </p>
                   </div>
                 </div>
               </header>
-              <div class="provider-list" aria-label="Providerkarten">
+              <div class="provider-connections" aria-label="Providerkarten">
                 {#each providerSlotsV2() as slot (slot.providerKind)}
-                  <article
-                    class="provider-row provider-card"
-                    aria-labelledby={`provider-${slot.providerKind}`}
-                  >
-                    <div class="provider-logo" aria-hidden="true">
-                      {providerInitial(slot.providerKind)}
-                    </div>
-                    <div class="provider-summary">
-                      <div>
-                        <strong id={`provider-${slot.providerKind}`}
-                          >{v2ProviderLabel(slot.providerKind)}</strong
-                        ><span class="settings-badge">{v2HealthLabel(slot)}</span>
-                      </div>
-                      <label
-                        >Origin
-                        <input
-                          aria-label={`${v2ProviderLabel(slot.providerKind)} Origin`}
-                          value={v2Origins[slot.providerKind]}
-                          oninput={(event) =>
-                            (v2Origins[slot.providerKind] = event.currentTarget.value)}
-                        />
-                      </label>
-                      <code>{v2CredentialLabel(slot)}</code>
-                      {#if requiresApiKey(slot.providerKind)}
-                        <label
-                          >API-Key
-                          <input
-                            type="password"
-                            autocomplete="off"
-                            aria-label={`${v2ProviderLabel(slot.providerKind)} API-Key`}
-                            bind:value={v2ApiKeys[slot.providerKind]}
-                          />
-                        </label>
-                      {/if}
-                    </div>
-                    <div class="provider-actions">
-                      <button
-                        type="button"
-                        disabled={v2Action !== null}
-                        onclick={() =>
-                          configureProviderV2(slot.providerKind, v2Origins[slot.providerKind])}
-                        >URL speichern</button
-                      >
-                      <button
-                        type="button"
-                        class="subtle-danger-action"
-                        disabled={v2Action !== null || slot.endpoint === null}
-                        onclick={() => configureProviderV2(slot.providerKind, '')}
-                        >Zurücksetzen</button
-                      >
-                      {#if requiresApiKey(slot.providerKind)}
-                        <button
-                          type="button"
-                          disabled={!v2ApiKeys[slot.providerKind] || v2Action !== null}
-                          onclick={() => saveProviderCredentialV2(slot.providerKind)}
-                          >Key speichern</button
-                        >
-                        {#if slot.credential?.status === 'configured'}<button
-                            type="button"
-                            disabled={v2Action !== null}
-                            onclick={() => deleteProviderCredentialV2(slot.providerKind)}
-                            >Key löschen</button
-                          >{/if}
-                      {/if}
-                      <button
-                        type="button"
-                        disabled={v2Action !== null || slot.endpoint === null}
-                        onclick={() => discoverProviderV2(slot.providerKind)}
-                        >Verbindung testen und Modelle laden</button
-                      >
-                      <button
-                        type="button"
-                        disabled={v2Action !== null || slot.connectionVerifiedAtUnixMillis === null}
-                        aria-pressed={slot.enabled}
-                        onclick={() => enableProviderV2(slot.providerKind, !slot.enabled)}
-                        >{slot.enabled ? 'Provider deaktivieren' : 'Provider aktivieren'}</button
-                      >
-                    </div>
-                    {#if v2Catalogs[slot.providerKind] !== undefined}<small role="status"
-                        >{v2Catalogs[slot.providerKind]?.modelIds.length ?? 0} Modelle geladen</small
-                      >{/if}
-                  </article>
+                  <ModelProviderCard
+                    {slot}
+                    label={v2ProviderLabel(slot.providerKind)}
+                    health={v2HealthLabel(slot)}
+                    credential={v2CredentialLabel(slot)}
+                    busy={v2Busy}
+                    loading={v2Action === `discovering:${slot.providerKind}`}
+                    cancelling={v2Cancelling}
+                    message={v2Error?.kind === slot.providerKind && v2RoleDialog === null
+                      ? v2Error.message
+                      : null}
+                    catalogCount={v2Catalogs[slot.providerKind]?.modelIds.length}
+                    truncated={v2Catalogs[slot.providerKind]?.truncated}
+                    onconfigure={(origin) => configureProviderV2(slot.providerKind, origin)}
+                    oncredential={(bytes) => saveProviderCredentialV2(slot.providerKind, bytes)}
+                    ondeletecredential={() => deleteProviderCredentialV2(slot.providerKind)}
+                    ondiscover={() => discoverProviderV2(slot.providerKind)}
+                    onenable={() => enableProviderV2(slot.providerKind, !slot.enabled)}
+                    oncancel={cancelV2Operation}
+                  />
                 {/each}
               </div>
             </section>
@@ -1107,38 +1102,50 @@
                 <div>
                   <span class="setup-step" aria-hidden="true">2</span>
                   <div>
-                    <h4 id="role-v2-heading">Aufgaben zuordnen</h4>
-                    <p>
-                      Modelle werden als Provider/Modell-Tupel geführt; gleiche IDs bleiben
-                      eindeutig.
-                    </p>
+                    <h4 id="role-v2-heading">Modelle für deine Aufgaben</h4>
+                    <p>Wähle für jede Aufgabe ein Modell aus deinen aktiven Anbietern.</p>
                   </div>
                 </div>
               </header>
+              {#if v2Options.length === 0}
+                <p class="model-assignment-hint">
+                  Lade oben die Modelle eines Anbieters und aktiviere ihn. Bereits gespeicherte
+                  Zuordnungen bleiben sichtbar.
+                </p>
+              {/if}
               <div class="model-role-list" aria-label="Providerübergreifende Modellzuordnungen">
                 {#each modelRoles as role (role)}
                   {@const profile = v2RoleProfile(role)}
-                  <article class="model-role-row">
+                  <article class="model-role-row" aria-label={roleLabel(role)}>
                     <div><strong>{roleLabel(role)}</strong><span>{rolePurpose(role)}</span></div>
                     <div class="model-role-selection">
-                      <code
-                        >{profile === null
-                          ? 'Nicht zugeordnet'
-                          : `${profile.providerKind} / ${profile.modelId}`}</code
-                      ><span>{profile === null ? 'Noch nicht geprüft' : 'Verifiziert'}</span>
+                      <code title={profile?.modelId}>{profile?.modelId ?? 'Nicht zugeordnet'}</code>
+                      <span
+                        class:capability-limited={profile !== null &&
+                          'activation' in profile &&
+                          profile.activation === 'capabilityLimited'}
+                      >
+                        {profile
+                          ? `${providerLabel(profile.providerKind)} · ${roleStatus(view.settings, role)}`
+                          : 'Noch nicht eingerichtet'}
+                      </span>
+                      {#if profile !== null && 'activation' in profile && profile.activation === 'capabilityLimited'}
+                        <small
+                          >Die erforderliche strukturierte Antwort wurde nicht bestätigt. Wähle ein
+                          anderes Modell oder prüfe es erneut.</small
+                        >
+                      {/if}
                     </div>
-                    <details>
-                      <summary>Modell wählen</summary>
-                      <div class="model-choice-list">
-                        {#each v2ModelOptions() as option (`${option.kind}:${option.modelId}`)}
-                          <button
-                            type="button"
-                            onclick={() => probeProviderRoleV2(option.kind, role, option.modelId)}
-                            >{option.kind} · {option.modelId}</button
-                          >
-                        {/each}
-                      </div>
-                    </details>
+                    <button
+                      type="button"
+                      disabled={v2Busy || v2Options.length === 0}
+                      onclick={() => {
+                        v2Error = null;
+                        v2RoleDialog = role;
+                      }}
+                    >
+                      {profile ? 'Modell ändern' : 'Modell wählen'}
+                    </button>
                   </article>
                 {/each}
               </div>
@@ -1409,6 +1416,27 @@
     {/if}
   </div>
 </section>
+
+{#if v2RoleDialog !== null}
+  <ModelSelectionDialog
+    role={v2RoleDialog}
+    title={roleLabel(v2RoleDialog)}
+    purpose={rolePurpose(v2RoleDialog)}
+    options={v2Options}
+    profile={v2RoleProfile(v2RoleDialog)}
+    busy={v2Busy}
+    cancelling={v2Cancelling}
+    error={v2CancellationFailed
+      ? 'Der Abbruch konnte nicht angefordert werden. Versuche es erneut.'
+      : (v2Error?.message ?? null)}
+    onclose={() => {
+      v2RoleDialog = null;
+      v2Error = null;
+    }}
+    oncancel={cancelV2Operation}
+    onchoose={probeProviderRoleV2}
+  />
+{/if}
 
 {#if providerDialog === 'create' || providerDialog === 'edit'}
   <dialog
