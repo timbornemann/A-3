@@ -61,7 +61,7 @@ fn retained_long_interpretation() -> String {
     )
 }
 
-fn quote(packet: &str, needle: &str) -> Option<serde_json::Value> {
+pub(super) fn quote(packet: &str, needle: &str) -> Option<serde_json::Value> {
     let mut source = None;
     let mut anchor = None;
     for line in packet.lines() {

@@ -29,6 +29,9 @@ mod coherent_contract;
 #[path = "agent_research_navigation_tests.rs"]
 mod navigation_contract;
 
+#[path = "agent_research_supplement_tests.rs"]
+mod supplement_contract;
+
 fn fixture_plan(summary: &str) -> String {
     format!(
         "PLAN:\n## Summary\n{summary}\n## Implementation Changes\n1. Die gewünschte Erweiterung über die bestehende Manager-API integrieren.\n## Interfaces\nNeue CSV-Spalten als vorgeschlagenen Vertrag dokumentieren.\n## Test Plan\n1. Gültige und fehlerhafte CSV-Zeilen sowie unveränderte Bestandsaufgaben prüfen.\n## Assumptions\nNeue CSV-Spalten werden entworfen, nicht als vorhandene Schnittstelle behauptet."

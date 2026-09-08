@@ -558,6 +558,59 @@ impl AskResearchWorkingSet {
         Some(selected)
     }
 
+    /// Keep mandatory complete originals intact; use only spare bytes for existing reads.
+    fn supplement_complete_excerpts<'a>(
+        &'a self,
+        selected: &mut Vec<&'a ResearchSourceExcerpt>,
+        limit: usize,
+    ) {
+        let cost = |item: &ResearchSourceExcerpt, index: usize| {
+            format!(
+                "\n[S{}] {} ab Zeile {} (Spalte 0) [E{}]\n",
+                item.ordinal,
+                item.path,
+                item.start_line,
+                index + 1
+            )
+            .len()
+            .saturating_add(item.text.len())
+            .saturating_add(1)
+        };
+        let mut remaining = limit.saturating_sub(
+            selected
+                .iter()
+                .enumerate()
+                .map(|(index, item)| cost(item, index))
+                .sum(),
+        );
+        for item in &self.excerpts {
+            if selected.len() == 8 {
+                break;
+            }
+            let Some(revision) = self.revision_for(item) else {
+                continue;
+            };
+            let start = SourcePosition::new(item.start_line.saturating_sub(1), 0);
+            let end = end_position(start, &item.text);
+            if item.text.is_empty()
+                || selected
+                    .iter()
+                    .any(|old| self.revision_for(old) == Some(revision))
+                || self.original_byte_at(item.ordinal, start).is_none()
+                || !self.read_coverage.iter().any(|read| {
+                    read.revision == *revision && read.start <= start && read.end >= end
+                })
+            {
+                continue;
+            }
+            let bytes = cost(item, selected.len());
+            if bytes <= remaining {
+                selected.push(item);
+                remaining -= bytes;
+            }
+        }
+    }
+
     pub(super) fn compile_evidence_window(
         &mut self,
         required: &[FileRevision],
@@ -585,6 +638,7 @@ impl AskResearchWorkingSet {
         let prefer_complete = complete.is_some();
         let mut selected = complete.unwrap_or_default();
         if prefer_complete {
+            self.supplement_complete_excerpts(&mut selected, limit);
             candidates.clear();
         }
         for item in candidates {

@@ -22,6 +22,12 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   read-only; disjunkte Bereiche derselben Revision, Überlappungen, explizite neue Stellen und
   512–8192-Byte-Grenzen sind separat zu prüfen. Siehe
   [Regression](../fixtures/research-coherent-v1/README.md).
+- Die optionale direkte Quellenversorgung aus ADR-0099 verlangt tatsächlich gemeinsam
+  gelieferte Caller-, Writer- und Callee-Originale in Ask, Plan und Agent-Vorbereitung.
+  Der reale Index-/Reader-/libSQL-Vertrag prüft einen abgerechneten Core-Read ohne
+  Modell-Navigationsauftrag sowie veränderte Callee-Dateien. Fehlende/partielle/stale
+  Aufrufbelege, ungelöste Ziele, ein Hop, vier Dateien, acht Fenster, exakter Restplatz
+  und erschöpfte Modell-/Read-/Zeitbudgets bleiben getrennte Negativfälle.
 
 ### Frontend
 

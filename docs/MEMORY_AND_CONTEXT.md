@@ -1089,6 +1089,15 @@ außerhalb des benannten Sets erreichbar; Pflichtdateien sperren keine Abhängig
 Nur tatsächlich gerenderte Fenster gelten als
 ausgeliefert; es entsteht kein zusätzlicher Read, Beweis oder Kontextplatz.
 
+[ADR-0099](adrs/0099-begrenzte-direkte-recherchequellen.md) ergänzt einmal vor der
+ersten Bestandsanalyse bis zu vier direkte Callee-Dateien aus vollständig gelieferten
+benannten Originalen. Nur aktuelle aufgelöste Calls, mindestens 1024 freie Paketbytes
+und verbleibende Suchberechtigung erlauben die vorhandenen abgerechneten Read-Aktionen.
+Es gibt weder rekursive Suche noch eine semantische Auflösung dynamischer Aufrufe.
+Nach vollständig passenden Pflichtoriginalen dürfen zusätzliche echte Cacheausschnitte
+vollständig in den Rest passen, ohne Pflichtbytes zu kürzen oder das Achtfensterlimit
+zu ändern. Evidence-, Freshness-, Zeit- und Repairgrenzen bleiben unverändert.
+
 Nach [ADR-0057](adrs/0057-leerer-entwurf-ist-kein-rechercheauftrag.md) benötigt Design
 bei `progress` genau ein Ergebnis. Ein leerer Entwurf ist ungültiger Modelloutput,
 kein Anlass für weitere Originalreads. Nur die explizite Entscheidung `question`

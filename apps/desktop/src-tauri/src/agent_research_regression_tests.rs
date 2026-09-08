@@ -178,6 +178,187 @@ fn complete_file_marker_cannot_promote_a_clipped_or_unread_cache() -> TestResult
 }
 
 #[test]
+fn supplemental_originals_use_only_exact_spare_bytes_without_changing_required_windows()
+-> TestResult {
+    let mut state = AskResearchWorkingSet::new(8192);
+    state.initialize_plan_work("Explain caller.py")?;
+    let caller = source(1, "caller.py", 2)?;
+    let required = [caller.revision().clone()];
+    let body = "import helper\nvalue = helper.run()\n";
+    state.render(&caller, 1, body, false);
+    state.sources.push(caller);
+    state.complete_files.extend_from_slice(&required);
+    let baseline = state.compile_evidence_window(&required, 8192);
+    let helper = source(2, "helper.py", 2)?;
+    let helper_body = "def run():\n    return 'Größe 🦀'\n";
+    state.render(&helper, 1, helper_body, false);
+    state.sources.push(helper);
+    let reads = state.read_coverage.clone();
+    let packet = state.compile_evidence_window(&required, 8192);
+    assert!(packet.starts_with(&baseline));
+    assert!(packet.contains(helper_body));
+    assert_eq!(state.work_evidence_windows().len(), 2);
+    for limit in [0, 128, 256, 512, 1024, 2048, 4096, 8192] {
+        let candidate = state.compile_evidence_window(&required, limit);
+        assert!(candidate.len() <= limit);
+        assert_eq!(state.compile_evidence_window(&required, limit), candidate);
+        if limit >= baseline.len() {
+            assert!(candidate.starts_with(&baseline));
+        }
+    }
+    assert_eq!(
+        state.compile_evidence_window(&required, packet.len()),
+        packet
+    );
+    assert_eq!(
+        state.compile_evidence_window(&required, packet.len() - 1),
+        baseline
+    );
+    assert_eq!(state.read_coverage, reads, "packing performs no new reads");
+    state
+        .read_coverage
+        .retain(|read| read.revision == required[0]);
+    assert_eq!(
+        state.compile_evidence_window(&required, 8192),
+        baseline,
+        "unread supplemental text is not eligible"
+    );
+    state.read_coverage = reads;
+    state.read_coverage[1].revision = FileRevision::new(
+        state.read_coverage[1].revision.path().clone(),
+        ContentHash::from_bytes([99; 32]),
+    );
+    assert_eq!(
+        state.compile_evidence_window(&required, 8192),
+        baseline,
+        "a different revision's receipt cannot authorize a supplement"
+    );
+    Ok(())
+}
+
+#[test]
+fn supplemental_originals_skip_oversize_duplicates_and_keep_eight_window_bound() -> TestResult {
+    let mut state = AskResearchWorkingSet::new(8192);
+    state.initialize_plan_work("Explain caller.py")?;
+    let caller = source(1, "caller.py", 2)?;
+    let required = [caller.revision().clone()];
+    state.render(&caller, 1, "import helper\nhelper.run()\n", false);
+    state.sources.push(caller);
+    state.complete_files.extend_from_slice(&required);
+    let oversized = source(2, "too_big.py", 2)?;
+    state.render(&oversized, 1, &"# irrelevant\n".repeat(1000), false);
+    state.sources.push(oversized);
+    for ordinal in 3..=12 {
+        let item = source(ordinal, &format!("helper{ordinal}.py"), 2)?;
+        state.render(&item, 1, "def run():\n    return 7\n", false);
+        // Repeated cache entries must not consume another window or duplicate bytes.
+        state.render(&item, 1, "def run():\n    return 7\n", false);
+        state.sources.push(item);
+    }
+    let packet = state.compile_evidence_window(&required, 4096);
+    assert!(!packet.contains("too_big.py"));
+    assert_eq!(packet.matches("def run():").count(), 7);
+    assert_eq!(state.work_evidence_windows().len(), 8);
+    assert_eq!(state.compile_evidence_window(&required, 4096), packet);
+    assert!(state.focus_cached(&AskResearchAction::InspectPath {
+        path: "too_big.py".to_owned(),
+        start_line: 150
+    }));
+    assert!(
+        state
+            .compile_evidence_window(&required, 1024)
+            .contains("ab Zeile 150"),
+        "explicit navigation still wins"
+    );
+    Ok(())
+}
+
+#[test]
+fn supplemental_reads_require_whole_named_delivery_and_open_time_read_model_budgets() -> TestResult
+{
+    use a3_application::ResearchOutputPhase;
+    let mut state = AskResearchWorkingSet::new(8192);
+    state.initialize_plan_work("Explain caller.py")?;
+    let caller = source(1, "caller.py", 2)?;
+    let required = [caller.revision().clone()];
+    state.work_required_revisions = required.to_vec();
+    state.render(&caller, 1, "import helper\nhelper.run()\n", false);
+    state.sources.push(caller);
+    state.complete_files.extend_from_slice(&required);
+    let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
+    let analyze = ResearchOutputPhase::Analyze(a3_domain::ResearchQuestionId::FIRST);
+    assert!(
+        !research_supplement::allowed(&state, &controller, analyze, 7168, 0),
+        "read receipt is not actual delivery"
+    );
+    state.compile_evidence_window(&required, 8192);
+    assert!(research_supplement::allowed(
+        &state,
+        &controller,
+        analyze,
+        7168,
+        0
+    ));
+    assert!(!research_supplement::allowed(
+        &state,
+        &controller,
+        analyze,
+        7169,
+        0
+    ));
+    assert!(!research_supplement::allowed(
+        &state,
+        &controller,
+        analyze,
+        usize::MAX,
+        0
+    ));
+    assert!(!research_supplement::allowed(
+        &state,
+        &controller,
+        analyze,
+        0,
+        controller.limits().duration_millis()
+    ));
+    for phase in [
+        ResearchOutputPhase::Initialize,
+        ResearchOutputPhase::Finalize,
+        ResearchOutputPhase::Design(a3_domain::ResearchQuestionId::FIRST),
+        ResearchOutputPhase::DesignTests(a3_domain::ResearchQuestionId::FIRST),
+    ] {
+        assert!(!research_supplement::allowed(
+            &state,
+            &controller,
+            phase,
+            0,
+            0
+        ));
+    }
+    for _ in 0..controller.limits().model_decisions() - 1 {
+        controller.begin_work_decision(0)?;
+    }
+    assert!(
+        !research_supplement::allowed(&state, &controller, analyze, 0, 0),
+        "last model turn is final only"
+    );
+    let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
+    for i in 0..controller.limits().read_actions() {
+        controller.prepare_actions(vec![AskResearchAction::InspectPath {
+            path: format!("known{i}.py"),
+            start_line: 1,
+        }])?;
+    }
+    assert!(!research_supplement::allowed(
+        &state,
+        &controller,
+        analyze,
+        0,
+        0
+    ));
+    Ok(())
+}
+
+#[test]
 fn complete_named_originals_do_not_hide_a_new_external_read_frontier() -> TestResult {
     let mut state = AskResearchWorkingSet::new(4096);
     state.initialize_plan_work("Plan changes in first.py")?;
@@ -977,6 +1158,29 @@ fn turn() -> Result<AskResearchTurn, Box<dyn std::error::Error>> {
         SnapshotId::from_bytes([3; 32]),
         AgentSessionTimestamp::from_unix_millis(1)?,
     ))
+}
+
+#[test]
+fn supplemental_revalidation_expiry_preserves_the_normal_time_limit_reason() -> TestResult {
+    let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
+    let deadline = controller.limits().duration_millis();
+    assert!(
+        research_supplement::prepare(
+            &mut controller,
+            vec![AskResearchAction::InspectPath {
+                path: "helper.py".to_owned(),
+                start_line: 1
+            }],
+            deadline
+        )?
+        .is_none()
+    );
+    assert_eq!(controller.actions_used(), 0);
+    assert_eq!(
+        controller.begin_work_decision(deadline),
+        Err(a3_application::ResearchControllerError::TimedOut)
+    );
+    Ok(())
 }
 
 fn source(

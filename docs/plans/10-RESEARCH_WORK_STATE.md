@@ -40,6 +40,20 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Direkte Callee-Originale vor der ersten Bestandsanalyse aus vorhandenen
+      belegten Calls begrenzt ergänzen und freien Kontext nach Pflichtdateien
+      nutzen ([ADR-0099](../adrs/0099-begrenzte-direkte-recherchequellen.md)).
+      Sieben Grenzregressionen, echte Mehrmodus-/Reader-/Storage-Verträge und
+      vollständige Gates bestehen. Sechs gezielte Modellnachtests schließen ohne
+      Nutzerhalt ab; fünf erhalten die Zusatzquelle, Qwens 8k-Paket nicht.
+      Die tatsächliche Quellenlieferung ist verbessert, der Inhaltsfehler nicht.
+
+- [ ] Quellenlokale Bestandsauswertung und anschließende Synthese kontrolliert
+      vergleichen: Luna, Ornith und Flash behaupten trotz gelieferter Storage-
+      Implementierung weiter eine Persistenz. Falsche Inline-Zeilen und doppelte
+      Teilantworten getrennt prüfen. Mehr Quellenanker, eine gelockerte Rubrik oder
+      Modellselbstbewertung dürfen keine Fakten-/Abschlussautorität ersetzen.
+
 - [ ] Quellengeführte Vorentscheidung und exakt gelieferte Originalbereiche nach
       [ADR-0098](../adrs/0098-quellengefuehrte-arbeitsentscheidung-im-vergleich.md)
       als getrennten nativen Vergleich prüfen. Qwen-Diagnose belegt 24 wiederholte

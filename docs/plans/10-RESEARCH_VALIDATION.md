@@ -1,5 +1,130 @@
 # Plan 10: Verifikationsprotokoll
 
+## 2026-09-08: Direkte Originalergänzung und getrennte Inhaltsprüfung (ADR-0099)
+
+Ausgangspunkt `fcaeb7a`. Ein neuer realer Offline-Test des unveränderten
+öffentlichen Audit-Auftrags 1:1 reproduziert die Quellenlücke: Die Auswahl enthält
+Manager und Plugins sowie drei zusätzliche Manager-Spans, aber keine Storage-Datei.
+Beide Analysepakete liefern nur Manager und Plugins. Der Fast Index enthält einen
+aufgelösten Call vom Manager-Konstruktor zu `create_storage`; der Aufruf
+`self.storage.save_tasks` bleibt ausdrücklich dynamisch und ungelöst.
+
+[ADR-0099](../adrs/0099-begrenzte-direkte-recherchequellen.md) ergänzt einmal vor der
+ersten passenden Bestandsanalyse direkte Originaldateien über vorhandene abgerechnete
+Reads. Tatsächliche Aufrufstellenlieferung und Revalidierung, ein Hop, vier Dateien,
+4096 inspizierte Kanten und verbleibende Suchberechtigung begrenzen den Schritt.
+Passende zusätzliche Cacheausschnitte dürfen freien Platz nach vollständigen
+Pflichtoriginalen nutzen, ohne diese zu kürzen. Es gibt keine neue Modellphase,
+kein vergrößertes Profil und keinen semantischen Faktenstatus.
+
+Die Rot→Grün-Fixture liefert in Ask, Plan und Agent-Vorbereitung bei 4096 und
+8192 **Paketbytes** gleichzeitig die vollständigen drei Dateien. Genau ein
+Core-Read wird dauerhaft als Completed gespeichert; das Testmodell fordert keine
+Navigation an. Diese Bytefenster sind nicht mit 8k Modellkontexttokens gleichzusetzen.
+Ein geänderter Callee wird über den echten Reader als Unavailable quittiert,
+ohne dessen alte oder neue Bytes ans Modell zu liefern. Die Originale und die
+absichtliche Teständerung bleiben bytegleich. Weitere Regressionen prüfen
+fehlende, partielle und falsche Revisionsbelege, dynamische Ziele, deduplizierte
+Vier-Datei-Auswahl ohne Rekursion, vollständige Pflichtfenster, exakten UTF-8-/Headerfit,
+acht Fenster und die Modell-/Read-/Zeitgrenzen. Läuft die Frist während der
+Revalidierung ab, erzeugt der normale Controller TimeLimit statt InvalidOutput.
+
+### Gezielter Live-Nachtest
+
+Sechs einzelne Läufe desselben unveränderten Audit-Falls 1:1; lokale Modelle
+ausschließlich nacheinander. Externe Provider werden über die bereits freigegebenen
+App-Slots geladen. Dieser read-only Recherchetest ist nicht der zuvor gesperrte
+SourceGuided-Codingvergleich. Keine private Repositoryquelle oder zusätzliche
+Modellinstallation. Der native Settings-Katalog bleibt vor/nach allen sechs Läufen
+bytegleich (SHA-256 `aecc7ef93abe29daa97747f2216e87f49aef99ce9490942fc11ee5c65c09ab32`).
+
+Eingefrorenes Binary:
+`target/reports/research-supplement-20260908/research-tests.exe`, SHA-256
+`f822cc7b42047b031f374ac55bb50dcda5b0772fde1975c8c1926d4763fa3374`.
+Die spätere enge Timeoutklassifizierung ändert keinen dieser erfolgreichen Readpfade;
+sie wird separat und in den finalen vollständigen Offline-Gates geprüft.
+
+| Modell | Modellaufrufe | Zusatzreads | Abschluss / Nutzerhalt | Begriffrubrik v3 |
+| --- | ---: | ---: | --- | --- |
+| gpt-5.6-luna | 3 | 1 | abgeschlossen / nein | fehlt `write` |
+| ornith-1.5:9b | 3 | 1 | abgeschlossen / nein | fehlt `write` |
+| qwen38-8k:latest | 3 | 0 | abgeschlossen / nein | fehlt `write` |
+| gemini-3.8-flash | 3 | 1 | abgeschlossen / nein | bestanden |
+| gemma4:12b | 4 | 1 | abgeschlossen / nein | fehlt `write` |
+| granite4.2:8b | 3 | 1 | abgeschlossen / nein | fehlt `write` |
+
+Alle sechs Prüfstände sind WorkReady; kein identischer adaptiver Read. Bei fünf
+Modellen liegen E1=Manager, E2=Plugins und E3=Storage gleichzeitig in beiden
+Analysepaketen. Qwens unverändertes 8192/2048-Profil erhält nur die Pflichtdateien;
+die optionale Ergänzung ist mangels gefordertem Restplatz nicht aktiv. Gemma benötigt
+den bestehenden Einzelrepair, weil es zunächst nur E1 für beide benannten Dateien
+referenziert. Keine Reparatur löst einen zusätzlichen Read aus.
+
+**Inhaltlich ist der Defekt nicht behoben.** Luna und Ornith verwenden trotz
+geliefertem Storage-Original nur E1/E2 und beschreiben `save_tasks` weiterhin als
+Speicherung beziehungsweise Persistenz. Die tatsächlichen Methoden geben lediglich
+Tupel zurück. Auch Flashs bestandene Rubrik enthält diese falsche Deutung.
+Ornith erfindet weiterhin freie Inline-Zeilenangaben. Gemma lässt die irreführende
+Storage-Aussage aus, benennt aber den konkreten `output.write`-Aufruf nicht.
+Die zwei Core-Teilfragen erzeugen weiterhin weitgehend überlappende Antworten.
+
+Diese Daten rechtfertigen keine pauschale Zuverlässigkeits- oder Geschwindigkeitsaussage.
+Der Nachweis betrifft die zusätzliche originale Informationsgrundlage und zeigt,
+dass Quellenlieferung allein kein Beleg für deren korrekte Verwendung ist. Ein
+gezielter quellenlokaler Analyse-/Synthesevergleich bleibt die nächste offene
+Untersuchung; bloß mehr E-Anker, eine gelockerte Rubrik oder Modellselbstbewertung
+dürfen nicht als Korrektur gelten. Die normale Agentstrategie bleibt unverändert.
+
+Rohberichte unter `target/research-eval` (je ein Fall, Hash SHA-256):
+
+| Modell | JSONL | SHA-256 |
+| --- | --- | --- |
+| Luna | `eval-1788862833191.jsonl` | `b55c898756d1ea7aebe35a1f1edbbb834e2da2d392f5c7ee221011d4aab0c5e4` |
+| Ornith | `eval-1788862921538.jsonl` | `e466fab48de1b5a7f7d888eac9bd86fd8f030a1b9987ca17d428c5da7a62942b` |
+| Qwen | `eval-1788863097246.jsonl` | `f8d59f5a6331d990eb1d964c27a94aa0c72846fcb6b9d4b61b2e2e49b775ae4c` |
+| Flash | `eval-1788863100841.jsonl` | `e294d658cec63245187d7c8aeb7906848abf98132ed0a1e611db2c6bd3c75238` |
+| Gemma | `eval-1788863203907.jsonl` | `21a38bc5e93adb8dec41009a01a67b73bcaf3e4b009d571e192d4da55d56f8ea` |
+| Granite | `eval-1788863255661.jsonl` | `c54c87f81584550861382281adf2f198b02158c1aa6083196115c059b2cc6ed1` |
+
+Die Prozesslogs liegen im Binary-Verzeichnis. Flash endet mit Exit 0; die fünf
+übrigen Tests mit Exit 101 wegen der unveränderten Inhaltsrubrik, nicht wegen
+eines Controllerabsturzes. Aus den gespeicherten JSONL-Abschlüssen sind Verlauf
+und Inhaltsfehler getrennt nachvollziehbar. Die Wrapperausgabe allein zeigt die
+eigentliche Rubrikursache derzeit nicht; rohe fremde Modellausgaben sollen deshalb
+nicht pauschal in Produktlogs übernommen werden.
+
+### Qualitätsgates
+
+Auf dem finalen Quellstand nach der Timeoutpräzisierung bestanden:
+
+```text
+cargo fmt --all -- --check
+cargo test -p a3-desktop --lib supplemental --offline --locked --jobs 2 -- --test-threads=1
+cargo test --workspace --all-features --offline --locked --jobs 2 -- --test-threads=1
+cargo clippy --workspace --all-targets --all-features --offline --locked --jobs 2 -- -D warnings
+pnpm check:links
+git diff --check
+```
+
+Alle Cargo-Gates mit `CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0` und
+`CARGO_PROFILE_TEST_DEBUG=0`. Sieben gezielte Tests, vollständige Workspace-Tests
+einschließlich nativer Lebensdauer-/Storage-/Harness-Verträge und Clippy mit
+Warnungen als Fehler: Exit 0. Keine Quellcodeänderung nach diesen Gates.
+Frontendcode ist unverändert; der Linkcheck prüft 144 Dokumente und 599 Links.
+Die bekannte Node-Abweichung 25.6.1 statt 24.14.0 bleibt sichtbar.
+
+Finale Logs unter `target/reports`, SHA-256:
+
+- `research-supplement-targeted-final.log`:
+  `26c8644f72e74966b569f1c8da5d64c8b083e23384d62cd42fa7df41f8a74b42`
+- `research-supplement-workspace-final.log`:
+  `167362faaa6f5dcf3a5dbdbff84af72d7ba76d75ee6c9a93d7b65af957289d81`
+- `research-supplement-clippy-final.log`:
+  `8568fc3df518da3d09565c46ffa082c74a161316fe96b27dc3464925c415ca98`
+
+Kein Push oder Release, keine Schema-/Provider-/Credentialänderung und keine
+Löschung von `target`. Die allgemeine Inhaltsabnahme bleibt offen.
+
 ## 2026-09-08: Exakte Read-Diagnose und SourceWork-Vergleich (ADR-0098)
 
 Ausgangspunkt `a42f164`. Der bisherige Qwen-Befund wird jetzt durch ein

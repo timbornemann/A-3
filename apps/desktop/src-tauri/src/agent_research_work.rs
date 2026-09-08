@@ -461,7 +461,7 @@ impl WorkGuard {
 impl AskResearchWorkingSet {
     /// Cache ownership is not delivery: every required revision must be complete and
     /// its entire nonempty read range must occur in this exact emitted packet.
-    fn complete_required_originals_delivered(&self) -> bool {
+    pub(super) fn complete_required_originals_delivered(&self) -> bool {
         let origin = a3_domain::SourcePosition::new(0, 0);
         let mut current = Vec::new();
         for window in self

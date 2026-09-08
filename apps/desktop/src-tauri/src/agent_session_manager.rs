@@ -731,6 +731,7 @@ impl AgentAskResearcher {
         let mut model_transcript = Vec::new();
         let mut feedback = state.continuation_feedback.clone();
         let mut controller = BoundedResearchController::new(turn.depth());
+        let mut direct_sources_pending = true;
         if let Some(profile) = command_profile {
             let initial_actions = profile.initial_read_actions();
             if !initial_actions.is_empty() {
@@ -804,7 +805,26 @@ impl AgentAskResearcher {
                         ResearchStopReason::ContextLimit,
                     );
                 }
-                let packet = state.model_evidence(query, &query_targets);
+                let mut packet = state.model_evidence(query, &query_targets);
+                if direct_sources_pending && !citation_repair_pending {
+                    direct_sources_pending = false;
+                    if self
+                        .supplement_direct_sources(
+                            project,
+                            published,
+                            turn,
+                            &mut state,
+                            &mut controller,
+                            started,
+                            query,
+                            packet.len(),
+                            control,
+                        )
+                        .await?
+                    {
+                        packet = state.model_evidence(query, &query_targets);
+                    }
+                }
                 compiled_work_packet = Some(packet);
                 let key = state.work_packet_key();
                 let next = state
@@ -2920,6 +2940,8 @@ mod research_context;
 mod research_flows;
 #[path = "agent_research_followup.rs"]
 mod research_followup;
+#[path = "agent_research_supplement.rs"]
+mod research_supplement;
 use research_followup::ResearchStopReason;
 #[path = "agent_research_access.rs"]
 pub(crate) mod research_access;
