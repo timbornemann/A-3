@@ -43,14 +43,13 @@ und 513-Byte-/Unicode-Überschreitungen, V1-Ausgaben sowie übergroße Gesamtdok
 weiterhin ablehnen. Feldgenaue Reparaturhinweise dürfen keine verworfenen Inhalte
 enthalten und keinen zweiten Repair oder größere äußere Budgets eröffnen.
 
-Operationshinweise nach ADR-0102 benötigen einen echten Parsernachweis der konkreten
-Writer-/Return-Schritte einschließlich dynamischer Analysegrenzen sowie exakte
-Revisions-/Fensterbindung, acht Funktionen, 4096 Auswahlkandidaten und ganzen UTF-8-Fit.
-Der tatsächliche Researcher muss die Operationshinweise samt Writer auch bei seinem
-3409-Byte-8k-Paket liefern, ohne Originale zu verdrängen oder weitere Modellaufrufe
-und Originalreads einzuführen. Einzelrepair, Live-Edit und Cancellation bleiben Pflicht.
-Der native Vergleich erfasst Transport-/Ausgabefehler auch dann inhaltsfrei und
-phasenbezogen, wenn noch kein vollständiges Modelldokument vorliegt.
+Der Referenztest der öffentlichen Recherche-Fixture unterscheidet tatsächliche
+Writer-/Return-Schritte im echten Parser und erhält dynamische Analysegrenzen;
+fehlende Calls dürfen keine allgemeine Wirkungslosigkeit behaupten. Der erfolglose
+Operationszusatz aus ADR-0102 darf nicht stillschweigend erneut in SourceReview
+erscheinen. Der native Vergleich erfasst Transport-/Ausgabefehler auch vor einem
+vollständigen Modelldokument inhaltsfrei, typisiert und phasenbezogen. Er darf den
+Repairzustand nicht aus frei formulierten Promptvorsilben erraten.
 
 ### Frontend
 

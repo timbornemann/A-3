@@ -2981,8 +2981,6 @@ mod research_context;
 mod research_flows;
 #[path = "agent_research_followup.rs"]
 mod research_followup;
-#[path = "agent_research_source_operations.rs"]
-mod research_source_operations;
 #[path = "agent_research_source_review.rs"]
 mod research_source_review;
 #[path = "agent_research_supplement.rs"]

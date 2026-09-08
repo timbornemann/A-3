@@ -5,7 +5,7 @@
 Der [Operationsvergleich](10-SOURCE_OPERATIONS_VALIDATION.md) dokumentiert 17
 weitere reale Fälle. Echte Indexoperationen erreichen SourceReview, werden in den
 kurzen Modellinterpretationen aber nicht zuverlässig weitergegeben. Kein Writer-
-oder Persistenzfehler ist damit behoben; der Zusatz wird zurückgenommen. Eine neue
+oder Persistenzfehler ist damit behoben; der Zusatz ist zurückgenommen. Eine neue
 inhaltsfreie Diagnose zeigt bei Googles `gemma-4-26b-a4b-it` zweimal OutputTruncated
 in Analyze(Q1), statt diesen Fehler weiter als bloß fehlenden Rechercheabschluss
 zu behandeln. Der gesonderte Nachweis enthält Kosten, Grenzen und alle Rohberichtshashes.

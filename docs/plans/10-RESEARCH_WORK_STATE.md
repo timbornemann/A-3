@@ -75,7 +75,7 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
       [17 Modellversuche](10-SOURCE_OPERATIONS_VALIDATION.md) sind ausgewertet:
       acht mit Operationshinweisen, davon sieben Abschlüsse und kein bestandener
       Wortcheck. Luna/Ornith zeigen im AB/BA-Vergleich keinen behobenen Inhaltsfehler.
-      Der Zusatz wird zurückgenommen; Parsernachweis und inhaltsfreie Diagnose bleiben.
+      Der Zusatz ist zurückgenommen; Parsernachweis und inhaltsfreie Diagnose bleiben.
       Google Gemma belegt separat OutputTruncated in Primäranalyse und Einzelrepair.
 
 - [ ] Quellengeführte Vorentscheidung und exakt gelieferte Originalbereiche nach

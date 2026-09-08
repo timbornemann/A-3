@@ -183,33 +183,7 @@ impl AgentAskResearcher {
         }
         let guard = state.evidence_guard(project);
         let mut reviews = Vec::new();
-        for (original, mut packet) in originals.iter().zip(packets) {
-            guard.validate(control).await?;
-            let remaining = controller
-                .limits()
-                .duration_millis()
-                .saturating_sub(elapsed_millis(started));
-            if remaining == 0 {
-                return Ok(Err(ResearchStopReason::TimeLimit));
-            }
-            let operations = tokio::time::timeout(
-                Duration::from_millis(remaining.min(2000)),
-                research_source_operations::prepare(
-                    self,
-                    project,
-                    turn,
-                    &original.window(),
-                    state.evidence_limit.saturating_sub(packet.len()),
-                    control,
-                ),
-            )
-            .await;
-            let operations = match operations {
-                Ok(result) => result?,
-                Err(_) => return Ok(Err(ResearchStopReason::TimeLimit)),
-            };
-            guard.validate(control).await?;
-            packet.push_str(&operations);
+        for (original, packet) in originals.iter().zip(packets) {
             let mut repaired = false;
             let base = vec![(ModelMessageRole::User, packet)];
             let mut transcript = base.clone();

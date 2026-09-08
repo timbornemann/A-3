@@ -13,7 +13,7 @@ mehrdeutigen Zitaten in Primärantwort und Einzelrepair. Luna und Ornith zeigen 
 gegenbalancierten Vergleich keinen behobenen Writer-/Persistenzfehler.
 
 Der Befund spricht gegen die Übernahme dieses Zusatzes. Die experimentelle
-Implementierung wird für ihre Reproduzierbarkeit in der Git-Historie gesichert
+Implementierung ist im Commit `3bfc92f` für ihre Reproduzierbarkeit gesichert
 und anschließend aus dem aktuellen Laufzeitpfad entfernt. Produktstandard war
 durchgehend `joint`. Der vorherige native `source-local`-Vergleich bleibt ohne
 diese Operationszusätze erhalten. Die konkreten Inhaltsfehler sind nicht behoben.
@@ -91,6 +91,8 @@ sie sind weder die Größe eines Kontextfensters noch Provider-Tokenmessungen.
 Unveränderte Profile: Qwen 8192/2048, Luna 16384/2048, übrige 16384/4096.
 Zusatzreads: Qwen null, sonst je eins; identische adaptive Reads in allen
 17 Fällen null. Es gibt wegen gleichzeitiger CPU-Gates keinen Latenzclaim.
+Der native Settings-Katalog ist vor/nach den Läufen bytegleich: SHA-256
+`aecc7ef93abe29daa97747f2216e87f49aef99ce9490942fc11ee5c65c09ab32`.
 
 ### Inhaltsbefunde
 
@@ -156,9 +158,31 @@ Enge Offline-Prüfungen:
 - `cargo test -p a3-repo-index --test function_flow_features research_fixture_flow --offline --locked --jobs 2 -- --nocapture`
 - `cargo test -p a3-desktop --all-features --lib source_review --offline --locked --jobs 2 -- --test-threads=1`: acht bestanden, mit echten Operationspaketen.
 - `cargo test -p a3-desktop --all-features --lib source_operations --offline --locked --jobs 2 -- --test-threads=1`: drei bestanden.
-- Vollständige experimentelle Gates: `cargo clippy --workspace --all-targets --all-features --offline --locked --jobs 2 -- -D warnings` und `cargo test --workspace --all-features --offline --locked --jobs 2 -- --test-threads=1`; Logs unter `target/reports/research-operations-clippy-final.log` und `research-operations-workspace.log`.
-- Finale Gates nach Rücknahme werden getrennt dokumentiert. Eine bestandene
-  Offline-Strukturprüfung ersetzt ausdrücklich nicht den negativen Modellbefund.
+- Vollständige experimentelle Gates: `cargo clippy --workspace --all-targets --all-features --offline --locked --jobs 2 -- -D warnings` bestanden und `cargo test --workspace --all-features --offline --locked --jobs 2 -- --test-threads=1`: 1293 bestanden, 19 ignoriert, kein Fehler.
+
+Finaler Stand nach Rücknahme:
+
+- `cargo test -p a3-desktop --all-features --lib research_matrix_failures --offline --locked --jobs 2 -- --test-threads=1`: ein Diagnosetest bestanden.
+- `cargo test -p a3-desktop --all-features --lib source_review --offline --locked --jobs 2 -- --test-threads=1`: acht bestanden; die echten Mehrmodus-Fixtures prüfen zusätzlich, dass der entfernte Operationszusatz nicht mehr im Modellpaket erscheint.
+- `cargo clippy --workspace --all-targets --all-features --offline --locked --jobs 2 -- -D warnings`: bestanden.
+- `cargo test --workspace --all-features --offline --locked --jobs 2 -- --test-threads=1`: 1291 bestanden, 19 ignoriert, kein Fehler, Prozessabschluss 0. Die Differenz von zwei Tests entsteht durch die entfernte experimentelle Projektion.
+- `cargo fmt --all -- --check`, `git diff --check` und `pnpm check:links`: bestanden; 149 Markdown-Dateien, 625 lokale Links. Der vorhandene Node-Engine-Hinweis bleibt: installiert 25.6.1 statt der vorgesehenen 24.14.0. Keine Frontendänderung oder neue Abhängigkeit.
+
+Für Cargo galten `CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0` und
+`CARGO_PROFILE_TEST_DEBUG=0`. Die Implementierungen von SourceReview und
+SessionManager sind nach Rücknahme gegenüber `d6d28a7` bytegleich. Erhaltene
+Rust-Änderungen betreffen den Parsernachweis, Testverdrahtung und native
+Evaluationsdiagnostik, nicht den produktiven Entscheidungsablauf.
+
+| Gate-Log unter `target/reports` | SHA-256 |
+| --- | --- |
+| `research-operations-clippy-final.log` | `33be2b727b425f563bcf73a4afd856b2d7537ad5258b8aa01c9880d1d838ff1d` |
+| `research-operations-workspace.log` | `71c6b5a42b0414f995847b4ef1cba28e432cbd025c1f90b9dbc0530fe8e38049` |
+| `research-operations-retired-clippy.log` | `0cda7832e77f2fc1a040256d05ff64899a4adabe68c76b02f0b6a5dda2e67a72` |
+| `research-operations-retired-workspace.log` | `b981ba6559e86b65ef4493ad2fb52a8b2f692c544ce206ca669000035e75b65c` |
+
+Eine bestandene Offline-Strukturprüfung ersetzt ausdrücklich nicht den negativen
+Modellbefund. Die Rücknahme führt keinen weiteren unveränderten Liveversuch aus.
 
 Die Prozesse aller 17 Modelltests melden wegen fehlender Begriffe oder
 Recherchehalt Fehler. Die gespeichert abgeschlossenen Recherchen bleiben davon

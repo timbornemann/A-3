@@ -161,7 +161,7 @@ impl MatrixModel {
 }
 
 #[test]
-fn source_operations_model_failures_keep_typed_phase_without_transcript_content() {
+fn research_matrix_failures_keep_typed_phase_without_transcript_content() {
     let transcript = vec![
         (ModelMessageRole::User, "private sentinel".to_owned()),
         (ModelMessageRole::User, "REPAIR private sentinel".to_owned()),
@@ -418,7 +418,6 @@ impl ResearchModel for MatrixModel {
             // Retain its bounded public interpretation for semantic inspection, not
             // hidden reasoning, arbitrary source bytes or a production provider log.
             decisions.push(serde_json::json!({"phase":"SourceReview","context_bytes":transcript.iter().map(|(_,s)|s.len()).sum::<usize>(),
-                "operation_inventory_bytes":transcript.first().and_then(|(_,p)|p.split_once("SOURCE OPERATIONS")).map(|(_,tail)|tail.len()),
                 "interpretation_bytes":parsed.as_ref().and_then(|p| p["interpretation"].as_str()).map(str::len),
                 "interpretation":parsed.as_ref().and_then(|p| p["interpretation"].as_str()).filter(|s|s.len()<=192),
                 "source_file":transcript.first().and_then(|(_,packet)|FILES.iter().position(|(_,body)|packet.contains(body))),

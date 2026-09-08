@@ -82,21 +82,10 @@ impl ResearchModel for SupplementalModel {
         assert!(packet.contains("SOURCE-LOCAL SUBTASK:"));
         assert!(!packet.contains("Required original file coverage"));
         assert!(!packet.contains("CORE RESEARCH CONTRACT"));
-        let operations = packet
-            .split_once("SOURCE OPERATIONS")
-            .map(|(_, tail)| tail)
-            .ok_or(AgentConversationFailure::InvalidInput)?;
-        assert!(operations.contains("unknown effects are not absent"));
-        if files[0].0 == "taskflow/plugins.py" {
-            assert!(
-                operations.contains("output.write"),
-                "the actual writer must survive the optional inventory budget: {operations}"
-            );
-        }
-        if files[0].0 == "taskflow/storage.py" {
-            assert!(operations.contains("save_tasks") && operations.contains("Return"));
-            assert!(operations.contains("Dynamic"));
-        }
+        assert!(
+            !packet.contains("SOURCE OPERATIONS"),
+            "the unsuccessful inventory experiment is retired"
+        );
         assert!(
             !transcript
                 .iter()
