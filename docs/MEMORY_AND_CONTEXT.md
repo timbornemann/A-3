@@ -1143,6 +1143,19 @@ Fortsetzung. Die bekannten Quellen, ihr gesamtes aktuelles Paket, der Phasenvert
 höchstens 768 Repairbytes und genau ein Reparaturversuch bleiben unverändert.
 Ein erneuter Abbruch ist weiterhin kein erfolgreicher Rechercheabschluss.
 
+Nach [ADR-0103](adrs/0103-explizite-befehlsnamen-im-plan.md) projiziert der Core aus
+ausdrücklich ausgeschriebenen Runner-/Script-/Command-/Platzhalter-Aufrufen bis zu
+vier unveränderte Befehlsnamen. Nur im festen Core-Planvertrag müssen Änderung und
+Testentwurf diese Namen jeweils selbst enthalten. Nach
+[ADR-0104](adrs/0104-befehlspruefung-ohne-kontextdopplung.md) bleibt der vollständige
+Originalauftrag ohne zusätzliche Namenswiederholung im regulären Kontext.
+Fehlende Namen erzeugen vor Ergebnis-Commit und Receipt die
+inhaltsfreie Kategorie `research-v2/request-command-missing`; der bestehende
+Einzelrepair nennt die Originalnamen, V7-Designform und 4096-Byte-Textgrenze.
+Ergebnis- und Repairgrenzen werden nicht erhöht. Ask, Bestandsanalyse, historische
+Ergebnisse und unerkannte Syntax bleiben unverändert. Das ist notwendige exakte
+Namensabdeckung, kein Beweis für richtige Verwendung, Effekte oder Umsetzung.
+
 Nach [ADR-0057](adrs/0057-leerer-entwurf-ist-kein-rechercheauftrag.md) benötigt Design
 bei `progress` genau ein Ergebnis. Ein leerer Entwurf ist ungültiger Modelloutput,
 kein Anlass für weitere Originalreads. Nur die explizite Entscheidung `question`

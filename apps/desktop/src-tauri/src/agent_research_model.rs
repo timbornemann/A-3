@@ -176,6 +176,7 @@ pub(super) enum DecisionIssue {
     WorkEvidence,
     WorkCoverage,
     WorkEcho,
+    WorkRequestCommand,
     WorkAdmission(a3_application::ResearchWorkAdmissionError),
     Json,
     Shape,
@@ -287,6 +288,7 @@ impl DecisionIssue {
         match self {
             Self::WorkCoverage => "research-v2/required-source-coverage",
             Self::WorkEcho => "research-v2/core-instruction-echo",
+            Self::WorkRequestCommand => "research-v2/request-command-missing",
             Self::WorkAdmission(reason) => match reason {
                 a3_application::ResearchWorkAdmissionError::AmbiguousQuote => {
                     "research-v2/quote-ambiguous"
@@ -326,6 +328,9 @@ impl DecisionIssue {
     }
     pub(super) fn repair_hint(self, source_count: usize) -> String {
         let detail = match self {
+            Self::WorkRequestCommand => {
+                "Preserve the exact command names from the original request in this design result, not only in another result. No new research or renamed interface."
+            }
             Self::WorkEcho => {
                 "The result only repeats a Core obligation. Provide the requested concrete result, not instructions to produce it later; preserve the original request and admitted prerequisites."
             }

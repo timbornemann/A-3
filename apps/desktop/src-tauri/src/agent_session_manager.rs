@@ -7145,6 +7145,11 @@ async fn ask_decision(
                 .work
                 .as_ref()
                 .and_then(research_work::WorkGuard::coverage_repair_hint)
+        } else if issue == research_model::DecisionIssue::WorkRequestCommand {
+            guard
+                .work
+                .as_ref()
+                .and_then(research_work::WorkGuard::request_command_repair_hint)
         } else {
             None
         }

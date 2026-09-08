@@ -40,6 +40,19 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Den belegten Verlust ausdrücklich ausgeschriebener CLI-Befehlsnamen
+      nach [ADR-0103](../adrs/0103-explizite-befehlsnamen-im-plan.md) vor der
+      Ergebniszulassung prüfen, getrennt für Änderung und Testentwurf.
+      Originalauftrag, Voraussetzungen, Einzelrepair und historische Ergebnisse
+      erhalten. Reale Wiederanlauf-/Mehrmodus- und gegenbalancierte Modellnachweise
+      von bloßer Tokenabdeckung und semantischer Gesamtfreigabe trennen.
+      Der erfolglose primäre Kontexthinweis wird nach
+      [ADR-0104](../adrs/0104-befehlspruefung-ohne-kontextdopplung.md) zurückgenommen;
+      Ergebnisprüfung und genau ein gezielter Repair bleiben.
+      [20 Livefälle](10-REQUEST_COMMAND_VALIDATION.md), vier neue Regressionen und
+      vollständige Gates sind geprüft. Der finale Granite-Entwurf korrigiert den
+      Namen in beiden Gegenproben; Google Gemma und weitere Inhaltsfehler bleiben offen.
+
 - [x] Den belegten Google-Gemma-Analyze-Abbruch mit der bestehenden optionalen
       Schemawiederholung isolieren: expliziter nativer Profilvergleich bei gleicher
       Kontext-/Outputgrenze, frischer Capability-Probe und unveränderten Settings.

@@ -1,5 +1,22 @@
 # Plan 10: Verifikationsprotokoll
 
+## 2026-09-08: Explizite Befehlsnamen je Planergebnis prüfen (ADR-0103/0104)
+
+Der [Namensvergleich](10-REQUEST_COMMAND_VALIDATION.md) dokumentiert 20 reale Fälle
+über alle sieben Modelle. Die reine Core-Prüfung erkennt fehlende ausdrücklich
+ausgeschriebene Befehlsnamen getrennt in Änderung und Testentwurf. Ein zunächst
+zusätzlicher primärer Kontexthinweis verschlechtert Ergebnisse und ist nach
+ADR-0104 zurückgenommen. Ohne diesen Zusatz repariert Granite den falschen Namen
+in beiden gegenläufigen Nachproben mit genau einem zusätzlichen Modellaufruf;
+beide alten Vergleichsstände schließen denselben falschen `import`-Entwurf ab.
+Der finale Nachtest schließt bei sechs von sieben Modellen ab, einschließlich
+des wiederholten Granite-Falls sieben von acht. Google Gemma scheitert weiter
+vor dem Entwurf am Ausgabelimit. Namensabdeckung ist keine semantische Gesamtfreigabe:
+erfundene Speicherung, gemischte Bestands-/Entwurfsaussagen und zu allgemeine
+Testpläne bleiben offen. Vier neue Regressionen, native Wiederanlauf-/Mehrmodus-
+Verträge, Clippy und das vollständige Gate (1301 bestanden, 19 ignoriert) bestehen.
+Profile, Credentials, Grenzen und Originaldateien bleiben unverändert.
+
 ## 2026-09-08: Schema-Grounding-Vergleich und verlorener Trunkierungshinweis
 
 Der [getrennte Nachweis](10-SCHEMA_GROUNDING_VALIDATION.md) umfasst 16 unveränderte

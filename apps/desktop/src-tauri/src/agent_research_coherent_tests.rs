@@ -22,6 +22,7 @@ struct CoherentModel {
     calls: AtomicUsize,
     diagrams: AtomicUsize,
     truncated_packet: std::sync::Mutex<Option<String>>,
+    command_packet: std::sync::Mutex<Option<String>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -32,6 +33,10 @@ enum WorkFault {
     InvalidAnalysis,
     TruncatedAnalysisOnce,
     TruncatedAnalysisAlways,
+    RenamedCommandDesignOnce,
+    RenamedCommandDesignAlways,
+    RenamedCommandTestsOnce,
+    RenamedCommandTestsAlways,
     EmptyDesignOnce,
     EmptyDesignAlways,
     MissingOriginalOnce,
@@ -48,6 +53,18 @@ enum WorkFault {
     CoreStatusRepairOnce,
     DisjointResponse,
     DisjointResponseRepairOnce,
+}
+
+impl WorkFault {
+    fn command_rename(self) -> Option<(u8, bool)> {
+        match self {
+            Self::RenamedCommandDesignOnce => Some((2, false)),
+            Self::RenamedCommandDesignAlways => Some((2, true)),
+            Self::RenamedCommandTestsOnce => Some((3, false)),
+            Self::RenamedCommandTestsAlways => Some((3, true)),
+            _ => None,
+        }
+    }
 }
 
 fn retained_long_design() -> String {
@@ -351,6 +368,42 @@ impl ResearchModel for CoherentModel {
                 document["work"]["results"][0]["evidence"] =
                     serde_json::json!([{"anchor_ref":"E1"}]);
             }
+            if let Some((failed_question, repeated)) = self.fault.command_rename()
+                && phase.is_design()
+            {
+                let mut renamed = false;
+                let targeted = matches!(phase,
+                    a3_application::ResearchOutputPhase::Design(id)
+                    | a3_application::ResearchOutputPhase::DesignTests(id) if id.get() == u16::from(failed_question));
+                if targeted {
+                    let mut original = self
+                        .command_packet
+                        .lock()
+                        .map_err(|_| AgentConversationFailure::Unavailable)?;
+                    if let Some(original) = original.as_ref() {
+                        assert_eq!(
+                            original, packet,
+                            "repair keeps the same original and prerequisites"
+                        );
+                        let hint = &transcript
+                            .last()
+                            .ok_or(AgentConversationFailure::InvalidInput)?
+                            .1;
+                        assert!(hint.starts_with("Request name repair for Q"));
+                        assert!(hint.contains("export-events"));
+                        assert!(hint.len() <= 768);
+                        renamed = repeated;
+                    } else {
+                        *original = Some(packet.clone());
+                        renamed = true;
+                    }
+                }
+                document["work"]["results"][0]["text"] = serde_json::json!(if renamed {
+                    "Implement or test export with a destination argument; preserve prior behavior, return 0 on success and 1 on failure."
+                } else {
+                    "Implement or test export-events with a destination argument; assert return 0 for a writable output and 1 for a denied output, preserving prior behavior."
+                });
+            }
             if self.fault == WorkFault::RepeatedOriginalAnchors
                 && let Some(results) = document["work"]["results"].as_array_mut()
             {
@@ -414,7 +467,8 @@ impl ResearchModel for CoherentModel {
                     | WorkFault::DisjointResponseRepairOnce
                     | WorkFault::TruncatedAnalysisOnce
                     | WorkFault::TruncatedAnalysisAlways
-            ) {
+            ) || self.fault.command_rename().is_some()
+            {
                 document["schema_version"] = serde_json::json!(6);
                 document["decision"]
                     .as_object_mut()
@@ -430,7 +484,8 @@ impl ResearchModel for CoherentModel {
                         | WorkFault::DisjointResponseRepairOnce
                         | WorkFault::TruncatedAnalysisOnce
                         | WorkFault::TruncatedAnalysisAlways
-                ) {
+                ) || self.fault.command_rename().is_some()
+                {
                     let response = if phase == a3_application::ResearchOutputPhase::Initialize {
                         serde_json::json!({"kind":"questions","questions":document["work"]["questions"]})
                     } else {
@@ -536,6 +591,42 @@ fn research_v5_keeps_required_log_when_model_drops_it_and_persists_real_evidence
 
 fn coherent_fixture(work_contract: bool) -> Result<(), Box<dyn Error>> {
     coherent_fixture_selected(work_contract, false, WorkFault::None)
+}
+
+#[test]
+fn research_command_names_repair_without_extra_reads_in_plan_and_agent()
+-> Result<(), Box<dyn Error>> {
+    for fault in [
+        WorkFault::RenamedCommandDesignOnce,
+        WorkFault::RenamedCommandTestsOnce,
+    ] {
+        coherent_fixture_with_profile(
+            true,
+            false,
+            fault,
+            &format!("{QUERY} Plane python taskflow/manager.py export-events <destination>."),
+            Some(&eight_k_profile()?),
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn research_command_names_twice_invalid_preserve_unresolved_work_on_reopen()
+-> Result<(), Box<dyn Error>> {
+    for fault in [
+        WorkFault::RenamedCommandDesignAlways,
+        WorkFault::RenamedCommandTestsAlways,
+    ] {
+        coherent_fixture_with_profile(
+            true,
+            false,
+            fault,
+            &format!("{QUERY} Plane python taskflow/manager.py export-events <destination>."),
+            Some(&eight_k_profile()?),
+        )?;
+    }
+    Ok(())
 }
 
 #[test]
@@ -839,7 +930,7 @@ fn coherent_fixture_with_profile(
                 (5, AgentSessionMode::Ask, 8192),
                 (6, AgentSessionMode::Ask, 4096),
             ] {
-                if matches!(
+                if (matches!(
                     fault,
                     WorkFault::EmptyDesignOnce
                         | WorkFault::EmptyDesignAlways
@@ -850,7 +941,8 @@ fn coherent_fixture_with_profile(
                         | WorkFault::EchoTestObligationAlways
                         | WorkFault::TestConfirmationOnce
                         | WorkFault::TestConfirmationAlways
-                ) && mode == AgentSessionMode::Ask
+                ) || fault.command_rename().is_some())
+                    && mode == AgentSessionMode::Ask
                 {
                     continue;
                 }
@@ -915,6 +1007,7 @@ fn coherent_fixture_with_profile(
                     calls: AtomicUsize::new(0),
                     diagrams: AtomicUsize::new(0),
                     truncated_packet: std::sync::Mutex::new(None),
+                    command_packet: std::sync::Mutex::new(None),
                 });
                 let worker_model = model.clone();
                 let worker_project = project.clone();
@@ -969,6 +1062,76 @@ fn coherent_fixture_with_profile(
                     }
                 }
                 let result = received?;
+                if let Some((failed_question, repeated)) = fault.command_rename() {
+                    assert_eq!(result.awaiting_continuation, repeated);
+                    assert_eq!(
+                        model.calls.load(Ordering::SeqCst),
+                        if repeated {
+                            usize::from(failed_question) + 1
+                        } else {
+                            4
+                        }
+                    );
+                    let detail = store
+                        .load_detail(&project, id, AgentSessionSequence::FIRST)
+                        .await?
+                        .ok_or("trace")?;
+                    let work = detail.work_state().ok_or("work")?;
+                    let reopened = LibsqlKnowledgeStore::open(&StorageLayout::prepare(
+                        data.path().join("data"),
+                    )?)
+                    .await?;
+                    let reopened_detail = reopened
+                        .load_detail(&project, id, AgentSessionSequence::FIRST)
+                        .await?
+                        .ok_or("reopened trace")?;
+                    assert_eq!(
+                        reopened_detail.work_state(),
+                        Some(work),
+                        "new storage adapter must load the same durable contract/results/receipts"
+                    );
+                    assert_eq!(work.ready_to_finish(), !repeated);
+                    assert!(work.accesses().is_empty());
+                    assert_eq!(work.objective(), fixture_query);
+                    if repeated {
+                        let failed = &work.questions()[usize::from(failed_question) - 1];
+                        assert!(failed.result().is_none());
+                        assert!(failed.attempts().is_empty());
+                        let mapping = work
+                            .questions()
+                            .iter()
+                            .filter_map(|q| q.result())
+                            .flat_map(|r| r.sources())
+                            .map(|s| (s.source_id, s.source_id))
+                            .collect::<Vec<_>>();
+                        let mut restored = AskResearchWorkingSet::new(budget);
+                        restored.restore_work(work, &mapping)?;
+                        assert_eq!(
+                            restored.work.as_ref().and_then(|w| w.next_question()),
+                            Some(a3_domain::ResearchQuestionId::new(u16::from(
+                                failed_question
+                            ))?)
+                        );
+                    } else {
+                        for question in &work.questions()[1..] {
+                            assert!(
+                                question
+                                    .result()
+                                    .ok_or("design")?
+                                    .text()
+                                    .contains("export-events")
+                            );
+                        }
+                        assert_eq!(result.markdown.matches("export-events").count(), 2);
+                    }
+                    for (path, expected) in PATHS.iter().zip(&files) {
+                        assert_eq!(
+                            std::fs::read_to_string(repository.path().join(path))?,
+                            *expected
+                        );
+                    }
+                    continue;
+                }
                 if matches!(
                     fault,
                     WorkFault::CoreStatus

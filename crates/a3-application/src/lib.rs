@@ -23,7 +23,9 @@ pub use replan_evidence_need::ReplanEvidenceNeed;
 pub use replan_research::{ReplanReadRejection, ReplanResearchCheckpoint, ReplanResearchContext};
 mod agent_recovery;
 mod agent_research_controller;
+mod research_request_commands;
 mod research_response_codec;
+pub use research_request_commands::ResearchRequestCommands;
 mod research_source_review;
 mod research_work_admission;
 pub use research_source_review::{

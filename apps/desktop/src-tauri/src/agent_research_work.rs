@@ -95,6 +95,29 @@ pub(super) fn core_plan_contract(work: &ResearchWorkState) -> bool {
             })
 }
 impl WorkGuard {
+    fn request_commands(&self) -> a3_application::ResearchRequestCommands {
+        if self.previous.as_ref().is_some_and(core_plan_contract) && self.output_phase().is_design()
+        {
+            a3_application::ResearchRequestCommands::from_objective(&self.objective)
+        } else {
+            a3_application::ResearchRequestCommands::default()
+        }
+    }
+
+    pub(super) fn request_command_repair_hint(&self) -> Option<String> {
+        let commands = self.request_commands();
+        if commands.names().is_empty() {
+            return None;
+        }
+        let id = self.previous.as_ref()?.next_question()?;
+        Some(format!(
+            "Request name repair for Q{}: this result must preserve exact requested command names: {}. Mentions in other results do not count. Return schema_version=7, response.kind=designDecision, result with question_id={}, concrete text <=4096 UTF-8 bytes and evidence=[]. Preserve the request and admitted design; give implementation decisions or test inputs, expected results and verification as assigned. No new research, questions, note or work. This is the only repair.",
+            id.get(),
+            commands.names().join(", "),
+            id.get()
+        ))
+    }
+
     pub(super) fn validate_evidence_need(
         &self,
         need: &a3_application::ResearchEvidenceNeed,
@@ -324,6 +347,14 @@ impl WorkGuard {
             })
         {
             return Err(research_model::DecisionIssue::WorkEcho);
+        }
+        let commands = self.request_commands();
+        if update
+            .results
+            .iter()
+            .any(|result| commands.missing_from(&result.text))
+        {
+            return Err(research_model::DecisionIssue::WorkRequestCommand);
         }
         let windows = self
             .windows
@@ -1049,6 +1080,117 @@ mod tests {
         ResearchQuestionKind, ResearchQuestionPriority, ResearchResultKind, SourcePosition,
     };
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn research_explicit_command_is_required_in_each_design_result_not_just_the_packet()
+    -> TestResult {
+        let objective =
+            "Plan python audit.py export-events <destination>. Preserve existing behavior.";
+        let mut set = AskResearchWorkingSet::new(4096);
+        set.initialize_plan_work(objective)?;
+        let mut check = guard(set.work.clone())?;
+        check.objective = objective.to_owned();
+        let mut proposal = ResearchResultProposal {
+            question_id: ResearchQuestionId::FIRST,
+            kind: ResearchResultKind::Interpretation,
+            text: "The current writer appends to audit_log.txt; no export command exists."
+                .to_owned(),
+            evidence: vec![ResearchQuoteProposal {
+                source_ordinal: check.windows[0].ordinal,
+                quote: "audit_log.txt".to_owned(),
+            }],
+            anchors: vec![],
+        };
+        check.previous = Some(
+            check
+                .admit(&ResearchWorkUpdate {
+                    questions: vec![],
+                    results: vec![proposal.clone()],
+                })
+                .map_err(|e| format!("inventory: {e:?}"))?,
+        );
+        for id in 2..=3 {
+            proposal.question_id = ResearchQuestionId::new(id)?;
+            proposal.kind = ResearchResultKind::DesignDecision;
+            proposal.evidence.clear();
+            let hint = check
+                .request_command_repair_hint()
+                .ok_or("command repair hint")?;
+            assert!(hint.len() <= 768);
+            assert!(hint.contains("export-events"));
+            assert!(hint.contains("schema_version=7"));
+            assert!(hint.contains("<=4096 UTF-8 bytes"));
+            let objective = check.objective.clone();
+            let long_names = (0..4)
+                .map(|n| format!("c{n}{}", "x".repeat(62)))
+                .collect::<Vec<_>>();
+            check.objective = long_names
+                .iter()
+                .map(|name| format!("python audit.py {name} <arg>"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            let maximal = check.request_command_repair_hint().ok_or("maximal hint")?;
+            assert!(maximal.len() <= 768, "{} repair bytes", maximal.len());
+            assert!(long_names.iter().all(|name| maximal.contains(name)));
+            check.objective = objective;
+            for text in [
+                "Implement and test `export` with a destination argument.",
+                "Use Export-events.",
+                "Implement export-events-v2.",
+                "Test export-events.py.",
+            ] {
+                proposal.text = text.to_owned();
+                let before = check.previous.clone();
+                assert!(
+                    matches!(
+                        check.admit(&ResearchWorkUpdate {
+                            questions: vec![],
+                            results: vec![proposal.clone()]
+                        }),
+                        Err(research_model::DecisionIssue::WorkRequestCommand)
+                    ),
+                    "missing exact command accepted in Q{id}: {text}"
+                );
+                assert_eq!(check.previous, before);
+            }
+            proposal.text = if id == 2 {"Implement `export-events` with a destination argument; return 0 on success and 1 on write failure."} else {"Test export-events with a valid destination (0) and an unwritable path (1); assert no unexpected output files."}.to_owned();
+            check.previous = Some(
+                check
+                    .admit(&ResearchWorkUpdate {
+                        questions: vec![],
+                        results: vec![proposal.clone()],
+                    })
+                    .map_err(|e| format!("design: {e:?}"))?,
+            );
+        }
+        set.work = check.previous;
+        assert!(set.work.as_ref().is_some_and(|w| w.ready_to_finish()));
+        // Named commands in a general Ask contract do not impose design-result obligations.
+        let mut custom = draft();
+        custom.request_fragment = "audit.py".to_owned();
+        let mut ask = guard(Some(ResearchWorkState::new(
+            objective.to_owned(),
+            vec![custom],
+        )?))?;
+        ask.objective = objective.to_owned();
+        proposal.question_id = ResearchQuestionId::FIRST;
+        proposal.kind = ResearchResultKind::Interpretation;
+        proposal.text = "The current writer uses audit_log.txt.".to_owned();
+        proposal.evidence.push(ResearchQuoteProposal {
+            source_ordinal: ask.windows[0].ordinal,
+            quote: "audit_log.txt".to_owned(),
+        });
+        assert!(ask.request_command_repair_hint().is_none());
+        assert!(
+            ask.admit(&ResearchWorkUpdate {
+                questions: vec![],
+                results: vec![proposal]
+            })
+            .map_err(|e| format!("Ask isolation: {e:?}"))?
+            .ready_to_finish()
+        );
+        Ok(())
+    }
 
     #[test]
     fn research_v6_navigation_needs_actual_original_occurrence_and_active_question() -> TestResult {

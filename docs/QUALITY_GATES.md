@@ -58,6 +58,16 @@ Echte Ask-/Plan-/Agent-Vorbereitungsfixtures prüfen dasselbe vollständige
 Originalpaket, genau einen Repair und keinen Abschluss oder neuen Analysebeleg
 nach zweimal abgeschnittener Ausgabe.
 
+Die ADR-0103-Namensprüfung muss fehlende ausgeschriebene Befehlsnamen pro
+Design-/DesignTests-Ergebnis vor Commit/Receipt erkennen. Originalauftrag und
+andere Ergebnisse dürfen den fehlenden Namen nicht ersetzen. Syntax-/UTF-8-,
+Case-/Tokengrenzen, Deduplizierung, Vier-Namen-/32-KiB-Grenze, Ask-Isolation und
+vollständiger maximaler Repair unter 768 Bytes sind Pflicht. Reale Plan-/Agent-
+Vorbereitung prüft dasselbe Original-/Voraussetzungspaket, genau einen Repair,
+keine Zusatzreads, bytegleiche Repositorydateien und dass ein neu geöffneter
+Storage-Adapter dieselben offenen Ergebnisse lädt. Wortabdeckung bleibt von
+inhaltlicher und Implementierungsabnahme getrennt.
+
 ### Frontend
 
 - Formatter
