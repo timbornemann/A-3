@@ -43,6 +43,8 @@ enum WorkFault {
     RepeatedOriginalAnchors,
     LongDesign,
     LongInterpretation,
+    OriginalDesignBasis,
+    OriginalDesignLimit,
     EmptyNavigationStatus,
     RepeatedNoteSources,
     EchoTestObligationOnce,
@@ -202,6 +204,16 @@ fn v5_decision(
     Ok(serde_json::json!({"schema_version":5,"decision":decision,"work":{"questions":questions,"results":results}}).to_string())
 }
 impl ResearchModel for CoherentModel {
+    fn design_basis(&self) -> a3_application::ResearchDesignBasis {
+        if matches!(
+            self.fault,
+            WorkFault::OriginalDesignBasis | WorkFault::OriginalDesignLimit
+        ) {
+            a3_application::ResearchDesignBasis::Originals
+        } else {
+            a3_application::ResearchDesignBasis::Interpretations
+        }
+    }
     fn requires_work_contract(&self) -> bool {
         self.work_contract
     }
@@ -413,7 +425,10 @@ impl ResearchModel for CoherentModel {
                     }
                 }
             }
-            if self.fault == WorkFault::LongDesign {
+            if matches!(
+                self.fault,
+                WorkFault::LongDesign | WorkFault::OriginalDesignLimit
+            ) {
                 if matches!(phase, a3_application::ResearchOutputPhase::Design(id) if id.get() == 2)
                 {
                     document["work"]["results"][0]["text"] =
@@ -427,17 +442,36 @@ impl ResearchModel for CoherentModel {
                     );
                 }
             }
-            if self.fault == WorkFault::LongInterpretation {
+            if matches!(
+                self.fault,
+                WorkFault::LongInterpretation
+                    | WorkFault::OriginalDesignBasis
+                    | WorkFault::OriginalDesignLimit
+            ) {
                 if matches!(phase, a3_application::ResearchOutputPhase::Analyze(id) if id.get() == 1)
                 {
                     document["work"]["results"][0]["text"] =
                         serde_json::json!(retained_long_interpretation());
                 }
                 if phase.is_design() {
-                    assert!(
-                        packet.contains(&retained_long_interpretation()),
-                        "a fitting prerequisite must not lose its late destination to a fixed preview"
-                    );
+                    if matches!(
+                        self.fault,
+                        WorkFault::OriginalDesignBasis | WorkFault::OriginalDesignLimit
+                    ) {
+                        assert!(!packet.contains(&retained_long_interpretation()));
+                        assert!(packet.contains("Interpretation prose omitted"));
+                        for original in [ADD, DISPATCH, INIT, LOG, CALLBACK] {
+                            assert!(
+                                packet.contains(original),
+                                "no original body may disappear with its summary"
+                            );
+                        }
+                    } else {
+                        assert!(
+                            packet.contains(&retained_long_interpretation()),
+                            "a fitting prerequisite must not lose its late destination to a fixed preview"
+                        );
+                    }
                 }
             }
             if matches!(phase, a3_application::ResearchOutputPhase::DesignTests(id) if id.get() == 3)
@@ -591,6 +625,30 @@ fn research_v5_keeps_required_log_when_model_drops_it_and_persists_real_evidence
 
 fn coherent_fixture(work_contract: bool) -> Result<(), Box<dyn Error>> {
     coherent_fixture_selected(work_contract, false, WorkFault::None)
+}
+
+#[test]
+fn research_original_design_basis_stops_before_underdelivered_tests_and_preserves_checkpoint()
+-> Result<(), Box<dyn Error>> {
+    coherent_fixture_with_profile(
+        true,
+        false,
+        WorkFault::OriginalDesignLimit,
+        QUERY,
+        Some(&eight_k_profile()?),
+    )
+}
+
+#[test]
+fn research_original_design_basis_keeps_real_eight_k_originals_and_full_decisions()
+-> Result<(), Box<dyn Error>> {
+    coherent_fixture_with_profile(
+        true,
+        false,
+        WorkFault::OriginalDesignBasis,
+        QUERY,
+        Some(&eight_k_profile()?),
+    )
 }
 
 #[test]
@@ -937,6 +995,8 @@ fn coherent_fixture_with_profile(
                         | WorkFault::MissingOriginalOnce
                         | WorkFault::LongDesign
                         | WorkFault::LongInterpretation
+                        | WorkFault::OriginalDesignBasis
+                        | WorkFault::OriginalDesignLimit
                         | WorkFault::EchoTestObligationOnce
                         | WorkFault::EchoTestObligationAlways
                         | WorkFault::TestConfirmationOnce
@@ -1062,6 +1122,52 @@ fn coherent_fixture_with_profile(
                     }
                 }
                 let result = received?;
+                if fault == WorkFault::OriginalDesignLimit {
+                    assert!(result.awaiting_continuation);
+                    assert_eq!(
+                        model.calls.load(Ordering::SeqCst),
+                        2,
+                        "no Q3 inference or repair without all original ranges"
+                    );
+                    let detail = store
+                        .load_detail(&project, id, AgentSessionSequence::FIRST)
+                        .await?
+                        .ok_or("trace")?;
+                    let work = detail.work_state().ok_or("work")?;
+                    assert!(!work.ready_to_finish());
+                    assert!(work.accesses().is_empty());
+                    let q3 = work
+                        .question(a3_domain::ResearchQuestionId::new(3)?)
+                        .ok_or("Q3")?;
+                    assert!(q3.result().is_none() && q3.attempts().is_empty());
+                    assert_eq!(
+                        work.question(a3_domain::ResearchQuestionId::new(2)?)
+                            .ok_or("Q2")?
+                            .result()
+                            .ok_or("design")?
+                            .text(),
+                        retained_long_design()
+                    );
+                    let reopened = LibsqlKnowledgeStore::open(&StorageLayout::prepare(
+                        data.path().join("data"),
+                    )?)
+                    .await?;
+                    assert_eq!(
+                        reopened
+                            .load_detail(&project, id, AgentSessionSequence::FIRST)
+                            .await?
+                            .ok_or("reopened")?
+                            .work_state(),
+                        Some(work)
+                    );
+                    for (path, expected) in PATHS.iter().zip(&files) {
+                        assert_eq!(
+                            std::fs::read_to_string(repository.path().join(path))?,
+                            *expected
+                        );
+                    }
+                    continue;
+                }
                 if let Some((failed_question, repeated)) = fault.command_rename() {
                     assert_eq!(result.awaiting_continuation, repeated);
                     assert_eq!(
@@ -1247,6 +1353,7 @@ fn coherent_fixture_with_profile(
                     fault,
                     WorkFault::RepeatedOriginalAnchors
                         | WorkFault::LongInterpretation
+                        | WorkFault::OriginalDesignBasis
                         | WorkFault::EmptyNavigationStatus
                         | WorkFault::RepeatedNoteSources
                 ) {

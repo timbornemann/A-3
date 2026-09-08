@@ -40,6 +40,22 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Entwurfsübergabe aus vollständigen aktuellen Originalbereichen statt
+      erneutem Interpretationstext kontrolliert vergleichen
+      ([ADR-0105](../adrs/0105-originalgebundene-entwurfsbasis-im-vergleich.md)).
+      Originalauftrag und vollständige Designentscheidungen erhalten;
+      fehlende Bereichslieferung nicht verdecken. Vier neue Regressionen,
+      vollständige Gates und [22 Livefälle](10-DESIGN_BASIS_VALIDATION.md) sind
+      geprüft. Zwei Packfehler der Vergleichsvariante sind korrigiert; die
+      bisherige Methode schließt 10/11, die Variante 3/11 Fälle ab. Keine
+      Produktumstellung oder semantische Gesamtfreigabe daraus ableiten.
+
+- [ ] Die im Originalbasis-Vergleich erneut belegten Repairketten gezielt prüfen:
+      überlange Ergebnisfelder typisiert statt als allgemeinen ungültigen Wert
+      diagnostizieren und beim bestehenden Einzelrepair alle verbindlichen
+      Auftragsbedingungen erhalten. Keine zusätzlichen Repairs oder automatische
+      Akzeptanz widersprüchlicher/zu allgemeiner Testentwürfe.
+
 - [x] Den belegten Verlust ausdrücklich ausgeschriebener CLI-Befehlsnamen
       nach [ADR-0103](../adrs/0103-explizite-befehlsnamen-im-plan.md) vor der
       Ergebniszulassung prüfen, getrennt für Änderung und Testentwurf.

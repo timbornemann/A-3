@@ -68,6 +68,18 @@ keine Zusatzreads, bytegleiche Repositorydateien und dass ein neu geöffneter
 Storage-Adapter dieselben offenen Ergebnisse lädt. Wortabdeckung bleibt von
 inhaltlicher und Implementierungsabnahme getrennt.
 
+Der Originalbasis-Vergleich aus ADR-0105 verlangt einen geschlossenen nativen
+Selektor mit unverändertem Produktstandard. Regressionsfälle müssen aktuelle
+vollständige Bereichslieferung statt Cache-Mitgliedschaft, fehlende Lesebelege,
+Präfixe, fremde Revisionen, fehlgeschlagenes Packing ohne alte Lieferreste,
+vollständige Designentscheidungen, UTF-8 und deterministische Pakete prüfen.
+Die Quellenreserve muss vor der Voll-/Kompaktwahl greifen. Echte 8k-Plan-/Agent-
+Vorbereitung prüft drei reguläre Aufrufe ohne Zusatzreads im passenden Fall und
+keinen weiteren Aufruf/Receipt/Abschluss bei echter Überfüllung; ein neu geöffneter
+Storage-Adapter muss dieselben offenen Pflichten und den vollständigen Entwurf
+laden. Änderungen der tatsächlich gelieferten Quellen müssen im Livevergleich
+offengelegt werden, nicht als isolierter Prosaeffekt erscheinen.
+
 ### Frontend
 
 - Formatter

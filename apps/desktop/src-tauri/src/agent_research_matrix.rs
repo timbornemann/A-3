@@ -127,6 +127,7 @@ fn matrix_case_passed(
 }
 
 struct MatrixModel {
+    design_basis: a3_application::ResearchDesignBasis,
     method: a3_application::ResearchAnalysisMethod,
     live: live_fixture::LiveResearchModel,
     budget: usize,
@@ -187,6 +188,36 @@ fn parse_analysis_method(
         None | Some("joint") => Ok(a3_application::ResearchAnalysisMethod::Joint),
         Some("source-local") => Ok(a3_application::ResearchAnalysisMethod::SourceLocal),
         _ => Err("analysis method must be joint or source-local"),
+    }
+}
+
+fn parse_design_basis(
+    value: Option<&str>,
+) -> Result<a3_application::ResearchDesignBasis, &'static str> {
+    match value {
+        None | Some("interpretations") => Ok(a3_application::ResearchDesignBasis::Interpretations),
+        Some("originals") => Ok(a3_application::ResearchDesignBasis::Originals),
+        _ => Err("design basis must be interpretations or originals"),
+    }
+}
+
+#[test]
+fn research_design_basis_selection_is_closed_and_defaults_to_baseline() {
+    use a3_application::ResearchDesignBasis;
+    assert_eq!(
+        parse_design_basis(None),
+        Ok(ResearchDesignBasis::Interpretations)
+    );
+    assert_eq!(
+        parse_design_basis(Some("interpretations")),
+        parse_design_basis(None)
+    );
+    assert_eq!(
+        parse_design_basis(Some("originals")),
+        Ok(ResearchDesignBasis::Originals)
+    );
+    for value in ["", "auto", "originals ", "Originals"] {
+        assert!(parse_design_basis(Some(value)).is_err());
     }
 }
 
@@ -390,6 +421,9 @@ fn research_matrix_shape_diagnostics_distinguish_repeated_anchors_without_raw_te
     assert!(!disjoint.to_string().contains("sentinel"));
 }
 impl ResearchModel for MatrixModel {
+    fn design_basis(&self) -> a3_application::ResearchDesignBasis {
+        self.design_basis
+    }
     fn analysis_method(&self) -> a3_application::ResearchAnalysisMethod {
         self.method
     }
@@ -583,6 +617,11 @@ fn research_matrix_cannot_pass_a_question_or_unfinished_work_with_all_keywords()
 #[test]
 #[ignore = "Explicit approved-model evaluation only; never CI or an automatic provider call"]
 fn research_approved_model_matrix() -> Result<(), Box<dyn Error>> {
+    let design_basis = match std::env::var("A3_RESEARCH_DESIGN_BASIS") {
+        Ok(value) => parse_design_basis(Some(&value))?,
+        Err(std::env::VarError::NotPresent) => parse_design_basis(None)?,
+        Err(error) => return Err(error.into()),
+    };
     let method = match std::env::var("A3_RESEARCH_ANALYSIS_METHOD") {
         Ok(value) => parse_analysis_method(Some(&value))?,
         Err(std::env::VarError::NotPresent) => parse_analysis_method(None)?,
@@ -693,6 +732,7 @@ fn research_approved_model_matrix() -> Result<(), Box<dyn Error>> {
                             .create_session(&project, &session, Some(&user), None)
                             .await?;
                         let model = Arc::new(MatrixModel {
+                            design_basis,
                             method,
                             budget: live.evidence_budget(mode)?,
                             live: live.clone(),
@@ -828,6 +868,7 @@ fn research_approved_model_matrix() -> Result<(), Box<dyn Error>> {
                         let record = serde_json::json!({"fixture":"research-eval-v1","rubric_version":3,"family":family,"variant":variant,"repeat":repeat,"completed":completed,"work_ready":work_ready,"passed":passed,"missing":missing,"error":error,"calls":model.calls.load(Ordering::SeqCst),"adaptive_reads":adaptive_reads,"repeated_adaptive_reads":repeated_adaptive_reads,"user_halt":user_halt,"context_utf8_bytes":model.bytes.load(Ordering::SeqCst),"elapsed_ms":started.elapsed().as_millis(),"answer":answer,"work_summary":work_summary,"empty_analysis_notes":empty_notes,"decision_diagnostics":decisions});
                         let mut record = record;
                         record["analysis_method"] = serde_json::json!(format!("{method:?}"));
+                        record["design_basis"] = serde_json::json!(format!("{design_basis:?}"));
                         record["model_profile"] = live.identity();
                         record["stream_diagnostics"] =
                             serde_json::json!(live.take_stream_diagnostics()?);

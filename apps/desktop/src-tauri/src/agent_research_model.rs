@@ -525,6 +525,9 @@ pub(super) fn validate_outcome_with_attribution(
 }
 
 pub(super) trait ResearchModel: Send + Sync {
+    fn design_basis(&self) -> a3_application::ResearchDesignBasis {
+        a3_application::ResearchDesignBasis::Interpretations
+    }
     fn analysis_method(&self) -> a3_application::ResearchAnalysisMethod {
         a3_application::ResearchAnalysisMethod::Joint
     }

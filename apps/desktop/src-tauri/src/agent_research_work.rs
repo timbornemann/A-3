@@ -744,6 +744,9 @@ impl AskResearchWorkingSet {
         windows.dedup();
         let mut digest = blake3::Hasher::new();
         digest.update(b"a3.research-analysis-packet.v1\0");
+        if self.uses_original_design_basis() {
+            digest.update(b"a3.original-design-basis.v1\0");
+        }
         for (path, hash, start, end) in windows {
             digest.update(&(path.len() as u64).to_le_bytes());
             digest.update(&path);
@@ -812,6 +815,19 @@ impl AskResearchWorkingSet {
     /// Repository claims need room for originals. A dependent design turn instead owns
     /// its frozen decisions; reserve only packet framing before optional source windows.
     pub(super) fn work_packet_reserve(&self) -> usize {
+        if self.uses_original_design_basis() {
+            // The compact/full contract choice must budget its mandatory originals too.
+            // Conservative header allowance; exact materialization remains independently gated.
+            return self
+                .design_original_sources()
+                .iter()
+                .fold(256_usize, |bytes, source| {
+                    bytes
+                        .saturating_add(source.range.len() as usize)
+                        .saturating_add(super::model_safe_path(source.revision.path()).len())
+                        .saturating_add(96)
+                });
+        }
         if self
             .work
             .as_ref()
@@ -981,6 +997,8 @@ impl AskResearchWorkingSet {
             text.push_str(&head);
             if result.kind() == a3_domain::ResearchResultKind::DesignDecision {
                 text.push_str(result.text());
+            } else if self.uses_original_design_basis() {
+                text.push_str("Interpretation prose omitted; use its complete current original ranges below. Not verified facts.");
             } else if bounded {
                 let limit = interpretation_room
                     .checked_div(interpretations)
@@ -1687,6 +1705,168 @@ mod tests {
                 .text()
                 == interpretation
         );
+        Ok(())
+    }
+
+    #[test]
+    fn research_original_design_basis_requires_actual_complete_revision_bound_delivery()
+    -> TestResult {
+        let mut state = AskResearchWorkingSet::new(4600);
+        let objective = "Plan audit destination; retain Größe 🦀.";
+        state.initialize_plan_work(objective)?;
+        state.design_basis = a3_application::ResearchDesignBasis::Originals;
+        assert!(
+            !state.uses_original_design_basis(),
+            "inventory stays unchanged"
+        );
+        let mut original = guard(None)?.windows.remove(0);
+        original.text = "audit_log.txt; Größe 🦀\n".repeat(24);
+        original.range = SourceRange::new(
+            0,
+            original.text.len(),
+            SourcePosition::new(0, 0),
+            super::super::research_context::end_position(SourcePosition::new(0, 0), &original.text),
+        )?;
+        let source = a3_application::AskResearchSource::new(
+            a3_domain::AgentSessionId::from_bytes([3; 32]),
+            a3_domain::AgentSessionSequence::FIRST,
+            original.source_id,
+            1,
+            original.revision.clone(),
+            Some(original.range),
+            None,
+            a3_domain::AskResearchSourceKind::File,
+            a3_domain::AskResearchSelectionReason::ExactNameOrPath,
+        )?;
+        state.record_read_coverage(&source, 1, &original.text);
+        state.sources.push(source);
+        state.excerpts.push(super::super::ResearchSourceExcerpt {
+            ordinal: 1,
+            path: "audit.py".to_owned(),
+            start_line: 1,
+            text: original.text.clone(),
+        });
+        state.work.as_mut().ok_or("work")?.resolve(
+            ResearchQuestionId::FIRST,
+            a3_domain::ResearchResult::new(
+                ResearchResultKind::Interpretation,
+                "UNSUPPORTED_MODEL_PROPOSAL".to_owned(),
+                vec![a3_domain::ResearchResultSource {
+                    source_id: original.source_id,
+                    revision: original.revision.clone(),
+                    range: original.range,
+                }],
+                None,
+            )?,
+        )?;
+        state.evidence_limit = objective.len()
+            + state.render_work_context(false).len()
+            + 256
+            + original.text.len() / 2;
+        assert!(
+            state.work_context().contains("Partitioned view"),
+            "mandatory sources must participate in the compact/full choice"
+        );
+        let compact_packet = state.model_evidence(objective, &[]);
+        assert!(compact_packet.len() <= state.evidence_limit && compact_packet.contains(objective));
+        assert!(compact_packet.contains(&original.text) && state.design_originals_delivered());
+        state.evidence_limit = 4600;
+        let design = format!(
+            "{} Late policy: stop on first error; no rollback. Größe 🦀.",
+            "Keep order. ".repeat(140)
+        );
+        state.work.as_mut().ok_or("work")?.resolve(
+            ResearchQuestionId::new(2)?,
+            a3_domain::ResearchResult::new(
+                ResearchResultKind::DesignDecision,
+                design.clone(),
+                vec![],
+                None,
+            )?,
+        )?;
+        let work = state.work.clone();
+        assert!(state.compile_evidence_window(&[], 0).is_empty());
+        assert!(
+            !state.design_originals_delivered(),
+            "cached text was not delivered"
+        );
+        let packet = state.model_evidence(objective, &[]);
+        assert!(
+            packet.contains(objective)
+                && packet.contains(&design)
+                && packet.contains(&original.text)
+        );
+        assert!(!packet.contains("UNSUPPORTED_MODEL_PROPOSAL"));
+        assert!(packet.contains("Interpretation prose omitted"));
+        assert!(state.design_originals_delivered());
+        let original_key = state.work_packet_key();
+        state.design_basis = a3_application::ResearchDesignBasis::Interpretations;
+        assert_ne!(
+            original_key,
+            state.work_packet_key(),
+            "different presentations must not reuse an analysis receipt"
+        );
+        state.design_basis = a3_application::ResearchDesignBasis::Originals;
+        assert_eq!(packet, state.model_evidence(objective, &[]));
+        assert_eq!(
+            state.work, work,
+            "presentation cannot rewrite the durable result"
+        );
+
+        let coverage = state.read_coverage.clone();
+        state.read_coverage.clear();
+        state.model_evidence(objective, &[]);
+        assert!(
+            !state.design_originals_delivered(),
+            "cache text without a proved read is insufficient"
+        );
+        assert!(
+            state.work_evidence_windows().is_empty(),
+            "failed packing clears the previous delivery"
+        );
+        state.read_coverage = coverage;
+        assert!(state.compile_evidence_window(&[], 1).is_empty());
+        assert!(
+            !state.design_originals_delivered(),
+            "oversize originals are not silently clipped"
+        );
+        assert!(state.work_evidence_windows().is_empty());
+        assert_eq!(packet, state.model_evidence(objective, &[]));
+
+        state.excerpts[0].text = "audit_log".to_owned();
+        state.model_evidence(objective, &[]);
+        assert!(
+            !state.design_originals_delivered(),
+            "a prefix cannot cover the original range"
+        );
+        state.excerpts[0].text = original.text;
+        state.sources[0] = a3_application::AskResearchSource::new(
+            a3_domain::AgentSessionId::from_bytes([3; 32]),
+            a3_domain::AgentSessionSequence::FIRST,
+            original.source_id,
+            1,
+            FileRevision::new(
+                original.revision.path().clone(),
+                ContentHash::from_bytes([9; 32]),
+            ),
+            Some(original.range),
+            None,
+            a3_domain::AskResearchSourceKind::File,
+            a3_domain::AskResearchSelectionReason::ExactNameOrPath,
+        )?;
+        state.model_evidence(objective, &[]);
+        assert!(
+            !state.design_originals_delivered(),
+            "same path/range/text with another revision is insufficient"
+        );
+        state.design_basis = a3_application::ResearchDesignBasis::Interpretations;
+        assert!(state.design_originals_delivered());
+        assert!(
+            state
+                .model_evidence(objective, &[])
+                .contains("UNSUPPORTED_MODEL_PROPOSAL")
+        );
+        assert_eq!(state.work, work);
         Ok(())
     }
 

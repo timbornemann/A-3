@@ -26,7 +26,9 @@ mod agent_research_controller;
 mod research_request_commands;
 mod research_response_codec;
 pub use research_request_commands::ResearchRequestCommands;
+mod research_design_basis;
 mod research_source_review;
+pub use research_design_basis::ResearchDesignBasis;
 mod research_work_admission;
 pub use research_source_review::{
     ResearchAnalysisMethod, ResearchSourceReview, ResearchSourceReviewError,

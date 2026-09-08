@@ -1,5 +1,19 @@
 # Plan 10: Verifikationsprotokoll
 
+## 2026-09-08: Originalgebundene Entwurfsbasis kontrolliert vergleichen
+
+Der [separate Nachweis](10-DESIGN_BASIS_VALIDATION.md) umfasst 22 Livefälle über
+alle sieben freigegebenen Modelle, einschließlich gegenläufiger Granite-/Ornith-
+und Qwen-Nachtests. Die neue native Variante ersetzt Bestandsprosa nur bei
+vollständiger aktueller Originalbereichslieferung. Zwei Packfehler sind korrigiert:
+wechselnde Ausschnittauswahl beim Phasenübergang und fehlende Quellenreserve
+vor der Voll-/Kompaktwahl. Vier neue Regressionen und das All-Features-Gate
+(1305 bestanden, 19 ignoriert) bestehen. Die Variante verschlechtert dennoch
+den Abschluss (3/11 gegenüber 10/11 der bisherigen Methode) und liefert keinen
+semantischen Nutzenbeleg. Nicht zitierte Zusatzoriginale können wegfallen;
+erfundene Effekte, widersprüchliche Fehlerregeln, überlange Testausgaben und
+Google-Gemmas Abbruch vor Design bleiben. Der Produktstandard bleibt unverändert.
+
 ## 2026-09-08: Explizite Befehlsnamen je Planergebnis prüfen (ADR-0103/0104)
 
 Der [Namensvergleich](10-REQUEST_COMMAND_VALIDATION.md) dokumentiert 20 reale Fälle

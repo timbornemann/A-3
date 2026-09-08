@@ -1156,6 +1156,27 @@ Ergebnis- und Repairgrenzen werden nicht erhöht. Ask, Bestandsanalyse, historis
 Ergebnisse und unerkannte Syntax bleiben unverändert. Das ist notwendige exakte
 Namensabdeckung, kein Beweis für richtige Verwendung, Effekte oder Umsetzung.
 
+Der native Vergleich nach
+[ADR-0105](adrs/0105-originalgebundene-entwurfsbasis-im-vergleich.md) akzeptiert
+testseitig `A3_RESEARCH_DESIGN_BASIS=interpretations|originals`. Der Standard ist
+unverändert `interpretations`; die App liest diese Testvariable nicht. `originals`
+ersetzt nur im festen Core-Planvertrag die vorausgesetzte Interpretation durch
+ihre exakt belegten Originalbereiche. Der Compiler materialisiert diese aus
+revisionsgleichen, vollständig gelesenen Cacheausschnitten; Byte-/Positionsgrenzen,
+acht Fenster und das bestehende Paketlimit bleiben unabhängig geprüft. Bereits
+die Wahl der kompakten Arbeitsansicht reserviert die verpflichtenden Quellbytes
+zuzüglich konservativer Headerkosten. Fehlendes Original, echte Platznot oder
+eine Lücke führen ohne zusätzlichen Read/Repair zum offenen ContextLimit.
+Ein fehlerhafter Packversuch löscht die vorherige aktuelle Lieferansicht.
+
+Auftrag und vollständige Designentscheidungen bleiben erhalten, der dauerhafte
+Interpretationstext wird nicht umgeschrieben. Die Vergleichsprojektion hat einen
+eigenen Analyse-Digest-Namensraum und kann keine Baseline-Analysequittung ersetzen.
+Die [Live-Auswertung](plans/10-DESIGN_BASIS_VALIDATION.md) liefert keinen allgemeinen
+Nutzenbeleg: unter anderem verschlechtern sich Granite und Ornith. Auch können
+vom Modell nicht zitierte Zusatzoriginale wegfallen. Die Variante ist daher
+kein Produktstandard und keine semantische Freigabe.
+
 Nach [ADR-0057](adrs/0057-leerer-entwurf-ist-kein-rechercheauftrag.md) benötigt Design
 bei `progress` genau ein Ergebnis. Ein leerer Entwurf ist ungültiger Modelloutput,
 kein Anlass für weitere Originalreads. Nur die explizite Entscheidung `question`

@@ -567,6 +567,7 @@ impl AgentAskResearcher {
             .await
             .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
         let mut state = AskResearchWorkingSet::new(evidence_budget);
+        state.design_basis = runtime.design_basis();
         if query.len().saturating_add(256) > evidence_budget {
             return awaiting_continuation(
                 turn,
@@ -865,6 +866,14 @@ impl AgentAskResearcher {
                     &source_reviews,
                 ) {
                     return awaiting_continuation(turn, &state, command_profile, reason);
+                }
+                if !state.design_originals_delivered() {
+                    return awaiting_continuation(
+                        turn,
+                        &state,
+                        command_profile,
+                        ResearchStopReason::ContextLimit,
+                    );
                 }
                 compiled_work_packet = Some(packet);
                 let key = state.work_packet_key();
@@ -2977,6 +2986,8 @@ mod research_regression_tests;
 
 #[path = "agent_research_context.rs"]
 mod research_context;
+#[path = "agent_research_design_basis.rs"]
+mod research_design_basis;
 #[path = "agent_research_flows.rs"]
 mod research_flows;
 #[path = "agent_research_followup.rs"]
@@ -2995,6 +3006,7 @@ mod research_work;
 use research_model::ResearchModel;
 
 struct AskResearchWorkingSet {
+    design_basis: a3_application::ResearchDesignBasis,
     access_outcome: a3_domain::ResearchAccessOutcome,
     work: Option<a3_domain::ResearchWorkState>,
     work_required_revisions: Vec<a3_domain::FileRevision>,
@@ -3031,6 +3043,7 @@ struct ResearchSourceExcerpt {
 impl AskResearchWorkingSet {
     fn new(evidence_limit: usize) -> Self {
         Self {
+            design_basis: a3_application::ResearchDesignBasis::Interpretations,
             access_outcome: a3_domain::ResearchAccessOutcome::Completed,
             work: None,
             work_required_revisions: Vec::new(),

@@ -616,6 +616,12 @@ impl AskResearchWorkingSet {
         required: &[FileRevision],
         limit: usize,
     ) -> String {
+        if self.uses_original_design_basis() {
+            // Failed exact packing must not leave a previous delivery looking current.
+            self.current_delivery.clear();
+            self.current_source_delivery.clear();
+            return self.compile_design_originals(limit).unwrap_or_default();
+        }
         let units = self.unit_excerpts();
         let is_unit =
             |item: &ResearchSourceExcerpt| units.iter().any(|unit| std::ptr::eq(unit, item));
@@ -858,6 +864,86 @@ impl AskResearchWorkingSet {
         self.current_delivery = delivered;
         self.current_source_delivery = source_delivery;
         output
+    }
+
+    /// Reuse exactly the admitted ranges, not a new relevance selection at a phase change.
+    /// Every range must fit one real cached excerpt; never bridge an unread gap or clip it.
+    fn compile_design_originals(&mut self, limit: usize) -> Option<String> {
+        let mut output = String::new();
+        let mut windows: Vec<DeliveredWindow> = Vec::new();
+        for needed in self.design_original_sources() {
+            if windows
+                .iter()
+                .any(|w| w.revision == needed.revision && w.range.contains(needed.range))
+            {
+                continue;
+            }
+            if windows.len() == 8 {
+                return None;
+            }
+            let start = needed.range.start_position();
+            let end = needed.range.end_position();
+            let (item, text) = self.excerpts.iter().find_map(|item| {
+                if self.revision_for(item) != Some(&needed.revision) {
+                    return None;
+                }
+                let begin = offset(item, start)?;
+                let finish = offset(item, end).or_else(|| {
+                    (end_position(
+                        SourcePosition::new(item.start_line.saturating_sub(1), 0),
+                        &item.text,
+                    ) == end)
+                        .then_some(item.text.len())
+                })?;
+                let text = item.text.get(begin..finish)?;
+                (text.len() == needed.range.len() as usize
+                    && self.original_byte_at(item.ordinal, start)
+                        == Some(needed.range.start_byte() as usize)
+                    && self.read_coverage.iter().any(|read| {
+                        read.revision == needed.revision && read.start <= start && read.end >= end
+                    }))
+                .then_some((item, text))
+            })?;
+            let number = u16::try_from(windows.len() + 1).ok()?;
+            let header = format!(
+                "\n[S{}] {} ab Zeile {} (Spalte {}) [E{number}]\n",
+                item.ordinal,
+                item.path,
+                start.row().saturating_add(1),
+                start.column()
+            );
+            if output
+                .len()
+                .saturating_add(header.len())
+                .saturating_add(text.len())
+                .saturating_add(1)
+                > limit
+            {
+                return None;
+            }
+            output.push_str(&header);
+            output.push_str(text);
+            output.push('\n');
+            let source = self.sources.iter().find(|s| s.ordinal() == item.ordinal)?;
+            windows.push(DeliveredWindow {
+                anchor: Some(a3_application::ResearchEvidenceAnchorId::new(number).ok()?),
+                ordinal: u16::try_from(item.ordinal).ok()?,
+                source_id: source.id(),
+                revision: needed.revision.clone(),
+                range: needed.range,
+                text: text.to_owned(),
+            });
+        }
+        self.current_delivery = windows
+            .iter()
+            .map(|w| CoveredRange {
+                revision: w.revision.clone(),
+                start: w.range.start_position(),
+                end: w.range.end_position(),
+            })
+            .collect();
+        self.current_source_delivery = windows;
+        Some(output)
     }
 
     /// Materialize only cached, revision-matching intervals; never fill gaps from index text.
