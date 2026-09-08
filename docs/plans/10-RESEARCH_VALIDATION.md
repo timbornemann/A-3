@@ -1,5 +1,27 @@
 # Plan 10: Verifikationsprotokoll
 
+## 2026-09-08: Textlimit präzise reparieren, Variantenabdeckung korrigieren
+
+Der [Nachweis](10-TEXT_LIMIT_REPAIR_VALIDATION.md) umfasst zehn zusätzliche
+Regressionstests und 18 Livefälle über alle sieben freigegebenen Modelle.
+Vollständige überlange Work-Ergebnisse erhalten jetzt ihre konkrete UTF-8-
+Längendiagnose im bestehenden Einzelrepair; Originaltranskript, Quellen,
+Voraussetzungen und Grenzen bleiben erhalten. Die sechs echten Fehlerfälle
+prüfen einmalig/wiederholt ungültige Analyse, Entwurf und Testentwurf. Eine
+Windows-Isolationslücke in den früheren Namens-Fixtures ist korrigiert: Q3 war
+von deren äußerer Schleife nicht ausgeführt worden; vier getrennt benannte
+Tests prüfen jetzt Q2 und Q3. Die frühere Aussage ist im Bericht berichtigt.
+
+Granites A/B/B/A-Stressvergleich erreicht trotzdem in keiner Variante Abschluss:
+Der gekürzte Testentwurf verliert den Befehlsnamen, die unabhängige Zulassung
+hält Q3 korrekt offen. Im regulären Nachtest schließen 12/14 Ask-/Planfälle ab,
+Google Gemma scheitert in beiden Modi bei Analyse/Repair an OutputLimit.
+Sechs Fälle bestehen den unveränderten Wortcheck; dessen fehlendes Wort `write`
+ist bei beschriebenem `_log`-Writer kein alleiniger Inhaltsnachweis. Erfundene
+Persistenz, widersprüchliche Testfälle und redundante Teilantworten bleiben
+unabhängig belegte Fehler. 1315 All-Features-Tests und Clippy bestehen.
+Kein allgemeiner Modellqualitätsgewinn oder mutierender Liveabschluss daraus ableiten.
+
 ## 2026-09-08: Originalgebundene Entwurfsbasis kontrolliert vergleichen
 
 Der [separate Nachweis](10-DESIGN_BASIS_VALIDATION.md) umfasst 22 Livefälle über

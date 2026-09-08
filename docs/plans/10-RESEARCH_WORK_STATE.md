@@ -50,11 +50,20 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
       bisherige Methode schließt 10/11, die Variante 3/11 Fälle ab. Keine
       Produktumstellung oder semantische Gesamtfreigabe daraus ableiten.
 
-- [ ] Die im Originalbasis-Vergleich erneut belegten Repairketten gezielt prüfen:
-      überlange Ergebnisfelder typisiert statt als allgemeinen ungültigen Wert
-      diagnostizieren und beim bestehenden Einzelrepair alle verbindlichen
-      Auftragsbedingungen erhalten. Keine zusätzlichen Repairs oder automatische
-      Akzeptanz widersprüchlicher/zu allgemeiner Testentwürfe.
+- [x] Vollständige überlange Ergebnisfelder typisiert statt als allgemeinen
+      ungültigen Wert diagnostizieren. Unverändertes vollständiges Eingangspaket,
+      maximal 768 Repairbytes, genau ein Repair, keine Zusatzreads und offene
+      Wiederöffnung nach erneutem Fehler sind real geprüft. Zehn zusätzliche
+      Regressionstests, 1315 bestandene All-Features-Tests und
+      [18 Livefälle](10-TEXT_LIMIT_REPAIR_VALIDATION.md) belegen den Schnitt.
+      Die Windows-Variantenlücke der Namens-Fixture ist korrigiert und die
+      frühere Q3-Abdeckungsbehauptung ausdrücklich berichtigt.
+
+- [ ] Die fachlichen Repairketten bleiben offen: Auftragsliterale und bindende
+      Entwurfsbedingungen auch beim Kürzen erhalten. Granite kürzt mit präziser
+      Längendiagnose, lässt aber in beiden Gegenproben den Befehlsnamen weg;
+      0/2 Abschlüsse wie zuvor. Keine weiteren Repairs, Namensprüfungslockerung
+      oder automatische Akzeptanz widersprüchlicher/zu allgemeiner Testentwürfe.
 
 - [x] Den belegten Verlust ausdrücklich ausgeschriebener CLI-Befehlsnamen
       nach [ADR-0103](../adrs/0103-explizite-befehlsnamen-im-plan.md) vor der

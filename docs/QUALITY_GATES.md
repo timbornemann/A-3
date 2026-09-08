@@ -58,6 +58,18 @@ Echte Ask-/Plan-/Agent-Vorbereitungsfixtures prüfen dasselbe vollständige
 Originalpaket, genau einen Repair und keinen Abschluss oder neuen Analysebeleg
 nach zweimal abgeschnittener Ausgabe.
 
+Vollständige überlange Work-Ergebnisse müssen unabhängig davon eine typisierte
+UTF-8-Längendiagnose erhalten: 4096 ASCII-/Mehrbytebytes zulassen, 4097/4098 ablehnen,
+bestehendes Trimmen erhalten und leere/Kontrollzeichenwerte weiterhin zurückweisen.
+Alle sechs Phasen halten einschließlich maximaler Zahlenwerte die 768-Byte-Hintgrenze.
+Die reale 8k-Fixture prüft Analyse, Entwurf und Testentwurf jeweils einmalig und
+wiederholt ungültig: gesamtes rollen-gebundenes Eingangstranskript unverändert,
+keine rohe Fehlerantwort im Repair, genau ein Repair, keine Zusatzreads und
+identisch offener Zustand ohne Ergebnis/Receipt beim neu geöffneten Storage-Adapter.
+Windows-libSQL-Isolation beendet den Kindprozess nach einer Fixture. Varianten
+müssen innerhalb deren Future liegen oder getrennte benannte Tests besitzen;
+eine äußere Schleife wiederholt nur die erste Variante und belegt keine Matrix.
+
 Die ADR-0103-Namensprüfung muss fehlende ausgeschriebene Befehlsnamen pro
 Design-/DesignTests-Ergebnis vor Commit/Receipt erkennen. Originalauftrag und
 andere Ergebnisse dürfen den fehlenden Namen nicht ersetzen. Syntax-/UTF-8-,

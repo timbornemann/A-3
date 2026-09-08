@@ -854,6 +854,11 @@ pub enum AskResearchDecisionDecodeError {
     UnsupportedVersion,
     /// A value crossed a closed enum or resource boundary.
     InvalidValue,
+    /// One trimmed work-result text exceeded the fixed 4096-byte UTF-8 boundary.
+    ResultTextTooLarge {
+        /// Length after the existing whitespace normalization, never source content.
+        bytes: usize,
+    },
     /// Answer markers and the declared source list disagree.
     CitationMismatch,
     /// An asserted observation or conclusion has no supporting sources.

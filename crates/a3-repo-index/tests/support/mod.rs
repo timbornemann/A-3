@@ -124,6 +124,9 @@ where
     run_libsql_test_selected(future, false)
 }
 
+// On Windows this re-executes the named test and exits its child after `future`.
+// Parameterize inside that future or use distinct named tests, never an outer
+// loop of fixture calls: every re-execution would restart that loop at case one.
 pub(crate) fn run_libsql_test_selected<F>(
     future: F,
     include_ignored: bool,

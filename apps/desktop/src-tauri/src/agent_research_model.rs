@@ -187,6 +187,7 @@ pub(super) enum DecisionIssue {
     Fields,
     Version,
     Value,
+    ResultTextTooLarge { bytes: usize },
     Markers,
     Truncated,
     UnknownSource,
@@ -206,6 +207,10 @@ impl DecisionIssue {
             // repair path. This does not enlarge output limits or grant another attempt.
             format!(
                 "Output was cut off: return a substantially SHORTER complete object, not a continuation; omit repetition and source excerpts. {hint}"
+            )
+        } else if let Self::ResultTextTooLarge { bytes } = self {
+            format!(
+                "Result text is {bytes} UTF-8 bytes; maximum 4096. Return a SHORTER complete result; keep required outcomes and prerequisites. {hint}"
             )
         } else {
             hint
@@ -319,6 +324,7 @@ impl DecisionIssue {
             Self::Fields => "research-v1/fields",
             Self::Version => "research-v1/version",
             Self::Value => "research-v1/value",
+            Self::ResultTextTooLarge { .. } => "research-v2/result-text-too-large",
             Self::Markers => "research-v1/markers",
             Self::Truncated => "research-v1/output-truncated",
             Self::UnknownSource => "research-v1/source",
@@ -385,6 +391,9 @@ impl DecisionIssue {
             Self::Value => {
                 "Use only the schema's closed enums and bounded values. Source labels are S1..S200 and start_line is positive."
             }
+            Self::ResultTextTooLarge { .. } => {
+                "Keep each work result text within 4096 UTF-8 bytes; remove repetition without changing the original request, required outcomes or admitted prerequisites."
+            }
             Self::Markers => {
                 "Markdown markers and source_refs must name exactly the same sources. Do not place markers in code."
             }
@@ -439,6 +448,9 @@ pub(super) fn validate_phase_decision(
                 DecisionIssue::Version
             }
             a3_application::AskResearchDecisionDecodeError::InvalidValue => DecisionIssue::Value,
+            a3_application::AskResearchDecisionDecodeError::ResultTextTooLarge { bytes } => {
+                DecisionIssue::ResultTextTooLarge { bytes }
+            }
             a3_application::AskResearchDecisionDecodeError::CitationMismatch => {
                 DecisionIssue::Markers
             }

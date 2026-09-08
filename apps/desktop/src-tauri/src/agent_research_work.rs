@@ -1430,6 +1430,44 @@ mod tests {
     }
 
     #[test]
+    fn research_result_text_limit_repair_is_precise_bounded_and_not_transport_truncation()
+    -> TestResult {
+        let id = ResearchQuestionId::new(32)?;
+        let issue = research_model::DecisionIssue::ResultTextTooLarge { bytes: usize::MAX };
+        for phase in [
+            ResearchOutputPhase::Initialize,
+            ResearchOutputPhase::Analyze(id),
+            ResearchOutputPhase::SummarizeOriginals(id),
+            ResearchOutputPhase::Design(id),
+            ResearchOutputPhase::DesignTests(id),
+            ResearchOutputPhase::Finalize,
+        ] {
+            let hint = issue.repair_hint_for_phase(Some(phase), 200);
+            assert!(hint.len() <= 768, "{phase:?}: {} bytes", hint.len());
+            assert!(hint.contains("4096") && hint.contains("SHORTER") && hint.contains("UTF-8"));
+            assert!(hint.contains(&usize::MAX.to_string()));
+            assert!(hint.contains("schema_version=7") && hint.contains(issue.code()));
+            assert!(
+                !hint.contains("cut off"),
+                "a complete overlong result is not a truncated stream"
+            );
+        }
+        let wire = serde_json::json!({"schema_version":7,"response":{"kind":"designDecision",
+            "result":{"question_id":2,"text":"é".repeat(2049),"evidence":[]}}});
+        let result = research_model::validate_phase_decision(
+            &wire.to_string(),
+            super::super::BeginResearchDecision::SearchAllowed,
+            0,
+            Some(ResearchOutputPhase::Design(ResearchQuestionId::new(2)?)),
+        );
+        assert!(matches!(
+            result,
+            Err(research_model::DecisionIssue::ResultTextTooLarge { bytes: 4098 })
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn research_repair_hints_follow_the_same_phase_evidence_contract() -> TestResult {
         use a3_application::ResearchOutputPhase;
         let issue = research_model::DecisionIssue::WorkEvidence;

@@ -1143,6 +1143,18 @@ Fortsetzung. Die bekannten Quellen, ihr gesamtes aktuelles Paket, der Phasenvert
 höchstens 768 Repairbytes und genau ein Reparaturversuch bleiben unverändert.
 Ein erneuter Abbruch ist weiterhin kein erfolgreicher Rechercheabschluss.
 
+Ein vollständiges JSON-Dokument mit nach vorhandener Whitespace-Normalisierung
+über 4096 UTF-8-Bytes langem Work-Ergebnis erzeugt dagegen
+`ResultTextTooLarge { bytes }`, nicht allgemeines `InvalidValue` und nicht
+Transporttrunkierung. Der bestehende Einzelrepair nennt gemessene Länge, Grenze
+und eine kürzere vollständige Neuausgabe unter Erhalt von Auftragsbedingungen und
+Voraussetzungen (`research-v2/result-text-too-large`). Das vollständige rollen-
+gebundene Eingangstranskript bleibt bytegleich; verworfener Modelltext wird nicht
+zurückgespiegelt. Alle anderen Feld-, Enum-, Kontrollzeichen- und Ressourcengrenzen
+bleiben unverändert. Ein erneut ungültiges Ergebnis erhält weder Abschluss noch
+Analyse-Receipt oder zusätzliche Reads. Der [Nachweis](plans/10-TEXT_LIMIT_REPAIR_VALIDATION.md)
+trennt diese präzise Diagnose von tatsächlichem Reparaturerfolg und Inhaltsqualität.
+
 Nach [ADR-0103](adrs/0103-explizite-befehlsnamen-im-plan.md) projiziert der Core aus
 ausdrücklich ausgeschriebenen Runner-/Script-/Command-/Platzhalter-Aufrufen bis zu
 vier unveränderte Befehlsnamen. Nur im festen Core-Planvertrag müssen Änderung und

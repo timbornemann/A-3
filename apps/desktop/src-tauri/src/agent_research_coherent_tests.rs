@@ -23,6 +23,7 @@ struct CoherentModel {
     diagrams: AtomicUsize,
     truncated_packet: std::sync::Mutex<Option<String>>,
     command_packet: std::sync::Mutex<Option<String>>,
+    oversized_transcript: std::sync::Mutex<Option<Vec<(ModelMessageRole, String)>>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -45,6 +46,12 @@ enum WorkFault {
     LongInterpretation,
     OriginalDesignBasis,
     OriginalDesignLimit,
+    OversizedAnalysisOnce,
+    OversizedAnalysisAlways,
+    OversizedDesignOnce,
+    OversizedDesignAlways,
+    OversizedTestsOnce,
+    OversizedTestsAlways,
     EmptyNavigationStatus,
     RepeatedNoteSources,
     EchoTestObligationOnce,
@@ -58,6 +65,17 @@ enum WorkFault {
 }
 
 impl WorkFault {
+    fn result_oversize(self) -> Option<(u8, bool)> {
+        match self {
+            Self::OversizedAnalysisOnce => Some((1, false)),
+            Self::OversizedAnalysisAlways => Some((1, true)),
+            Self::OversizedDesignOnce => Some((2, false)),
+            Self::OversizedDesignAlways => Some((2, true)),
+            Self::OversizedTestsOnce => Some((3, false)),
+            Self::OversizedTestsAlways => Some((3, true)),
+            _ => None,
+        }
+    }
     fn command_rename(self) -> Option<(u8, bool)> {
         match self {
             Self::RenamedCommandDesignOnce => Some((2, false)),
@@ -361,6 +379,49 @@ impl ResearchModel for CoherentModel {
                 document["decision"] = serde_json::json!({"kind":"plan", "note":note, "summary":"Aufrufkette geklärt.", "changes":["Die gewünschte Dokumentation der Aufrufkette ergänzen."], "interfaces":"Keine API-Änderung.", "tests":["Dokumentation gegen Originalbelege prüfen."], "assumptions":"Bestehendes Verhalten erhalten."});
                 document["work"]["results"] = serde_json::json!([]);
             }
+            if let Some((target, repeated)) = self.fault.result_oversize()
+                && matches!(phase, a3_application::ResearchOutputPhase::Analyze(id)
+                    | a3_application::ResearchOutputPhase::SummarizeOriginals(id)
+                    | a3_application::ResearchOutputPhase::Design(id)
+                    | a3_application::ResearchOutputPhase::DesignTests(id) if id.get() == u16::from(target))
+            {
+                let text = "UNTRUSTED_OVERSIZE Größe 🦀. ".repeat(180);
+                let mut original = self
+                    .oversized_transcript
+                    .lock()
+                    .map_err(|_| AgentConversationFailure::Unavailable)?;
+                let oversized = if let Some(original) = original.as_ref() {
+                    let (hint, base) = transcript
+                        .split_last()
+                        .ok_or(AgentConversationFailure::InvalidInput)?;
+                    assert_eq!(
+                        base,
+                        original.as_slice(),
+                        "repair keeps the entire role-bound transcript"
+                    );
+                    assert!(
+                        hint.1.len() <= 768
+                            && hint.1.contains("SHORTER")
+                            && hint.1.contains("4096")
+                    );
+                    assert!(
+                        hint.1.contains("result-text-too-large")
+                            && hint.1.contains(&text.trim().len().to_string())
+                    );
+                    assert!(
+                        transcript
+                            .iter()
+                            .all(|(_, body)| !body.contains("UNTRUSTED_OVERSIZE"))
+                    );
+                    repeated
+                } else {
+                    *original = Some(transcript.to_vec());
+                    true
+                };
+                if oversized {
+                    document["work"]["results"][0]["text"] = serde_json::json!(text);
+                }
+            }
             if self.fault == WorkFault::EmptyNavigationStatus {
                 document["decision"]["note"]["gap"] = serde_json::json!("");
                 document["decision"]["note"]["next_step"] = serde_json::json!("");
@@ -502,6 +563,7 @@ impl ResearchModel for CoherentModel {
                     | WorkFault::TruncatedAnalysisOnce
                     | WorkFault::TruncatedAnalysisAlways
             ) || self.fault.command_rename().is_some()
+                || self.fault.result_oversize().is_some()
             {
                 document["schema_version"] = serde_json::json!(6);
                 document["decision"]
@@ -519,6 +581,7 @@ impl ResearchModel for CoherentModel {
                         | WorkFault::TruncatedAnalysisOnce
                         | WorkFault::TruncatedAnalysisAlways
                 ) || self.fault.command_rename().is_some()
+                    || self.fault.result_oversize().is_some()
                 {
                     let response = if phase == a3_application::ResearchOutputPhase::Initialize {
                         serde_json::json!({"kind":"questions","questions":document["work"]["questions"]})
@@ -628,6 +691,44 @@ fn coherent_fixture(work_contract: bool) -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn research_oversized_results_repair_once_with_the_same_context_in_all_modes()
+-> Result<(), Box<dyn Error>> {
+    oversized_fixture(WorkFault::OversizedAnalysisOnce)
+}
+
+#[test]
+fn research_oversized_results_twice_remain_open_after_reopening_without_more_reads()
+-> Result<(), Box<dyn Error>> {
+    oversized_fixture(WorkFault::OversizedAnalysisAlways)
+}
+
+// Each fault owns a named test: Windows isolation exits after its first fixture.
+// A loop around that boundary would replay the first fault in every child process.
+fn oversized_fixture(fault: WorkFault) -> Result<(), Box<dyn Error>> {
+    coherent_fixture_with_profile(true, false, fault, QUERY, Some(&eight_k_profile()?))
+}
+
+#[test]
+fn research_oversized_results_design_repairs_once() -> Result<(), Box<dyn Error>> {
+    oversized_fixture(WorkFault::OversizedDesignOnce)
+}
+
+#[test]
+fn research_oversized_results_design_twice_cannot_complete() -> Result<(), Box<dyn Error>> {
+    oversized_fixture(WorkFault::OversizedDesignAlways)
+}
+
+#[test]
+fn research_oversized_results_tests_repair_once() -> Result<(), Box<dyn Error>> {
+    oversized_fixture(WorkFault::OversizedTestsOnce)
+}
+
+#[test]
+fn research_oversized_results_tests_twice_cannot_complete() -> Result<(), Box<dyn Error>> {
+    oversized_fixture(WorkFault::OversizedTestsAlways)
+}
+
+#[test]
 fn research_original_design_basis_stops_before_underdelivered_tests_and_preserves_checkpoint()
 -> Result<(), Box<dyn Error>> {
     coherent_fixture_with_profile(
@@ -654,37 +755,34 @@ fn research_original_design_basis_keeps_real_eight_k_originals_and_full_decision
 #[test]
 fn research_command_names_repair_without_extra_reads_in_plan_and_agent()
 -> Result<(), Box<dyn Error>> {
-    for fault in [
-        WorkFault::RenamedCommandDesignOnce,
-        WorkFault::RenamedCommandTestsOnce,
-    ] {
-        coherent_fixture_with_profile(
-            true,
-            false,
-            fault,
-            &format!("{QUERY} Plane python taskflow/manager.py export-events <destination>."),
-            Some(&eight_k_profile()?),
-        )?;
-    }
-    Ok(())
+    command_name_fixture(WorkFault::RenamedCommandDesignOnce)
 }
 
 #[test]
 fn research_command_names_twice_invalid_preserve_unresolved_work_on_reopen()
 -> Result<(), Box<dyn Error>> {
-    for fault in [
-        WorkFault::RenamedCommandDesignAlways,
-        WorkFault::RenamedCommandTestsAlways,
-    ] {
-        coherent_fixture_with_profile(
-            true,
-            false,
-            fault,
-            &format!("{QUERY} Plane python taskflow/manager.py export-events <destination>."),
-            Some(&eight_k_profile()?),
-        )?;
-    }
-    Ok(())
+    command_name_fixture(WorkFault::RenamedCommandDesignAlways)
+}
+
+fn command_name_fixture(fault: WorkFault) -> Result<(), Box<dyn Error>> {
+    coherent_fixture_with_profile(
+        true,
+        false,
+        fault,
+        &format!("{QUERY} Plane python taskflow/manager.py export-events <destination>."),
+        Some(&eight_k_profile()?),
+    )
+}
+
+#[test]
+fn research_command_names_in_tests_repair_without_extra_reads() -> Result<(), Box<dyn Error>> {
+    command_name_fixture(WorkFault::RenamedCommandTestsOnce)
+}
+
+#[test]
+fn research_command_names_in_tests_twice_invalid_preserve_unresolved_work()
+-> Result<(), Box<dyn Error>> {
+    command_name_fixture(WorkFault::RenamedCommandTestsAlways)
 }
 
 #[test]
@@ -1006,6 +1104,13 @@ fn coherent_fixture_with_profile(
                 {
                     continue;
                 }
+                if fault
+                    .result_oversize()
+                    .is_some_and(|(question, _)| question > 1)
+                    && mode == AgentSessionMode::Ask
+                {
+                    continue;
+                }
                 if work_contract && (index == 4 || index == 6) {
                     continue;
                 }
@@ -1068,6 +1173,7 @@ fn coherent_fixture_with_profile(
                     diagrams: AtomicUsize::new(0),
                     truncated_packet: std::sync::Mutex::new(None),
                     command_packet: std::sync::Mutex::new(None),
+                    oversized_transcript: std::sync::Mutex::new(None),
                 });
                 let worker_model = model.clone();
                 let worker_project = project.clone();
@@ -1122,6 +1228,56 @@ fn coherent_fixture_with_profile(
                     }
                 }
                 let result = received?;
+                if let Some((failed_question, repeated)) = fault.result_oversize() {
+                    assert_eq!(result.awaiting_continuation, repeated);
+                    assert_eq!(
+                        model.calls.load(Ordering::SeqCst),
+                        if repeated {
+                            usize::from(failed_question)
+                                + 1
+                                + usize::from(mode == AgentSessionMode::Ask)
+                        } else {
+                            4
+                        }
+                    );
+                    let detail = store
+                        .load_detail(&project, id, AgentSessionSequence::FIRST)
+                        .await?
+                        .ok_or("trace")?;
+                    let work = detail.work_state().ok_or("work")?;
+                    assert_eq!(work.ready_to_finish(), !repeated);
+                    assert!(
+                        work.accesses().is_empty(),
+                        "no extra reads can repair an overlong result"
+                    );
+                    let reopened = LibsqlKnowledgeStore::open(&StorageLayout::prepare(
+                        data.path().join("data"),
+                    )?)
+                    .await?;
+                    assert_eq!(
+                        reopened
+                            .load_detail(&project, id, AgentSessionSequence::FIRST)
+                            .await?
+                            .ok_or("reopened")?
+                            .work_state(),
+                        Some(work)
+                    );
+                    if repeated {
+                        let question = work
+                            .question(a3_domain::ResearchQuestionId::new(u16::from(
+                                failed_question,
+                            ))?)
+                            .ok_or("question")?;
+                        assert!(question.result().is_none() && question.attempts().is_empty());
+                    }
+                    for (path, expected) in PATHS.iter().zip(&files) {
+                        assert_eq!(
+                            std::fs::read_to_string(repository.path().join(path))?,
+                            *expected
+                        );
+                    }
+                    continue;
+                }
                 if fault == WorkFault::OriginalDesignLimit {
                     assert!(result.awaiting_continuation);
                     assert_eq!(

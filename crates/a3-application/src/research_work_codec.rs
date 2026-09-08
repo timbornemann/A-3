@@ -533,7 +533,7 @@ pub(crate) fn decode_work(value: &Value) -> Result<ResearchWorkUpdate, DecodeErr
                 "boundedUnknown" => ResearchResultKind::BoundedUnknown,
                 _ => return Err(DecodeError::InvalidValue),
             },
-            text: bounded(string(item, "text")?, 4096)?,
+            text: result_text(string(item, "text")?)?,
             evidence,
             anchors,
         });
@@ -542,6 +542,14 @@ pub(crate) fn decode_work(value: &Value) -> Result<ResearchWorkUpdate, DecodeErr
         questions,
         results: proposals,
     })
+}
+
+fn result_text(value: &str) -> Result<String, DecodeError> {
+    let bytes = value.trim().len();
+    if bytes > 4096 {
+        return Err(DecodeError::ResultTextTooLarge { bytes });
+    }
+    crate::ask_research_action_codec::bounded(value, 4096)
 }
 
 fn question_id(value: &Value) -> Result<ResearchQuestionId, DecodeError> {
@@ -555,6 +563,50 @@ fn question_id(value: &Value) -> Result<ResearchQuestionId, DecodeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn research_result_text_limit_has_a_precise_utf8_error_in_every_result_phase()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let id = ResearchQuestionId::FIRST;
+        for phase in [
+            ResearchOutputPhase::Analyze(id),
+            ResearchOutputPhase::SummarizeOriginals(id),
+            ResearchOutputPhase::Design(id),
+            ResearchOutputPhase::DesignTests(id),
+        ] {
+            let design = phase.is_design();
+            for (text, valid) in [
+                ("x".repeat(4096), true),
+                ("é".repeat(2048), true),
+                ("x".repeat(4097), false),
+                ("é".repeat(2049), false),
+            ] {
+                let document = json!({"schema_version":7,"response":{
+                    "kind":if design {"designDecision"} else {"interpretation"},
+                    "result":{"question_id":1,"text":format!(" \n{text}\t "),
+                        "evidence":if design {json!([])} else {json!([{"anchor_ref":"E1"}])}}
+                }});
+                let decoded =
+                    crate::DecodeAskResearchDecision.decode_phase(&document.to_string(), phase);
+                if valid {
+                    let crate::AskResearchDecision::Answer { note, .. } = decoded? else {
+                        return Err("result".into());
+                    };
+                    assert_eq!(note.work.ok_or("work")?.results[0].text, text);
+                } else {
+                    assert!(
+                        matches!(decoded, Err(DecodeError::ResultTextTooLarge { bytes }) if bytes == text.len()),
+                        "phase={phase:?}; expected byte limit, got {decoded:?}"
+                    );
+                }
+            }
+        }
+        for text in ["", " \n\t", "bad\0text", "bad\u{1b}text"] {
+            let work = json!({"questions":[],"results":[{"question_id":1,"kind":"designDecision","text":text,"evidence":[]}]});
+            assert!(matches!(decode_work(&work), Err(DecodeError::InvalidValue)));
+        }
+        Ok(())
+    }
 
     #[test]
     fn research_v7_disjoint_result_is_not_nullable_progress()

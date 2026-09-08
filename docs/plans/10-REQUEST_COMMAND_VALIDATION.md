@@ -44,6 +44,15 @@ Repair bytegleich, alle Fixturedateien bleiben unverändert. Ein neuer Storage-
 Adapter lädt denselben dauerhaften Arbeitsstand; Wiederherstellung mit aktuellen
 Evidence-Zuordnungen wählt dieselbe offene Pflicht. Dies ist kein Prozesscrashtest.
 
+Nachtrag aus der [Textlimit-Regression](10-TEXT_LIMIT_REPAIR_VALIDATION.md): Die
+ursprünglich zwei benannten Realtests iterierten Q2/Q3 außerhalb der Windows-
+libSQL-Isolationsgrenze. Da deren Kindprozess nach einer Fixture endet, wurde
+tatsächlich Q2 wiederholt, nicht auch Q3 ausgeführt. Die obige Aussage zur
+damaligen realen Q3-Abdeckung war daher zu weitgehend. Die unabhängigen Application-
+Prüfungen und Liveberichte sind davon nicht betroffen. Vier jetzt getrennt
+benannte Realtests weisen Q2 und Q3 jeweils einmalig und wiederholt ungültig nach,
+einschließlich Wiederöffnung und unverändertem 8k-Kontext.
+
 ## Kontrollierte Live-Stände
 
 Alle Aufrufe nutzen die unveränderte öffentliche CSV-Planfrage `3:0`, `joint`,
