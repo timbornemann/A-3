@@ -3,6 +3,8 @@
 mod action_wire_probe;
 #[path = "agent_live_coding_fixture.rs"]
 mod coding;
+#[path = "agent_research_stream_diagnostic.rs"]
+mod stream_diagnostic;
 
 use super::*;
 use a3_application::{
@@ -66,6 +68,45 @@ fn optional_env(name: &str) -> Result<Option<String>, std::env::VarError> {
     }
 }
 
+/// Native comparison only. Never changes saved settings or grants capability evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResearchGroundingComparison {
+    Profile,
+    FormatOnly,
+    RepeatSchema,
+}
+
+impl ResearchGroundingComparison {
+    fn parse(value: Option<&str>) -> Result<Self, &'static str> {
+        match value {
+            None | Some("profile") => Ok(Self::Profile),
+            Some("format-only") => Ok(Self::FormatOnly),
+            Some("repeat-schema") => Ok(Self::RepeatSchema),
+            _ => Err("unknown research grounding comparison"),
+        }
+    }
+
+    fn settings(
+        self,
+        original: ModelProfileSettings,
+    ) -> Result<ModelProfileSettings, ModelProfileError> {
+        let grounding = match self {
+            Self::Profile => return Ok(original),
+            Self::FormatOnly => ModelPromptSchemaGrounding::FormatFieldOnly,
+            Self::RepeatSchema => ModelPromptSchemaGrounding::RepeatSchemaInPrompt,
+        };
+        ModelProfileSettings::new(
+            original.context_limit(),
+            original.output_limit(),
+            original.token_counting(),
+            original.parallelism_limit(),
+            original.sampling(),
+            original.stop_sequences().clone(),
+            grounding,
+        )
+    }
+}
+
 fn fixture_profile_settings(model: &str) -> Result<ModelProfileSettings, Box<dyn Error>> {
     let (context, output) = match model {
         "qwen38-8k:latest" => (8192, 2048),
@@ -90,12 +131,33 @@ fn fixture_profile_settings(model: &str) -> Result<ModelProfileSettings, Box<dyn
 pub(super) struct LiveResearchModel {
     provider: Arc<dyn a3_application::ModelProvider>,
     profile: ModelProfile,
+    stream_records: stream_diagnostic::Records,
 }
 
 impl LiveResearchModel {
+    fn observed(provider: Arc<dyn ModelProvider>, profile: ModelProfile) -> Self {
+        let stream_records = Arc::new(std::sync::Mutex::new(Vec::new()));
+        Self {
+            provider: Arc::new(stream_diagnostic::ObservedProvider::new(
+                provider,
+                stream_records.clone(),
+            )),
+            profile,
+            stream_records,
+        }
+    }
+
+    pub(super) fn take_stream_diagnostics(&self) -> Result<Vec<serde_json::Value>, &'static str> {
+        self.stream_records
+            .lock()
+            .map(|mut records| std::mem::take(&mut *records))
+            .map_err(|_| "stream diagnostics poisoned")
+    }
+
     pub(super) fn identity(&self) -> serde_json::Value {
         serde_json::json!({"provider":self.profile.provider_id().as_str(),"model":self.profile.model_id().as_str(),
-            "context":self.profile.settings().context_limit().get(),"output":self.profile.settings().output_limit().get()})
+            "context":self.profile.settings().context_limit().get(),"output":self.profile.settings().output_limit().get(),
+            "schema_grounding":format!("{:?}",self.profile.settings().schema_grounding())})
     }
 
     pub(super) async fn complete_source_review(
@@ -117,6 +179,9 @@ impl LiveResearchModel {
         .await
     }
     pub(super) async fn probe() -> Result<Self, Box<dyn Error>> {
+        let grounding = ResearchGroundingComparison::parse(
+            optional_env("A3_RESEARCH_EVAL_GROUNDING")?.as_deref(),
+        )?;
         let target = ExplicitResearchTarget::parse(
             optional_env("A3_RESEARCH_EVAL_PROVIDER")?.as_deref(),
             optional_env("A3_RESEARCH_EVAL_MODEL")?.as_deref(),
@@ -129,13 +194,18 @@ impl LiveResearchModel {
             );
         }
         if let Some(path) = catalog {
+            if target.is_none() && grounding != ResearchGroundingComparison::Profile {
+                return Err(
+                    "grounding comparison requires an explicit model and fresh probe".into(),
+                );
+            }
             let stored = a3_storage_libsql::LibsqlKnowledgeStore::read_settings_snapshot(
                 std::path::Path::new(&path),
             )
             .await?;
             let settings = stored.settings();
             if let Some(target) = target {
-                return Self::probe_explicit(target, settings).await;
+                return Self::probe_explicit(target, settings, grounding).await;
             }
             let (endpoint, profile) =
                 crate::agent_conversation_runtime::executable_coding(settings)
@@ -155,7 +225,7 @@ impl LiveResearchModel {
                 &credentials,
             )
             .await?;
-            return Ok(Self { provider, profile });
+            return Ok(Self::observed(provider, profile));
         }
         let model = local.ok_or("no research model explicitly selected")?;
         if !matches!(
@@ -175,13 +245,14 @@ impl LiveResearchModel {
             OllamaEndpoint::parse("http://127.0.0.1:11434")?,
             Arc::new(LocalOnlyOllamaEndpointPolicy),
         )?);
-        let settings = fixture_profile_settings(&model)?;
+        let settings = grounding.settings(fixture_profile_settings(&model)?)?;
         Self::probe_provider(provider, &model, settings).await
     }
 
     async fn probe_explicit(
         target: ExplicitResearchTarget,
         settings: &DesktopSettings,
+        grounding: ResearchGroundingComparison,
     ) -> Result<Self, Box<dyn Error>> {
         let endpoint = target.endpoint(settings)?;
         let (kind, model) = target.identity();
@@ -192,6 +263,7 @@ impl LiveResearchModel {
             })
             .map(|(_, profile)| profile.settings().clone())
             .map_or_else(|| fixture_profile_settings(model), Ok)?;
+        let profile_settings = grounding.settings(profile_settings)?;
         let credentials: Arc<dyn ProviderCredentialStore> =
             Arc::new(a3_credentials::NativeProviderCredentialStore::new());
         let key = LoadDesktopProviderCredential::new(credentials)
@@ -261,7 +333,7 @@ impl LiveResearchModel {
             profile.settings().context_limit().get(),
             profile.settings().output_limit().get()
         );
-        Ok(Self { provider, profile })
+        Ok(Self::observed(provider, profile))
     }
 
     pub(super) fn evidence_budget(
@@ -300,6 +372,42 @@ impl LiveResearchModel {
         }
         result
     }
+}
+
+#[test]
+fn research_grounding_comparison_is_closed_and_preserves_all_other_settings()
+-> Result<(), Box<dyn Error>> {
+    assert_eq!(
+        ResearchGroundingComparison::parse(None)?,
+        ResearchGroundingComparison::Profile
+    );
+    for (name, expected) in [
+        ("profile", ResearchGroundingComparison::Profile),
+        ("format-only", ResearchGroundingComparison::FormatOnly),
+        ("repeat-schema", ResearchGroundingComparison::RepeatSchema),
+    ] {
+        assert_eq!(ResearchGroundingComparison::parse(Some(name))?, expected);
+    }
+    for invalid in ["", "repeat-schema ", "auto", "RepeatSchemaInPrompt"] {
+        assert!(ResearchGroundingComparison::parse(Some(invalid)).is_err());
+    }
+    for model in ["qwen38-8k:latest", "gpt-5.6-luna", "gemma-4-26b-a4b-it"] {
+        let original = fixture_profile_settings(model)?;
+        assert_eq!(
+            ResearchGroundingComparison::Profile.settings(original.clone())?,
+            original
+        );
+        let repeated = ResearchGroundingComparison::RepeatSchema.settings(original.clone())?;
+        assert_eq!(
+            repeated.schema_grounding(),
+            ModelPromptSchemaGrounding::RepeatSchemaInPrompt
+        );
+        assert_eq!(
+            ResearchGroundingComparison::FormatOnly.settings(repeated)?,
+            original
+        );
+    }
+    Ok(())
 }
 
 #[derive(Debug)]

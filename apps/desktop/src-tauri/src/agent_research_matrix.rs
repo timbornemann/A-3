@@ -829,6 +829,8 @@ fn research_approved_model_matrix() -> Result<(), Box<dyn Error>> {
                         let mut record = record;
                         record["analysis_method"] = serde_json::json!(format!("{method:?}"));
                         record["model_profile"] = live.identity();
+                        record["stream_diagnostics"] =
+                            serde_json::json!(live.take_stream_diagnostics()?);
                         record["source_review_diagnostics"] =
                             serde_json::json!(detail.as_ref().map(|d| {
                                 d.events()
