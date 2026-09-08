@@ -1123,6 +1123,18 @@ maximal langen Hinweise. Design/DesignTests erhalten keine zusätzlichen Reviewh
 sie verwenden weiterhin den zugelassenen Bestandsbefund. Modelle/Profile, äußere
 Budgets, native Settings und Mutationsberechtigungen ändern sich nicht.
 
+[ADR-0102](adrs/0102-originalgebundene-operationshinweise.md) ergänzt ausschließlich
+im nativen Source-local-Vergleich ein optionales Operationsinventar aus dem vorhandenen
+Fast Index. Vor jedem Einzelquellenaufruf werden höchstens acht vollständig im
+gelieferten Originalfenster liegende Funktionen derselben Revision inspiziert;
+Auswahl höchstens 4096 Symbole, keine Call-Expansion, gemeinsame zwei Sekunden pro
+Fenster. Ganze Funktionszeilen mit höchstens 16 Schritten, Quellzeilen, Eltern und
+bekannten Lücken belegen nur statische Operationen. Fehlende Calls beweisen keine
+Wirkungslosigkeit. Höchstens 1024 Bytes dürfen den echten freien Rest nutzen;
+Originale, Auftrag und Repair bleiben unangetastet. Die Safe-Reader-Prüfung umfasst
+auch diese Metadatenvorbereitung. Die Hinweise bleiben flüchtig und ersetzen
+weder Originalzitate noch fachliche Prüfung. Produktstandard bleibt `joint`.
+
 Nach [ADR-0057](adrs/0057-leerer-entwurf-ist-kein-rechercheauftrag.md) benötigt Design
 bei `progress` genau ein Ergebnis. Ein leerer Entwurf ist ungültiger Modelloutput,
 kein Anlass für weitere Originalreads. Nur die explizite Entscheidung `question`

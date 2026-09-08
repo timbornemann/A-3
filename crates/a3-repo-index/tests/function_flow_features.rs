@@ -13,6 +13,91 @@ use a3_repo_index::{
 use std::error::Error;
 
 #[test]
+fn research_fixture_flow_distinguishes_actual_writer_calls_from_storage_returns()
+-> Result<(), Box<dyn Error>> {
+    let adapter = PythonLanguageAdapter::new(ParserPoolSize::new(1)?)?;
+    for (path, source) in [
+        (
+            "taskflow/plugins.py",
+            include_str!("../../../fixtures/research-eval-v1/taskflow/plugins.py"),
+        ),
+        (
+            "taskflow/storage.py",
+            include_str!("../../../fixtures/research-eval-v1/taskflow/storage.py"),
+        ),
+    ] {
+        let parsed = parse(&adapter, path, source)?;
+        let mut inspected = 0;
+        for owner in parsed
+            .symbols()
+            .iter()
+            .filter(|s| matches!(s.name().as_str(), "_log" | "save_tasks"))
+        {
+            let flow = parsed
+                .function_flows()
+                .iter()
+                .find(|f| f.owner() == owner.id())
+                .ok_or("flow")?;
+            let calls = flow
+                .steps()
+                .iter()
+                .filter(|s| s.kind == FlowStepKind::Call)
+                .collect::<Vec<_>>();
+            println!(
+                "research-flow owner={} calls={:?} kinds={:?} gaps={:?}",
+                owner.name().as_str(),
+                calls
+                    .iter()
+                    .filter_map(|s| s.name.as_ref().map(|n| n.as_str()))
+                    .collect::<Vec<_>>(),
+                flow.steps().iter().map(|s| s.kind).collect::<Vec<_>>(),
+                flow.gaps().iter().map(|g| g.kind).collect::<Vec<_>>()
+            );
+            if owner.name().as_str() == "_log" {
+                assert!(
+                    calls
+                        .iter()
+                        .any(|s| s.name.as_ref().is_some_and(|n| n.as_str() == "open"))
+                );
+                assert!(calls.iter().any(|s| {
+                    s.name
+                        .as_ref()
+                        .is_some_and(|n| n.as_str() == "output.write")
+                }));
+            } else {
+                assert!(
+                    calls.is_empty(),
+                    "these concrete methods only return tuples, not a write call"
+                );
+                assert!(
+                    flow.gaps()
+                        .iter()
+                        .any(|g| g.kind == a3_domain::FlowGapKind::Dynamic)
+                );
+                let returns = flow
+                    .steps()
+                    .iter()
+                    .filter(|s| s.kind == FlowStepKind::Return)
+                    .collect::<Vec<_>>();
+                assert_eq!(returns.len(), 1);
+                let range = returns[0].range;
+                let original = source
+                    .get(range.start_byte() as usize..range.end_byte() as usize)
+                    .ok_or("return original")?;
+                assert!(
+                    original.contains("return (") && original.contains("self.filepath, tasks)")
+                );
+                // This is syntax coverage of the fixed fixture, not proof that arbitrary
+                // property access or unknown callees are pure.
+            }
+            inspected += 1;
+        }
+        assert_eq!(inspected, if path.ends_with("plugins.py") { 1 } else { 2 });
+    }
+    Ok(())
+}
+
+#[test]
 fn process_targets_require_literal_argv_known_cwd_and_library_identity()
 -> Result<(), Box<dyn Error>> {
     let ts = TypeScriptJavaScriptLanguageAdapter::new(ParserPoolSize::new(1)?)?;

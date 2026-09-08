@@ -66,6 +66,18 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
       dürfen keine Fakten-/Abschlussautorität ersetzen. Produktübernahme bleibt
       von erneutem gegenbalanciertem Nutzenbeleg und fachlicher Abnahme abhängig.
 
+- [x] Originalgebundene Operationshinweise aus dem bestehenden Fast Index nach
+      [ADR-0102](../adrs/0102-originalgebundene-operationshinweise.md) kontrolliert
+      vergleichen: tatsächliche Aufrufstellen und Rückgaben bereitstellen, dynamische
+      Grenzen erhalten und Originalbudget schützen. Mehrmodus-/Freshness-/Budget-
+      Regressionen, vollständige Gates und reale Modellnachweise getrennt auswerten.
+      Keine Produktübernahme allein aufgrund besserer Struktur- oder Wortprüfungen.
+      [17 Modellversuche](10-SOURCE_OPERATIONS_VALIDATION.md) sind ausgewertet:
+      acht mit Operationshinweisen, davon sieben Abschlüsse und kein bestandener
+      Wortcheck. Luna/Ornith zeigen im AB/BA-Vergleich keinen behobenen Inhaltsfehler.
+      Der Zusatz wird zurückgenommen; Parsernachweis und inhaltsfreie Diagnose bleiben.
+      Google Gemma belegt separat OutputTruncated in Primäranalyse und Einzelrepair.
+
 - [ ] Quellengeführte Vorentscheidung und exakt gelieferte Originalbereiche nach
       [ADR-0098](../adrs/0098-quellengefuehrte-arbeitsentscheidung-im-vergleich.md)
       als getrennten nativen Vergleich prüfen. Qwen-Diagnose belegt 24 wiederholte

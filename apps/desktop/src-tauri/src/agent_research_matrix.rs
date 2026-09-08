@@ -136,6 +136,50 @@ struct MatrixModel {
     decisions: std::sync::Mutex<Vec<serde_json::Value>>,
 }
 
+fn model_failure_diagnostic(
+    phase: &str,
+    transcript: &[(ModelMessageRole, String)],
+    failure: AgentConversationFailure,
+) -> serde_json::Value {
+    serde_json::json!({"phase":phase,"model_failure":format!("{failure:?}"),"context_bytes":transcript.iter().map(|(_,s)|s.len()).sum::<usize>(),"transcript_messages":transcript.len()})
+}
+
+impl MatrixModel {
+    fn record_failure(
+        &self,
+        phase: &str,
+        transcript: &[(ModelMessageRole, String)],
+        failure: AgentConversationFailure,
+    ) -> AgentConversationFailure {
+        if let Ok(mut decisions) = self.decisions.lock()
+            && decisions.len() < 24
+        {
+            decisions.push(model_failure_diagnostic(phase, transcript, failure));
+        }
+        failure
+    }
+}
+
+#[test]
+fn source_operations_model_failures_keep_typed_phase_without_transcript_content() {
+    let transcript = vec![
+        (ModelMessageRole::User, "private sentinel".to_owned()),
+        (ModelMessageRole::User, "REPAIR private sentinel".to_owned()),
+    ];
+    let diagnostic = model_failure_diagnostic(
+        "SourceReview",
+        &transcript,
+        AgentConversationFailure::OutputTruncated,
+    );
+    assert_eq!(diagnostic["model_failure"], "OutputTruncated");
+    assert_eq!(diagnostic["transcript_messages"], 2);
+    assert!(
+        diagnostic.get("repair").is_none(),
+        "message spelling is not authoritative repair state"
+    );
+    assert!(!diagnostic.to_string().contains("sentinel"));
+}
+
 fn parse_analysis_method(
     value: Option<&str>,
 ) -> Result<a3_application::ResearchAnalysisMethod, &'static str> {
@@ -362,7 +406,8 @@ impl ResearchModel for MatrixModel {
         let output = self
             .live
             .complete_source_review(transcript, control)
-            .await?;
+            .await
+            .map_err(|failure| self.record_failure("SourceReview", transcript, failure))?;
         let parsed = serde_json::from_str::<serde_json::Value>(&output).ok();
         let mut decisions = self
             .decisions
@@ -373,6 +418,7 @@ impl ResearchModel for MatrixModel {
             // Retain its bounded public interpretation for semantic inspection, not
             // hidden reasoning, arbitrary source bytes or a production provider log.
             decisions.push(serde_json::json!({"phase":"SourceReview","context_bytes":transcript.iter().map(|(_,s)|s.len()).sum::<usize>(),
+                "operation_inventory_bytes":transcript.first().and_then(|(_,p)|p.split_once("SOURCE OPERATIONS")).map(|(_,tail)|tail.len()),
                 "interpretation_bytes":parsed.as_ref().and_then(|p| p["interpretation"].as_str()).map(str::len),
                 "interpretation":parsed.as_ref().and_then(|p| p["interpretation"].as_str()).filter(|s|s.len()<=192),
                 "source_file":transcript.first().and_then(|(_,packet)|FILES.iter().position(|(_,body)|packet.contains(body))),
@@ -407,7 +453,8 @@ impl ResearchModel for MatrixModel {
         let output = self
             .live
             .complete(mode, search, phase, transcript, control)
-            .await?;
+            .await
+            .map_err(|failure| self.record_failure(&format!("{phase:?}"), transcript, failure))?;
         {
             let mut decisions = self
                 .decisions
@@ -660,7 +707,10 @@ fn research_approved_model_matrix() -> Result<(), Box<dyn Error>> {
                             store.clone(),
                             store.clone(),
                             store.clone(),
-                        );
+                        )
+                        .with_function_flows(Some(
+                            a3_application::ExploreFunctionFlows::new(store.clone()),
+                        ));
                         let worker_model = model.clone();
                         let worker_project = project.clone();
                         let query = (*question).to_owned();

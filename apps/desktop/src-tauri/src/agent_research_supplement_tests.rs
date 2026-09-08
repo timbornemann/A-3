@@ -82,6 +82,21 @@ impl ResearchModel for SupplementalModel {
         assert!(packet.contains("SOURCE-LOCAL SUBTASK:"));
         assert!(!packet.contains("Required original file coverage"));
         assert!(!packet.contains("CORE RESEARCH CONTRACT"));
+        let operations = packet
+            .split_once("SOURCE OPERATIONS")
+            .map(|(_, tail)| tail)
+            .ok_or(AgentConversationFailure::InvalidInput)?;
+        assert!(operations.contains("unknown effects are not absent"));
+        if files[0].0 == "taskflow/plugins.py" {
+            assert!(
+                operations.contains("output.write"),
+                "the actual writer must survive the optional inventory budget: {operations}"
+            );
+        }
+        if files[0].0 == "taskflow/storage.py" {
+            assert!(operations.contains("save_tasks") && operations.contains("Return"));
+            assert!(operations.contains("Dynamic"));
+        }
         assert!(
             !transcript
                 .iter()
@@ -358,7 +373,10 @@ fn supplement_fixture(
             let worker_model = model.clone();
             let worker_project = project.clone();
             let researcher =
-                AgentAskResearcher::new(store.clone(), store.clone(), store.clone(), store.clone());
+                AgentAskResearcher::new(store.clone(), store.clone(), store.clone(), store.clone())
+                    .with_function_flows(Some(a3_application::ExploreFunctionFlows::new(
+                        store.clone(),
+                    )));
             let (send, receive) = std::sync::mpsc::sync_channel(1);
             recovery_contract::owned(move |control, submitter| {
                 *worker_model.canceller.lock().map_err(|_| "poisoned")? = Some(submitter);

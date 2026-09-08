@@ -125,6 +125,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0099](0099-begrenzte-direkte-recherchequellen.md) | Begrenzte direkte Recherchequellen |
 | [0100](0100-quellenlokale-recherche-im-vergleich.md) | Quellenlokale Recherche im kontrollierten Vergleich |
 | [0101](0101-grosszuegigere-originalzitate-in-source-review.md) | Großzügigere Originalzitate in SourceReview |
+| [0102](0102-originalgebundene-operationshinweise.md) | Originalgebundene Operationshinweise |
 
 ## Neue ADRs
 
