@@ -51,6 +51,13 @@ erscheinen. Der native Vergleich erfasst Transport-/Ausgabefehler auch vor einem
 vollständigen Modelldokument inhaltsfrei, typisiert und phasenbezogen. Er darf den
 Repairzustand nicht aus frei formulierten Promptvorsilben erraten.
 
+Phasenspezifische Trunkierungsreparaturen müssen den konkreten Hinweis auf eine
+kürzere vollständige Neuausgabe erhalten, ohne den ursprünglichen Auftrag oder
+den Phasenvertrag abzuschneiden. Alle sechs Phasen bleiben innerhalb von 768 Bytes.
+Echte Ask-/Plan-/Agent-Vorbereitungsfixtures prüfen dasselbe vollständige
+Originalpaket, genau einen Repair und keinen Abschluss oder neuen Analysebeleg
+nach zweimal abgeschnittener Ausgabe.
+
 ### Frontend
 
 - Formatter

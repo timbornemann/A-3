@@ -1,5 +1,21 @@
 # Plan 10: Verifikationsprotokoll
 
+## 2026-09-08: Schema-Grounding-Vergleich und verlorener Trunkierungshinweis
+
+Der [getrennte Nachweis](10-SCHEMA_GROUNDING_VALIDATION.md) umfasst 16 unveränderte
+Grounding-Vergleiche, eine inhaltsfreie Streamdiagnose und 14 Nachtests über alle
+sieben Modelle. Schemawiederholung liefert keinen allgemeinen Nutzen und wird
+nicht zum Produktstandard. Der konkret verlorene Kürzungshinweis im V7-Repairpfad
+ist mit drei Rot→Grün-Regressionen korrigiert, bei unverändertem Originalpaket,
+768-Byte-Repairgrenze, Phasenvertrag und höchstens einem Reparaturversuch.
+Die Nachtests erreichen zwölf Abschlüsse und acht Worttreffer; beide Google-Gemma-
+Aufgaben bleiben abgeschnitten. Fachliche Gegenprüfung findet weiter erfundene
+Persistenz, doppelte Antworten und bei Granite `import` statt `import-csv`.
+Die Reparatur ist keine semantische Gesamtfreigabe. Clippy und Workspace-Gate
+mit 1297 bestandenen / 19 ignorierten Tests sind abgeschlossen. Profile und
+nativer Settingskatalog bleiben unverändert; sämtliche Rohberichtshashes stehen
+im verlinkten Nachweis. Lokale Modelle wurden ausschließlich nacheinander getestet.
+
 ## 2026-09-08: Operationshinweise ohne Nutzenbeleg, Google-Gemma-Ausgabelimit
 
 Der [Operationsvergleich](10-SOURCE_OPERATIONS_VALIDATION.md) dokumentiert 17

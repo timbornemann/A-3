@@ -1133,6 +1133,16 @@ unabhängigen Quellen-/Freshness-Grenzen bleiben erhalten. Die native Matrix inj
 denselben bestehenden Flow-Reader und protokolliert auch Fehler vor vollständigem
 Modelldokument mit geschlossener Kategorie, Phase und numerischen Kontextdaten.
 
+Der [Schema-Grounding-Nachtest](plans/10-SCHEMA_GROUNDING_VALIDATION.md) vergleicht
+nur die bestehende optionale Schemawiederholung, nicht neue Produktprofile. Seine
+begrenzte native Streamdiagnose hält ausschließlich Zähler und Finishkategorien;
+verworfenes Modellmaterial wird weder gespeichert noch zugelassen. Der dabei
+nachgewiesene Verlust des Kürzungshinweises ist korrigiert: `OutputTruncated`
+verlangt auch in den V7-Phasen eine kürzere vollständige Neuausgabe statt einer
+Fortsetzung. Die bekannten Quellen, ihr gesamtes aktuelles Paket, der Phasenvertrag,
+höchstens 768 Repairbytes und genau ein Reparaturversuch bleiben unverändert.
+Ein erneuter Abbruch ist weiterhin kein erfolgreicher Rechercheabschluss.
+
 Nach [ADR-0057](adrs/0057-leerer-entwurf-ist-kein-rechercheauftrag.md) benötigt Design
 bei `progress` genau ein Ergebnis. Ein leerer Entwurf ist ungültiger Modelloutput,
 kein Anlass für weitere Originalreads. Nur die explizite Entscheidung `question`

@@ -1242,6 +1242,34 @@ mod tests {
     }
 
     #[test]
+    fn research_truncated_repair_preserves_shortening_guidance_in_every_phase() -> TestResult {
+        use a3_application::ResearchOutputPhase;
+        let id = ResearchQuestionId::new(32)?;
+        for phase in [
+            ResearchOutputPhase::Initialize,
+            ResearchOutputPhase::Analyze(id),
+            ResearchOutputPhase::SummarizeOriginals(id),
+            ResearchOutputPhase::Design(id),
+            ResearchOutputPhase::DesignTests(id),
+            ResearchOutputPhase::Finalize,
+        ] {
+            let hint =
+                research_model::DecisionIssue::Truncated.repair_hint_for_phase(Some(phase), 200);
+            assert!(
+                hint.contains("SHORTER"),
+                "truncation guidance lost in {phase:?}"
+            );
+            assert!(hint.contains("schema_version=7"));
+            assert!(hint.len() <= 768, "{phase:?}: {}", hint.len());
+            let other = research_model::DecisionIssue::Json.repair_hint_for_phase(Some(phase), 200);
+            assert!(!other.contains("SHORTER"));
+        }
+        let issue = research_model::DecisionIssue::Truncated;
+        assert_eq!(issue.repair_hint_for_phase(None, 4), issue.repair_hint(4));
+        Ok(())
+    }
+
+    #[test]
     fn research_repair_hints_follow_the_same_phase_evidence_contract() -> TestResult {
         use a3_application::ResearchOutputPhase;
         let issue = research_model::DecisionIssue::WorkEvidence;

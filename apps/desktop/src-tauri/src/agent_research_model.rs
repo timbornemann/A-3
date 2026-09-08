@@ -199,6 +199,23 @@ impl DecisionIssue {
         phase: Option<a3_application::ResearchOutputPhase>,
         source_count: usize,
     ) -> String {
+        let hint = self.phase_repair_hint(phase, source_count);
+        if self == Self::Truncated && phase.is_some() {
+            // Phase guidance must not discard the actionable cause from the legacy
+            // repair path. This does not enlarge output limits or grant another attempt.
+            format!(
+                "Output was cut off: return a substantially SHORTER complete object, not a continuation; omit repetition and source excerpts. {hint}"
+            )
+        } else {
+            hint
+        }
+    }
+
+    fn phase_repair_hint(
+        self,
+        phase: Option<a3_application::ResearchOutputPhase>,
+        source_count: usize,
+    ) -> String {
         use a3_application::ResearchOutputPhase;
         if matches!(self, Self::WorkEcho)
             && let Some(

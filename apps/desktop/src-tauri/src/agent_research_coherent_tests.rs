@@ -21,6 +21,7 @@ struct CoherentModel {
     budget: usize,
     calls: AtomicUsize,
     diagrams: AtomicUsize,
+    truncated_packet: std::sync::Mutex<Option<String>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -29,6 +30,8 @@ enum WorkFault {
     NoResults,
     InvalidInitialization,
     InvalidAnalysis,
+    TruncatedAnalysisOnce,
+    TruncatedAnalysisAlways,
     EmptyDesignOnce,
     EmptyDesignAlways,
     MissingOriginalOnce,
@@ -228,6 +231,34 @@ impl ResearchModel for CoherentModel {
         {
             return Ok("{invalid analysis".to_owned());
         }
+        if matches!(
+            self.fault,
+            WorkFault::TruncatedAnalysisOnce | WorkFault::TruncatedAnalysisAlways
+        ) && matches!(phase, a3_application::ResearchOutputPhase::Analyze(id) if id == a3_domain::ResearchQuestionId::FIRST)
+        {
+            let mut original = self
+                .truncated_packet
+                .lock()
+                .map_err(|_| AgentConversationFailure::Unavailable)?;
+            if let Some(original) = original.as_ref() {
+                assert_eq!(
+                    original, packet,
+                    "repair must retain the same entire current packet"
+                );
+                let hint = &transcript
+                    .last()
+                    .ok_or(AgentConversationFailure::InvalidInput)?
+                    .1;
+                assert!(hint.contains("SHORTER"));
+                assert!(hint.len() <= 768);
+                if self.fault == WorkFault::TruncatedAnalysisAlways {
+                    return Err(AgentConversationFailure::OutputTruncated);
+                }
+            } else {
+                *original = Some(packet.clone());
+                return Err(AgentConversationFailure::OutputTruncated);
+            }
+        }
         if let Some(live) = &self.live {
             let output = live
                 .complete(mode, search, phase, transcript, control)
@@ -381,6 +412,8 @@ impl ResearchModel for CoherentModel {
                     | WorkFault::CoreStatusRepairOnce
                     | WorkFault::DisjointResponse
                     | WorkFault::DisjointResponseRepairOnce
+                    | WorkFault::TruncatedAnalysisOnce
+                    | WorkFault::TruncatedAnalysisAlways
             ) {
                 document["schema_version"] = serde_json::json!(6);
                 document["decision"]
@@ -393,7 +426,10 @@ impl ResearchModel for CoherentModel {
                 }
                 if matches!(
                     self.fault,
-                    WorkFault::DisjointResponse | WorkFault::DisjointResponseRepairOnce
+                    WorkFault::DisjointResponse
+                        | WorkFault::DisjointResponseRepairOnce
+                        | WorkFault::TruncatedAnalysisOnce
+                        | WorkFault::TruncatedAnalysisAlways
                 ) {
                     let response = if phase == a3_application::ResearchOutputPhase::Initialize {
                         serde_json::json!({"kind":"questions","questions":document["work"]["questions"]})
@@ -500,6 +536,18 @@ fn research_v5_keeps_required_log_when_model_drops_it_and_persists_real_evidence
 
 fn coherent_fixture(work_contract: bool) -> Result<(), Box<dyn Error>> {
     coherent_fixture_selected(work_contract, false, WorkFault::None)
+}
+
+#[test]
+fn research_truncated_analysis_repairs_once_with_unchanged_originals_in_all_modes()
+-> Result<(), Box<dyn Error>> {
+    coherent_fixture_selected(true, false, WorkFault::TruncatedAnalysisOnce)
+}
+
+#[test]
+fn research_truncated_analysis_twice_cannot_complete_or_retry_again() -> Result<(), Box<dyn Error>>
+{
+    coherent_fixture_selected(true, false, WorkFault::TruncatedAnalysisAlways)
 }
 
 #[path = "agent_research_live_fixture.rs"]
@@ -866,6 +914,7 @@ fn coherent_fixture_with_profile(
                     budget,
                     calls: AtomicUsize::new(0),
                     diagrams: AtomicUsize::new(0),
+                    truncated_packet: std::sync::Mutex::new(None),
                 });
                 let worker_model = model.clone();
                 let worker_project = project.clone();
@@ -926,6 +975,7 @@ fn coherent_fixture_with_profile(
                         | WorkFault::CoreStatusRepairOnce
                         | WorkFault::DisjointResponse
                         | WorkFault::DisjointResponseRepairOnce
+                        | WorkFault::TruncatedAnalysisOnce
                 ) {
                     let detail = store
                         .load_detail(&project, id, AgentSessionSequence::FIRST)
@@ -945,7 +995,9 @@ fn coherent_fixture_with_profile(
                         model.calls.load(Ordering::SeqCst),
                         if matches!(
                             fault,
-                            WorkFault::CoreStatusRepairOnce | WorkFault::DisjointResponseRepairOnce
+                            WorkFault::CoreStatusRepairOnce
+                                | WorkFault::DisjointResponseRepairOnce
+                                | WorkFault::TruncatedAnalysisOnce
                         ) {
                             4
                         } else {
@@ -1152,7 +1204,10 @@ fn coherent_fixture_with_profile(
                     }
                     continue;
                 }
-                if fault == WorkFault::InvalidAnalysis {
+                if matches!(
+                    fault,
+                    WorkFault::InvalidAnalysis | WorkFault::TruncatedAnalysisAlways
+                ) {
                     assert!(result.awaiting_continuation);
                     assert_eq!(
                         model.calls.load(Ordering::SeqCst),

@@ -40,6 +40,24 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Den belegten Google-Gemma-Analyze-Abbruch mit der bestehenden optionalen
+      Schemawiederholung isolieren: expliziter nativer Profilvergleich bei gleicher
+      Kontext-/Outputgrenze, frischer Capability-Probe und unveränderten Settings.
+      Originalversorgung, Abschluss und Inhaltsqualität getrennt nachweisen;
+      keine größere Ausgabe, zusätzliche Repairs oder Produktumstellung aus einem
+      erfolgreichen Probedokument ableiten.
+      [16 Vergleichsfälle und eine Streamdiagnose](10-SCHEMA_GROUNDING_VALIDATION.md)
+      belegen keinen allgemeinen Nutzen; Produktstandard bleibt unverändert.
+
+- [x] Den verlorenen Kürzungshinweis bei phasenspezifischem OutputTruncated-Repair
+      korrigieren. Aktuelles Originalpaket, Phase, 768-Byte-Repairgrenze und genau
+      ein Repair bleiben erhalten. Ask, Plan und Agent-Vorbereitung sowie zweimal
+      abgeschnittene Antworten gegen falschen Abschluss prüfen; den realen
+      Google-Gemma-Nachtest getrennt von der Offline-Korrektur auswerten.
+      Drei Rot→Grün-Regressionen und volle Gates bestehen. 14 reale Nachtests
+      erreichen zwölf Abschlüsse, aber keine semantische Gesamtfreigabe;
+      insbesondere bleiben beide Google-Gemma-Aufgaben ohne Abschluss.
+
 - [x] Direkte Callee-Originale vor der ersten Bestandsanalyse aus vorhandenen
       belegten Calls begrenzt ergänzen und freien Kontext nach Pflichtdateien
       nutzen ([ADR-0099](../adrs/0099-begrenzte-direkte-recherchequellen.md)).
