@@ -48,11 +48,23 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
       Nutzerhalt ab; fünf erhalten die Zusatzquelle, Qwens 8k-Paket nicht.
       Die tatsächliche Quellenlieferung ist verbessert, der Inhaltsfehler nicht.
 
-- [ ] Quellenlokale Bestandsauswertung und anschließende Synthese kontrolliert
-      vergleichen: Luna, Ornith und Flash behaupten trotz gelieferter Storage-
-      Implementierung weiter eine Persistenz. Falsche Inline-Zeilen und doppelte
-      Teilantworten getrennt prüfen. Mehr Quellenanker, eine gelockerte Rubrik oder
-      Modellselbstbewertung dürfen keine Fakten-/Abschlussautorität ersetzen.
+- [x] Quellenlokale Bestandsauswertung und anschließende Synthese kontrolliert
+      vergleichen ([ADR-0100](../adrs/0100-quellenlokale-recherche-im-vergleich.md),
+      großzügigere Zitate nach [ADR-0101](../adrs/0101-grosszuegigere-originalzitate-in-source-review.md)).
+      Echte Mehrmodus-/Reader-/Repair-/Providerverträge, vollständige Gates und
+      78 reale Fälle sind [ausgewertet](10-SOURCE_REVIEW_VALIDATION.md).
+      Der abschließende V2-Nachtest erreicht 12/12 Abschlüsse ohne Nutzerhalt,
+      einschließlich aller sechs Pläne. Die unveränderte Wortprüfung besteht nur
+      8/12; falsche Effekte und doppelte Teilantworten bleiben. Keine produktive
+      Strategieumstellung oder allgemeine semantische Abnahme daraus ableiten.
+
+- [ ] Die im SourceReview-Vergleich belegten Inhaltsfehler unabhängig beheben:
+      tatsächliche Operationen statt aus Methodennamen vermuteter Persistenz,
+      exakter Writer, konsolidierte Teilantworten und unveränderte Auftragsliterale
+      bis in Entwurf und Testplan (Granite: `import` statt `import-csv`).
+      Mehr Quellenanker, gelockerte Begriffrubriken oder Modellselbstbewertung
+      dürfen keine Fakten-/Abschlussautorität ersetzen. Produktübernahme bleibt
+      von erneutem gegenbalanciertem Nutzenbeleg und fachlicher Abnahme abhängig.
 
 - [ ] Quellengeführte Vorentscheidung und exakt gelieferte Originalbereiche nach
       [ADR-0098](../adrs/0098-quellengefuehrte-arbeitsentscheidung-im-vergleich.md)

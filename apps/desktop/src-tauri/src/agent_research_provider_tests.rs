@@ -181,6 +181,9 @@ fn research_full_current_packet_and_maximum_repair_fit_real_provider_limits()
                 AgentSessionMode::Agent,
             ] {
                 let budget = research_evidence_budget_for_profile(&profile, mode, None)?;
+                println!(
+                    "research-provider-budget: context={context} output={output} grounding={grounding:?} mode={mode:?} packet_bytes={budget}"
+                );
                 // Repeated large schemas can exhaust a genuinely small profile before source packing.
                 if budget < 256 {
                     continue;
@@ -365,6 +368,60 @@ fn actual_provider_packets_preserve_goal_and_evidence_during_repair_and_use_phas
                         .iter()
                         .any(|message| message.content().starts_with("REPAIR:"))
                 );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn source_review_full_packet_and_repair_fit_unmodified_8k_and_16k_profiles()
+-> Result<(), Box<dyn std::error::Error>> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()?;
+    for (context, output) in [(8192, 2048), (16384, 4096)] {
+        for grounding in [
+            ModelPromptSchemaGrounding::FormatFieldOnly,
+            ModelPromptSchemaGrounding::RepeatSchemaInPrompt,
+        ] {
+            let profile = profile_with_output(context, output, grounding)?;
+            for mode in [
+                AgentSessionMode::Ask,
+                AgentSessionMode::Plan,
+                AgentSessionMode::Agent,
+            ] {
+                let budget = research_evidence_budget_for_profile(&profile, mode, None)?;
+                let head = "CURRENT QUESTION:\nOriginalauftrag Größe 🦀\nUNTRUSTED ORIGINAL:\n";
+                let packet = format!("{head}{}", "x".repeat(budget - head.len()));
+                let hint = "R".repeat(768);
+                let provider = CapturingProvider {
+                    id: profile.provider_id().clone(),
+                    requests: std::sync::Mutex::new(Vec::new()),
+                    finish: ModelFinishReason::Stop,
+                };
+                for repair in [false, true] {
+                    let mut transcript = vec![(ModelMessageRole::User, packet.clone())];
+                    if repair {
+                        transcript.push((ModelMessageRole::User, hint.clone()));
+                    }
+                    runtime.block_on(complete_with_provider(
+                        &provider,
+                        profile.clone(),
+                        a3_application::research_source_review_system_prompt(),
+                        &transcript,
+                        Some(a3_application::research_source_review_schema()?),
+                        &Control,
+                    ))?;
+                }
+                let requests = provider.requests.lock().map_err(|_| "capture lock")?;
+                assert_eq!(requests.len(), 2);
+                for request in requests.iter() {
+                    assert!(request.messages().iter().any(|m| m.content() == packet));
+                    let bytes: usize = request.messages().iter().map(|m| m.content().len()).sum();
+                    assert!(bytes + output as usize + 1024 <= context as usize);
+                }
+                assert!(requests[1].messages().iter().any(|m| m.content() == hint));
             }
         }
     }

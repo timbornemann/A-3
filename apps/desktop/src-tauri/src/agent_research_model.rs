@@ -503,6 +503,16 @@ pub(super) fn validate_outcome_with_attribution(
 }
 
 pub(super) trait ResearchModel: Send + Sync {
+    fn analysis_method(&self) -> a3_application::ResearchAnalysisMethod {
+        a3_application::ResearchAnalysisMethod::Joint
+    }
+    fn complete_source_review(
+        &self,
+        _transcript: &[(ModelMessageRole, String)],
+        _control: &JobContext,
+    ) -> impl Future<Output = Result<String, AgentConversationFailure>> + Send {
+        async { Err(AgentConversationFailure::InvalidInput) }
+    }
     /// Historical replay models retain V3/V4; production requires the current work contract.
     fn requires_work_contract(&self) -> bool {
         false

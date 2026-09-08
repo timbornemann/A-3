@@ -181,7 +181,7 @@ pub fn admit_research_work(
     Ok(state)
 }
 
-fn admit_quote(
+pub(crate) fn admit_quote(
     window: &ResearchEvidenceWindow<'_>,
     offset: usize,
     quote: &str,
@@ -210,7 +210,7 @@ fn admit_quote(
     })
 }
 
-fn position_after(start: SourcePosition, text: &str) -> Option<SourcePosition> {
+pub(crate) fn position_after(start: SourcePosition, text: &str) -> Option<SourcePosition> {
     let lines = u32::try_from(text.bytes().filter(|b| *b == b'\n').count()).ok()?;
     let column = match text.rsplit_once('\n') {
         Some((_, last)) => u32::try_from(last.len()).ok()?,

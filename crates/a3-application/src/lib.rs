@@ -24,7 +24,12 @@ pub use replan_research::{ReplanReadRejection, ReplanResearchCheckpoint, ReplanR
 mod agent_recovery;
 mod agent_research_controller;
 mod research_response_codec;
+mod research_source_review;
 mod research_work_admission;
+pub use research_source_review::{
+    ResearchAnalysisMethod, ResearchSourceReview, ResearchSourceReviewError,
+    research_source_review_schema, research_source_review_system_prompt,
+};
 mod research_work_codec;
 mod schema_projection;
 pub use research_work_admission::{

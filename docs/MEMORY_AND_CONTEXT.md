@@ -1098,6 +1098,31 @@ Nach vollständig passenden Pflichtoriginalen dürfen zusätzliche echte Cacheau
 vollständig in den Rest passen, ohne Pflichtbytes zu kürzen oder das Achtfensterlimit
 zu ändern. Evidence-, Freshness-, Zeit- und Repairgrenzen bleiben unverändert.
 
+[ADR-0100](adrs/0100-quellenlokale-recherche-im-vergleich.md) ergänzt einen expliziten
+nativen `source-local`-Vergleich. Produktstandard bleibt `joint`. Der Core gibt vor
+der ersten Bestandsanalyse höchstens vier aktuelle Originalfenster einzeln mit dem
+vollständigen Auftrag und aktuellem Arbeitsstand an SourceReview V2. Die
+Einzelzitatgrenze beträgt nach [ADR-0101](adrs/0101-grosszuegigere-originalzitate-in-source-review.md)
+512 statt 256 UTF-8-Bytes; das gesamte Dokument bleibt auf 4096 Bytes begrenzt.
+Der Stufenauftrag führt die aktive Core-Frage mit Art und Status, nicht die
+Vollabdeckungs-/Antwortanweisungen der späteren gemeinsamen Analyse. Andere Dateien
+sind keine offene Lesepflicht dieses einzelnen Quelleninventars. Jeder Start,
+Transportretry und Einzelrepair zählt im bestehenden Controller; Revisionen werden
+vor und nach dem Aufruf über den Safe Reader geprüft. Ein Originalzitat beweist
+nur Herkunft, nicht die Wahrheit der Interpretation. Die Repairdiagnose unterscheidet
+insbesondere überlange Interpretation und das konkrete leere/überlange Zitat mit
+gemessener Bytezahl. Sie enthält keine verworfenen Inhalte und fordert bei Zitatproblemen
+eine kurze eindeutige Originalzeile statt einer weiteren Kürzung des falschen Felds.
+Hinweise sind flüchtig und
+können weder Teilfragen schließen noch Facts oder Implementierungsverifikation erzeugen.
+In Analyze/SummarizeOriginals werden nur zu den aktuell gelieferten Originalfenstern
+passende Hinweise vollständig angehängt. Pflichtauftrag und Originalbytes bleiben
+unverändert. Tatsächlicher Überlauf stoppt den Vergleich, ohne stillen Baseline-Fallback.
+Die Vorprüfung verwirft unmögliche Mindestumschläge, reserviert aber keine fiktiven
+maximal langen Hinweise. Design/DesignTests erhalten keine zusätzlichen Reviewhinweise;
+sie verwenden weiterhin den zugelassenen Bestandsbefund. Modelle/Profile, äußere
+Budgets, native Settings und Mutationsberechtigungen ändern sich nicht.
+
 Nach [ADR-0057](adrs/0057-leerer-entwurf-ist-kein-rechercheauftrag.md) benötigt Design
 bei `progress` genau ein Ergebnis. Ein leerer Entwurf ist ungültiger Modelloutput,
 kein Anlass für weitere Originalreads. Nur die explizite Entscheidung `question`

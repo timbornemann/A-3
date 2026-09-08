@@ -29,6 +29,20 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Aufrufbelege, ungelöste Ziele, ein Hop, vier Dateien, acht Fenster, exakter Restplatz
   und erschöpfte Modell-/Read-/Zeitbudgets bleiben getrennte Negativfälle.
 
+Für den nativen SourceReview-Vergleich aus ADR-0100 sind zusätzlich strikte
+Versions-/Feld-/UTF-8-/Zitatgrenzen (einschließlich doppelter JSON-Schlüssel und
+überlappender Zitatvorkommen), aktuelle Revisionsbindung und atomarer Hint-Fit zu
+prüfen. Echte Researcher-Verträge verlangen Ask, Plan und Agent-Vorbereitung,
+Originale ohne Modellgedächtnis, Einzelrepair, gemeinsame Retry-/Startabrechnung,
+Live-Edit und Cancellation. Providerverträge müssen unveränderte 8k/2k- und
+16k/4k-Profile samt vollständigem Paket und maximalem Repair erhalten. Reale
+AB/BA-Vergleiche trennen Ablauf, Quellenversorgung und Inhaltsqualität; ein
+bestandener Wortcheck oder eine Modellinterpretation allein ist keine Abnahme.
+SourceReview V2 aus ADR-0101 muss vollständige 260-/512-Byte-Originalzitate zulassen
+und 513-Byte-/Unicode-Überschreitungen, V1-Ausgaben sowie übergroße Gesamtdokumente
+weiterhin ablehnen. Feldgenaue Reparaturhinweise dürfen keine verworfenen Inhalte
+enthalten und keinen zweiten Repair oder größere äußere Budgets eröffnen.
+
 ### Frontend
 
 - Formatter

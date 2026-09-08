@@ -93,6 +93,29 @@ pub(super) struct LiveResearchModel {
 }
 
 impl LiveResearchModel {
+    pub(super) fn identity(&self) -> serde_json::Value {
+        serde_json::json!({"provider":self.profile.provider_id().as_str(),"model":self.profile.model_id().as_str(),
+            "context":self.profile.settings().context_limit().get(),"output":self.profile.settings().output_limit().get()})
+    }
+
+    pub(super) async fn complete_source_review(
+        &self,
+        transcript: &[(ModelMessageRole, String)],
+        control: &JobContext,
+    ) -> Result<String, AgentConversationFailure> {
+        crate::agent_conversation_runtime::complete_with_provider(
+            self.provider.as_ref(),
+            self.profile.clone(),
+            a3_application::research_source_review_system_prompt(),
+            transcript,
+            Some(
+                a3_application::research_source_review_schema()
+                    .map_err(|_| AgentConversationFailure::InvalidInput)?,
+            ),
+            control,
+        )
+        .await
+    }
     pub(super) async fn probe() -> Result<Self, Box<dyn Error>> {
         let target = ExplicitResearchTarget::parse(
             optional_env("A3_RESEARCH_EVAL_PROVIDER")?.as_deref(),

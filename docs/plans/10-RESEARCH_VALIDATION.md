@@ -1,5 +1,17 @@
 # Plan 10: Verifikationsprotokoll
 
+## 2026-09-08: Quellenlokaler Vergleich und großzügigere Zitatbudgets (ADR-0100/0101)
+
+Der [separate vollständige Nachweis](10-SOURCE_REVIEW_VALIDATION.md) dokumentiert
+den kontrollierten Einzelquellen-/Syntheseschnitt, 78 reale Recherchefälle und
+die finalen vollständigen Gates. Ein gemessener 260-Byte-Abbruch führt zu
+SourceReview V2 mit 512 statt 256 Bytes je Originalzitat innerhalb unveränderter
+äußerer Grenzen. Pflichtoriginale werden nicht zugunsten hypothetischer maximaler
+Zusatzhinweise gekürzt oder vorzeitig abgewiesen. Der abschließende Nachtest
+schließt 12/12 Fälle ohne Nutzerhalt ab, einschließlich aller sechs Planaufgaben.
+Inhaltsfehler bleiben trotz 8/12 bestandener Begriffrubriken nachweisbar;
+Produktstandard bleibt deshalb `joint`, die fachliche Gesamtfreigabe offen.
+
 ## 2026-09-08: Direkte Originalergänzung und getrennte Inhaltsprüfung (ADR-0099)
 
 Ausgangspunkt `fcaeb7a`. Ein neuer realer Offline-Test des unveränderten

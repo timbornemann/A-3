@@ -127,12 +127,43 @@ fn matrix_case_passed(
 }
 
 struct MatrixModel {
+    method: a3_application::ResearchAnalysisMethod,
     live: live_fixture::LiveResearchModel,
     budget: usize,
     calls: AtomicUsize,
     bytes: AtomicUsize,
     empty_analysis_notes: std::sync::Mutex<Vec<serde_json::Value>>,
     decisions: std::sync::Mutex<Vec<serde_json::Value>>,
+}
+
+fn parse_analysis_method(
+    value: Option<&str>,
+) -> Result<a3_application::ResearchAnalysisMethod, &'static str> {
+    match value {
+        None | Some("joint") => Ok(a3_application::ResearchAnalysisMethod::Joint),
+        Some("source-local") => Ok(a3_application::ResearchAnalysisMethod::SourceLocal),
+        _ => Err("analysis method must be joint or source-local"),
+    }
+}
+
+#[test]
+fn source_review_matrix_selection_keeps_baseline_and_rejects_unknown_methods() {
+    use a3_application::ResearchAnalysisMethod;
+    assert_eq!(
+        parse_analysis_method(None),
+        Ok(ResearchAnalysisMethod::Joint)
+    );
+    assert_eq!(
+        parse_analysis_method(Some("joint")),
+        Ok(ResearchAnalysisMethod::Joint)
+    );
+    assert_eq!(
+        parse_analysis_method(Some("source-local")),
+        Ok(ResearchAnalysisMethod::SourceLocal)
+    );
+    for value in ["", "auto", "source-local ", "Joint"] {
+        assert!(parse_analysis_method(Some(value)).is_err());
+    }
 }
 
 // Only identities of this public fixture and numeric shape data, never original text,
@@ -315,6 +346,40 @@ fn research_matrix_shape_diagnostics_distinguish_repeated_anchors_without_raw_te
     assert!(!disjoint.to_string().contains("sentinel"));
 }
 impl ResearchModel for MatrixModel {
+    fn analysis_method(&self) -> a3_application::ResearchAnalysisMethod {
+        self.method
+    }
+    async fn complete_source_review(
+        &self,
+        transcript: &[(ModelMessageRole, String)],
+        control: &JobContext,
+    ) -> Result<String, AgentConversationFailure> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.bytes.fetch_add(
+            transcript.iter().map(|(_, s)| s.len()).sum(),
+            Ordering::SeqCst,
+        );
+        let output = self
+            .live
+            .complete_source_review(transcript, control)
+            .await?;
+        let parsed = serde_json::from_str::<serde_json::Value>(&output).ok();
+        let mut decisions = self
+            .decisions
+            .lock()
+            .map_err(|_| AgentConversationFailure::Unavailable)?;
+        if decisions.len() < 24 {
+            // This opt-in matrix contains only the fixed public synthetic fixture.
+            // Retain its bounded public interpretation for semantic inspection, not
+            // hidden reasoning, arbitrary source bytes or a production provider log.
+            decisions.push(serde_json::json!({"phase":"SourceReview","context_bytes":transcript.iter().map(|(_,s)|s.len()).sum::<usize>(),
+                "interpretation_bytes":parsed.as_ref().and_then(|p| p["interpretation"].as_str()).map(str::len),
+                "interpretation":parsed.as_ref().and_then(|p| p["interpretation"].as_str()).filter(|s|s.len()<=192),
+                "source_file":transcript.first().and_then(|(_,packet)|FILES.iter().position(|(_,body)|packet.contains(body))),
+                "quotes":parsed.as_ref().and_then(|p|p["quotes"].as_array()).map(Vec::len),"output_bytes":output.len()}));
+        }
+        Ok(output)
+    }
     fn requires_work_contract(&self) -> bool {
         true
     }
@@ -472,6 +537,11 @@ fn research_matrix_cannot_pass_a_question_or_unfinished_work_with_all_keywords()
 #[test]
 #[ignore = "Explicit approved-model evaluation only; never CI or an automatic provider call"]
 fn research_approved_model_matrix() -> Result<(), Box<dyn Error>> {
+    let method = match std::env::var("A3_RESEARCH_ANALYSIS_METHOD") {
+        Ok(value) => parse_analysis_method(Some(&value))?,
+        Err(std::env::VarError::NotPresent) => parse_analysis_method(None)?,
+        Err(error) => return Err(error.into()),
+    };
     let repeats = std::env::var("A3_RESEARCH_EVAL_REPETITIONS")
         .unwrap_or_else(|_| "1".to_owned())
         .parse::<usize>()?;
@@ -577,6 +647,7 @@ fn research_approved_model_matrix() -> Result<(), Box<dyn Error>> {
                             .create_session(&project, &session, Some(&user), None)
                             .await?;
                         let model = Arc::new(MatrixModel {
+                            method,
                             budget: live.evidence_budget(mode)?,
                             live: live.clone(),
                             calls: AtomicUsize::new(0),
@@ -706,6 +777,17 @@ fn research_approved_model_matrix() -> Result<(), Box<dyn Error>> {
                             .map_err(|_| "fixture diagnostics poisoned")?
                             .clone();
                         let record = serde_json::json!({"fixture":"research-eval-v1","rubric_version":3,"family":family,"variant":variant,"repeat":repeat,"completed":completed,"work_ready":work_ready,"passed":passed,"missing":missing,"error":error,"calls":model.calls.load(Ordering::SeqCst),"adaptive_reads":adaptive_reads,"repeated_adaptive_reads":repeated_adaptive_reads,"user_halt":user_halt,"context_utf8_bytes":model.bytes.load(Ordering::SeqCst),"elapsed_ms":started.elapsed().as_millis(),"answer":answer,"work_summary":work_summary,"empty_analysis_notes":empty_notes,"decision_diagnostics":decisions});
+                        let mut record = record;
+                        record["analysis_method"] = serde_json::json!(format!("{method:?}"));
+                        record["model_profile"] = live.identity();
+                        record["source_review_diagnostics"] =
+                            serde_json::json!(detail.as_ref().map(|d| {
+                                d.events()
+                                    .iter()
+                                    .filter_map(|e| e.query())
+                                    .filter(|q| q.starts_with("research-v3/source-review/"))
+                                    .collect::<Vec<_>>()
+                            }));
                         writeln!(report, "{record}")?;
                         report.flush()?;
                         let mut summary = record;

@@ -732,6 +732,8 @@ impl AgentAskResearcher {
         let mut feedback = state.continuation_feedback.clone();
         let mut controller = BoundedResearchController::new(turn.depth());
         let mut direct_sources_pending = true;
+        let mut source_reviews_pending = true;
+        let mut source_reviews = Vec::new();
         if let Some(profile) = command_profile {
             let initial_actions = profile.initial_read_actions();
             if !initial_actions.is_empty() {
@@ -824,6 +826,45 @@ impl AgentAskResearcher {
                     {
                         packet = state.model_evidence(query, &query_targets);
                     }
+                }
+                if source_reviews_pending
+                    && !citation_repair_pending
+                    && research_source_review::due(
+                        runtime.analysis_method(),
+                        research_work::WorkGuard::new(query, &state).output_phase(),
+                    )
+                {
+                    source_reviews_pending = false;
+                    source_reviews = match self
+                        .review_current_sources(
+                            runtime,
+                            project,
+                            turn,
+                            &mut state,
+                            &mut controller,
+                            started,
+                            query,
+                            packet.len(),
+                            control,
+                        )
+                        .await?
+                    {
+                        Ok(reviews) => reviews,
+                        Err(reason) => {
+                            return awaiting_continuation(turn, &state, command_profile, reason);
+                        }
+                    };
+                }
+                if research_source_review::due(
+                    runtime.analysis_method(),
+                    research_work::WorkGuard::new(query, &state).output_phase(),
+                ) && let Err(reason) = research_source_review::append_hints(
+                    &mut packet,
+                    &state.work_evidence_windows(),
+                    state.evidence_limit,
+                    &source_reviews,
+                ) {
+                    return awaiting_continuation(turn, &state, command_profile, reason);
                 }
                 compiled_work_packet = Some(packet);
                 let key = state.work_packet_key();
@@ -2940,6 +2981,8 @@ mod research_context;
 mod research_flows;
 #[path = "agent_research_followup.rs"]
 mod research_followup;
+#[path = "agent_research_source_review.rs"]
+mod research_source_review;
 #[path = "agent_research_supplement.rs"]
 mod research_supplement;
 use research_followup::ResearchStopReason;
