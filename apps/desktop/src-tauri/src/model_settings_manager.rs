@@ -28,9 +28,11 @@ use a3_protocol::{
     StructuredOutputCapabilityV1,
 };
 use a3_provider::{
-    ExactGeminiEndpointPolicy, ExactOpenAiEndpointPolicy, GeminiEndpoint, GeminiEndpointPolicy,
-    GeminiModelProvider, GeminiSettingsEndpointValidator, LocalOnlyOllamaEndpointPolicy,
-    OllamaEndpoint, OllamaModelProvider, OllamaSettingsEndpointValidator, OpenAiEndpoint,
+    ExactGeminiEndpointPolicy, ExactOllamaEndpointPolicy, ExactOpenAiCompatibleEndpointPolicy,
+    ExactOpenAiEndpointPolicy, GeminiEndpoint, GeminiEndpointPolicy, GeminiModelProvider,
+    GeminiSettingsEndpointValidator, LocalOnlyOllamaEndpointPolicy, OllamaEndpoint,
+    OllamaModelProvider, OllamaSettingsEndpointValidator, OpenAiCompatibleEndpoint,
+    OpenAiCompatibleModelProvider, OpenAiCompatibleSettingsEndpointValidator, OpenAiEndpoint,
     OpenAiEndpointPolicy, OpenAiModelProvider, OpenAiSettingsEndpointValidator,
     StandardGeminiEndpointPolicy, StandardOpenAiEndpointPolicy,
 };
@@ -76,7 +78,7 @@ impl ModelSettingsManager {
         Ok(self.map_settings(&stored, self.probe_is_active()).await)
     }
 
-    /// Reads the complete three-provider Settings V2 snapshot without provider access.
+    /// Reads the complete four-provider Settings V2 snapshot without provider access.
     pub async fn query_v2(&self) -> Result<SettingsResponseV2, CommandErrorV1> {
         let stored = GetDesktopSettings::new(Arc::clone(&self.store))
             .execute()
@@ -147,6 +149,9 @@ impl ModelSettingsManager {
             ModelProviderKind::Ollama => Arc::new(OllamaSettingsEndpointValidator),
             ModelProviderKind::Gemini => Arc::new(GeminiSettingsEndpointValidator),
             ModelProviderKind::OpenAi => Arc::new(OpenAiSettingsEndpointValidator),
+            ModelProviderKind::OpenAiCompatible => {
+                Arc::new(OpenAiCompatibleSettingsEndpointValidator)
+            }
         };
         let configured = endpoint
             .map(|value| validator.validate(value))
@@ -542,14 +547,13 @@ impl ModelSettingsManager {
         let recorder = RecordDesktopModelProbe::new(Arc::clone(&self.store));
         match kind {
             ModelProviderKind::Ollama => {
-                if endpoint.scope() != ModelEndpointScope::LocalLoopback {
-                    return Err(invalid_request());
-                }
-                let endpoint = OllamaEndpoint::parse(endpoint.canonical_origin())
-                    .map_err(|_| invalid_request())?;
-                let provider =
-                    OllamaModelProvider::new(endpoint, Arc::new(LocalOnlyOllamaEndpointPolicy))
-                        .map_err(|_| invalid_request())?;
+                let origin = endpoint.canonical_origin().to_owned();
+                let endpoint = OllamaEndpoint::parse(&origin).map_err(|_| invalid_request())?;
+                let provider = OllamaModelProvider::new(
+                    endpoint,
+                    Arc::new(ExactOllamaEndpointPolicy::new(origin)),
+                )
+                .map_err(|_| invalid_request())?;
                 self.execute_probe_v2(
                     &provider, &provider, expected, kind, request, timeout, recorder, control,
                 )
@@ -577,6 +581,21 @@ impl ModelSettingsManager {
                     .load_provider_api_key_for(current.settings(), kind)
                     .await?;
                 let provider = OpenAiModelProvider::new(endpoint, Arc::new(policy), key)
+                    .map_err(|_| invalid_request())?;
+                self.execute_probe_v2(
+                    &provider, &provider, expected, kind, request, timeout, recorder, control,
+                )
+                .await
+            }
+            ModelProviderKind::OpenAiCompatible => {
+                let base_url = endpoint.canonical_origin().to_owned();
+                let endpoint =
+                    OpenAiCompatibleEndpoint::parse(&base_url).map_err(|_| invalid_request())?;
+                let policy = ExactOpenAiCompatibleEndpointPolicy::new(base_url);
+                let key = self
+                    .load_provider_api_key_for(current.settings(), kind)
+                    .await?;
+                let provider = OpenAiCompatibleModelProvider::new(endpoint, Arc::new(policy), key)
                     .map_err(|_| invalid_request())?;
                 self.execute_probe_v2(
                     &provider, &provider, expected, kind, request, timeout, recorder, control,
@@ -708,14 +727,13 @@ impl ModelSettingsManager {
             .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?;
         let catalog_result = match kind {
             ModelProviderKind::Ollama => {
-                if endpoint.scope() != ModelEndpointScope::LocalLoopback {
-                    return Err(CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid));
-                }
-                let endpoint = OllamaEndpoint::parse(endpoint.canonical_origin())
-                    .map_err(|_| invalid_request())?;
-                let provider =
-                    OllamaModelProvider::new(endpoint, Arc::new(LocalOnlyOllamaEndpointPolicy))
-                        .map_err(|_| invalid_request())?;
+                let origin = endpoint.canonical_origin().to_owned();
+                let endpoint = OllamaEndpoint::parse(&origin).map_err(|_| invalid_request())?;
+                let provider = OllamaModelProvider::new(
+                    endpoint,
+                    Arc::new(ExactOllamaEndpointPolicy::new(origin)),
+                )
+                .map_err(|_| invalid_request())?;
                 DiscoverProviderModels::new(&provider)
                     .execute(timeout, control)
                     .await
@@ -743,6 +761,20 @@ impl ModelSettingsManager {
                     .load_provider_api_key_for(current.settings(), kind)
                     .await?;
                 let provider = OpenAiModelProvider::new(endpoint, Arc::new(policy), key)
+                    .map_err(|_| invalid_request())?;
+                DiscoverProviderModels::new(&provider)
+                    .execute(timeout, control)
+                    .await
+            }
+            ModelProviderKind::OpenAiCompatible => {
+                let base_url = endpoint.canonical_origin().to_owned();
+                let endpoint =
+                    OpenAiCompatibleEndpoint::parse(&base_url).map_err(|_| invalid_request())?;
+                let policy = ExactOpenAiCompatibleEndpointPolicy::new(base_url);
+                let key = self
+                    .load_provider_api_key_for(current.settings(), kind)
+                    .await?;
+                let provider = OpenAiCompatibleModelProvider::new(endpoint, Arc::new(policy), key)
                     .map_err(|_| invalid_request())?;
                 DiscoverProviderModels::new(&provider)
                     .execute(timeout, control)
@@ -1204,6 +1236,8 @@ impl ModelSettingsManager {
                 .await,
             self.map_provider_settings_v2(settings, ModelProviderKind::OpenAi)
                 .await,
+            self.map_provider_settings_v2(settings, ModelProviderKind::OpenAiCompatible)
+                .await,
         ];
         let privacy = settings.privacy();
         SettingsV2::new(
@@ -1485,6 +1519,7 @@ const fn provider_kind_v2(kind: ModelProviderKindV2) -> ModelProviderKind {
         ModelProviderKindV2::Ollama => ModelProviderKind::Ollama,
         ModelProviderKindV2::Gemini => ModelProviderKind::Gemini,
         ModelProviderKindV2::OpenAi => ModelProviderKind::OpenAi,
+        ModelProviderKindV2::OpenAiCompatible => ModelProviderKind::OpenAiCompatible,
     }
 }
 
@@ -1493,6 +1528,7 @@ const fn provider_kind_v2_back(kind: ModelProviderKind) -> ModelProviderKindV2 {
         ModelProviderKind::Ollama => ModelProviderKindV2::Ollama,
         ModelProviderKind::Gemini => ModelProviderKindV2::Gemini,
         ModelProviderKind::OpenAi => ModelProviderKindV2::OpenAi,
+        ModelProviderKind::OpenAiCompatible => ModelProviderKindV2::OpenAiCompatible,
     }
 }
 
@@ -1500,6 +1536,7 @@ fn provider_kind_from_id(value: &str) -> ModelProviderKindV2 {
     match value {
         "gemini" => ModelProviderKindV2::Gemini,
         "openai" => ModelProviderKindV2::OpenAi,
+        "openai-compatible" => ModelProviderKindV2::OpenAiCompatible,
         _ => ModelProviderKindV2::Ollama,
     }
 }
@@ -1894,7 +1931,7 @@ mod tests {
         ProviderCredentialStore, ProviderCredentialStoreFuture, StoredDesktopSettings,
     };
     use a3_domain::ModelProviderId;
-    use a3_protocol::{ErrorCodeV1, ModelProviderKindV1};
+    use a3_protocol::{ErrorCodeV1, ModelProviderKindV1, ModelProviderKindV2};
     use std::sync::{Arc, Mutex, MutexGuard};
 
     #[derive(Debug)]
@@ -2017,7 +2054,7 @@ mod tests {
             assert_eq!(configured_json["settings"]["endpoint"]["scope"], "remote");
             assert_eq!(
                 configured_json["settings"]["providerHealth"]["status"],
-                "remoteBlocked"
+                "notChecked"
             );
 
             let request = serde_json::from_value(serde_json::json!({
@@ -2112,6 +2149,65 @@ mod tests {
             assert_eq!(
                 configured_json["settings"]["credential"]["status"],
                 "missing"
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn v2_configures_openai_compatible_base_paths_and_private_lan_ollama()
+    -> Result<(), Box<dyn std::error::Error>> {
+        futures::executor::block_on(async {
+            let compatible = manager(Arc::new(MemoryStore::new()));
+            let response = compatible
+                .configure_provider_v2(
+                    DesktopSettingsStoreVersion::initial(),
+                    ModelProviderKindV2::OpenAiCompatible,
+                    Some("https://api.groq.com/openai/v1/"),
+                )
+                .await
+                .map_err(|error| format!("compatible configuration failed: {:?}", error.code()))?;
+            let value = serde_json::to_value(response)?;
+            assert_eq!(
+                value["settings"]["providers"][3]["providerKind"],
+                "openaiCompatible"
+            );
+            assert_eq!(
+                value["settings"]["providers"][3]["endpoint"]["providerId"],
+                "openai-compatible"
+            );
+            assert_eq!(
+                value["settings"]["providers"][3]["endpoint"]["origin"],
+                "https://api.groq.com/openai/v1"
+            );
+
+            let lan = manager(Arc::new(MemoryStore::new()));
+            let response = lan
+                .configure_provider_v2(
+                    DesktopSettingsStoreVersion::initial(),
+                    ModelProviderKindV2::Ollama,
+                    Some("http://192.168.1.25:11434"),
+                )
+                .await
+                .map_err(|error| format!("LAN configuration failed: {:?}", error.code()))?;
+            let value = serde_json::to_value(response)?;
+            assert_eq!(
+                value["settings"]["providers"][0]["endpoint"]["scope"],
+                "remote"
+            );
+            assert_eq!(
+                value["settings"]["providers"][0]["endpoint"]["access"],
+                "explicitUserInitiatedRemote"
+            );
+            assert_eq!(
+                lan.configure_provider_v2(
+                    DesktopSettingsStoreVersion::new(1)?,
+                    ModelProviderKindV2::Ollama,
+                    Some("http://192.0.2.25:11434"),
+                )
+                .await
+                .map_err(|error| error.code()),
+                Err(ErrorCodeV1::ModelEndpointInvalid)
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })

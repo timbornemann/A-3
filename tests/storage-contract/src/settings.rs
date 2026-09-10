@@ -85,7 +85,7 @@ where
 
     // Reproduce the desktop sequence: a legacy OpenAI endpoint, both roles on
     // OpenAI, then only Coding moved to Ollama. Provider slots, not the legacy
-    // singleton, own role validity in V8.
+    // singleton, own role validity in the multi-provider schema.
     use a3_application::{ModelEndpointAccess, ModelProviderKind, ProviderCredentialRequirement};
     let openai = ConfiguredModelEndpoint::from_validated_adapter_with_security(
         ModelProviderId::try_from_string("openai".to_owned())?,
@@ -160,10 +160,26 @@ where
         .with_provider_connection_verified(ModelProviderKind::Gemini, at)?
         .with_provider_enabled(ModelProviderKind::Gemini, true)?
         .with_provider_embedding_probe(ModelProviderKind::Ollama, embedding_profile()?, at)?;
+    let compatible = ConfiguredModelEndpoint::from_validated_adapter_with_security(
+        ModelProviderId::try_from_string("openai-compatible".to_owned())?,
+        "https://openrouter.ai/api/v1".to_owned(),
+        ModelEndpointScope::Remote,
+        ModelEndpointAccess::ExplicitUserInitiatedRemote,
+        ProviderCredentialRequirement::ApiKey,
+    )?;
+    let settings =
+        settings.with_provider_endpoint(ModelProviderKind::OpenAiCompatible, Some(compatible));
+    let (settings, generation) =
+        settings.begin_provider_credential_store(ModelProviderKind::OpenAiCompatible)?;
+    let settings = settings
+        .complete_provider_credential_store(ModelProviderKind::OpenAiCompatible, generation)?
+        .with_provider_connection_verified(ModelProviderKind::OpenAiCompatible, at)?
+        .with_provider_enabled(ModelProviderKind::OpenAiCompatible, true)?;
     let mut current = third.append(mixed.version(), &settings).await?;
     for kind in [
         ModelProviderKind::Gemini,
         ModelProviderKind::OpenAi,
+        ModelProviderKind::OpenAiCompatible,
         ModelProviderKind::Ollama,
     ] {
         let changed = current.settings().clone().with_provider_llm_probe(

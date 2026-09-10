@@ -109,7 +109,7 @@ export interface ProviderModelsResponseV1 {
   truncated: boolean;
 }
 
-export type ModelProviderKindV2 = ModelProviderKindV1;
+export type ModelProviderKindV2 = ModelProviderKindV1 | 'openaiCompatible';
 export interface ProviderSettingsV2 {
   providerKind: ModelProviderKindV2;
   defaultOrigin: string;
@@ -128,7 +128,7 @@ export interface EmbeddingRoleProfileV2 extends EmbeddingRoleProfileV1 {
 }
 export interface SettingsV2 {
   revision: string;
-  providers: [ProviderSettingsV2, ProviderSettingsV2, ProviderSettingsV2];
+  providers: [ProviderSettingsV2, ProviderSettingsV2, ProviderSettingsV2, ProviderSettingsV2];
   codingProfile: LlmRoleProfileV2 | null;
   mappingProfile: LlmRoleProfileV2 | null;
   embeddingProfile: EmbeddingRoleProfileV2 | null;
@@ -521,7 +521,7 @@ function parseSettingsV2(value: unknown): SettingsV2 {
     !hasExactKeys(value, keys) ||
     typeof value.probeActive !== 'boolean' ||
     !Array.isArray(value.providers) ||
-    value.providers.length !== 3
+    value.providers.length !== 4
   )
     throw new Error('Settings response contains an invalid V2 snapshot.');
   assertCanonicalDecimal(value.revision, 'Settings revision');
@@ -529,8 +529,9 @@ function parseSettingsV2(value: unknown): SettingsV2 {
     ProviderSettingsV2,
     ProviderSettingsV2,
     ProviderSettingsV2,
+    ProviderSettingsV2,
   ];
-  const expected: ModelProviderKindV2[] = ['ollama', 'gemini', 'openai'];
+  const expected: ModelProviderKindV2[] = ['ollama', 'gemini', 'openai', 'openaiCompatible'];
   if (providers.some((provider, index) => provider.providerKind !== expected[index]))
     throw new Error('Settings providers are not canonical or unique.');
   return {
@@ -574,14 +575,15 @@ function parseProviderSettingsV2(value: unknown): ProviderSettingsV2 {
     ollama: 'http://127.0.0.1:11434',
     gemini: 'https://generativelanguage.googleapis.com',
     openai: 'https://api.openai.com',
+    openaiCompatible: 'https://openrouter.ai/api/v1',
   };
   if (value.defaultOrigin !== expectedDefaultOrigins[value.providerKind])
     throw new Error('Settings response contains an invalid provider default origin.');
-  if (endpoint !== null && endpoint.providerId !== value.providerKind)
+  if (endpoint !== null && endpoint.providerId !== providerIdForKind(value.providerKind))
     throw new Error('Settings response contains a provider/endpoint mismatch.');
   const credential = parseNullable(value.credential, parseCredential);
   const health = parseNullable(value.health, parseProviderHealth);
-  const requiresCredential = value.providerKind === 'gemini' || value.providerKind === 'openai';
+  const requiresCredential = value.providerKind !== 'ollama';
   if (
     (endpoint === null && (credential !== null || value.connectionVerifiedAtUnixMillis !== null)) ||
     (endpoint !== null && requiresCredential && credential === null) ||
@@ -650,7 +652,13 @@ function parseEmbeddingProfileV2(value: unknown): EmbeddingRoleProfileV2 {
 }
 
 function isProviderKind(value: unknown): value is ModelProviderKindV2 {
-  return value === 'ollama' || value === 'gemini' || value === 'openai';
+  return (
+    value === 'ollama' || value === 'gemini' || value === 'openai' || value === 'openaiCompatible'
+  );
+}
+
+function providerIdForKind(kind: ModelProviderKindV2): string {
+  return kind === 'openaiCompatible' ? 'openai-compatible' : kind;
 }
 
 function parseSettings(value: unknown): SettingsV1 {
@@ -714,14 +722,33 @@ function parseEndpoint(value: unknown): ModelEndpointV1 {
   } catch {
     throw new Error('Settings response contains an invalid endpoint.');
   }
+  const hasCompatiblePath = value.providerId === 'openai-compatible';
+  const path = parsed.pathname;
+  const safeCompatiblePath =
+    hasCompatiblePath &&
+    path !== '/' &&
+    !path.endsWith('/') &&
+    !path.includes('%') &&
+    path
+      .slice(1)
+      .split('/')
+      .every(
+        (segment) => /^[A-Za-z0-9._~-]+$/.test(segment) && segment !== '.' && segment !== '..',
+      );
+  const canonicalOrigin = `${parsed.origin}${path === '/' ? '' : path}`;
+  const remoteProtocolAllowed =
+    parsed.protocol === 'https:' ||
+    (value.providerId === 'ollama' &&
+      parsed.protocol === 'http:' &&
+      isPrivateNetworkHost(parsed.hostname));
   if (
-    parsed.origin !== value.origin ||
+    canonicalOrigin !== value.origin ||
     parsed.username !== '' ||
     parsed.password !== '' ||
-    parsed.pathname !== '/' ||
+    (path !== '/' && !safeCompatiblePath) ||
     parsed.search !== '' ||
     parsed.hash !== '' ||
-    (value.scope === 'remote' && parsed.protocol !== 'https:') ||
+    (value.scope === 'remote' && !remoteProtocolAllowed) ||
     (value.scope === 'localLoopback' && parsed.protocol !== 'http:')
   ) {
     throw new Error('Settings response contains an invalid endpoint.');
@@ -732,6 +759,23 @@ function parseEndpoint(value: unknown): ModelEndpointV1 {
     providerId: value.providerId,
     scope: value.scope,
   };
+}
+
+function isPrivateNetworkHost(hostname: string): boolean {
+  const ipv4 = hostname.split('.').map(Number);
+  if (
+    ipv4.length === 4 &&
+    ipv4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
+  ) {
+    return (
+      ipv4[0] === 10 ||
+      (ipv4[0] === 172 && ipv4[1]! >= 16 && ipv4[1]! <= 31) ||
+      (ipv4[0] === 192 && ipv4[1] === 168) ||
+      (ipv4[0] === 169 && ipv4[1] === 254)
+    );
+  }
+  const ipv6 = hostname.replace(/^\[|\]$/g, '').toLocaleLowerCase();
+  return ipv6.startsWith('fc') || ipv6.startsWith('fd') || /^fe[89ab]/.test(ipv6);
 }
 
 function parseCredential(value: unknown): ProviderCredentialV1 {

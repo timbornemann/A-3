@@ -1,12 +1,13 @@
 use a3_application::{
     ConfiguredModelEndpoint, DeepMapExecutor, DeepMapPublicationStateStore, DesktopSettings,
     DesktopSettingsStore, GetDesktopSettings, KnowledgeIndexStore, LlmModelRole,
-    LlmProfileActivation, LoadDesktopProviderCredential, ModelEndpointScope, ModelProvider,
-    ModelProviderKind, ProviderCredentialStore, RunDeepMap, VerifiedModuleCardPublisher,
+    LlmProfileActivation, LoadDesktopProviderCredential, ModelProvider, ModelProviderKind,
+    ProviderCredentialStore, RunDeepMap, VerifiedModuleCardPublisher,
 };
 use a3_provider::{
-    ExactGeminiEndpointPolicy, ExactOpenAiEndpointPolicy, GeminiEndpoint, GeminiModelProvider,
-    LocalOnlyOllamaEndpointPolicy, OllamaEndpoint, OllamaModelProvider, OpenAiEndpoint,
+    ExactGeminiEndpointPolicy, ExactOllamaEndpointPolicy, ExactOpenAiCompatibleEndpointPolicy,
+    ExactOpenAiEndpointPolicy, GeminiEndpoint, GeminiModelProvider, OllamaEndpoint,
+    OllamaModelProvider, OpenAiCompatibleEndpoint, OpenAiCompatibleModelProvider, OpenAiEndpoint,
     OpenAiModelProvider,
 };
 use std::fmt;
@@ -49,11 +50,15 @@ impl DeepMapRuntime {
         let settings = stored.settings();
         let (endpoint, profile) = executable_mapping(settings)?;
         let provider: Arc<dyn ModelProvider> = match endpoint.provider_id().as_str() {
-            "ollama" if endpoint.scope() == ModelEndpointScope::LocalLoopback => {
+            "ollama" => {
+                let origin = endpoint.canonical_origin().to_owned();
                 let endpoint = OllamaEndpoint::parse(endpoint.canonical_origin()).ok()?;
                 Arc::new(
-                    OllamaModelProvider::new(endpoint, Arc::new(LocalOnlyOllamaEndpointPolicy))
-                        .ok()?,
+                    OllamaModelProvider::new(
+                        endpoint,
+                        Arc::new(ExactOllamaEndpointPolicy::new(origin)),
+                    )
+                    .ok()?,
                 )
             }
             "gemini" => {
@@ -83,6 +88,22 @@ impl DeepMapRuntime {
                     OpenAiModelProvider::new(
                         endpoint,
                         Arc::new(ExactOpenAiEndpointPolicy::new(origin)),
+                        key,
+                    )
+                    .ok()?,
+                )
+            }
+            "openai-compatible" => {
+                let endpoint = OpenAiCompatibleEndpoint::parse(endpoint.canonical_origin()).ok()?;
+                let base_url = endpoint.canonical_base_url();
+                let key = LoadDesktopProviderCredential::new(Arc::clone(&self.credentials))
+                    .execute_for(settings, ModelProviderKind::OpenAiCompatible)
+                    .await
+                    .ok()??;
+                Arc::new(
+                    OpenAiCompatibleModelProvider::new(
+                        endpoint,
+                        Arc::new(ExactOpenAiCompatibleEndpointPolicy::new(base_url)),
                         key,
                     )
                     .ok()?,
@@ -178,6 +199,11 @@ mod tests {
             (
                 "openai",
                 "https://api.openai.com",
+                ModelEndpointScope::Remote,
+            ),
+            (
+                "openai-compatible",
+                "https://openrouter.ai/api/v1",
                 ModelEndpointScope::Remote,
             ),
         ] {

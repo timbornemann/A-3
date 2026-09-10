@@ -729,6 +729,9 @@ pub enum ModelProviderKindV2 {
     /// OpenAI API.
     #[serde(rename = "openai")]
     OpenAi,
+    /// User-configured OpenAI Chat-Completions-compatible API.
+    #[serde(rename = "openaiCompatible")]
+    OpenAiCompatible,
 }
 
 /// Provider-specific endpoint configuration mutation.
@@ -1087,12 +1090,12 @@ impl EmbeddingRoleProfileV2 {
     }
 }
 
-/// Complete three-slot settings projection.
+/// Complete four-slot settings projection.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SettingsV2 {
     revision: String,
-    providers: [ProviderSettingsV2; 3],
+    providers: [ProviderSettingsV2; 4],
     coding_profile: Option<LlmRoleProfileV2>,
     mapping_profile: Option<LlmRoleProfileV2>,
     embedding_profile: Option<EmbeddingRoleProfileV2>,
@@ -1106,7 +1109,7 @@ impl SettingsV2 {
     #[must_use]
     pub const fn new(
         revision: String,
-        providers: [ProviderSettingsV2; 3],
+        providers: [ProviderSettingsV2; 4],
         coding_profile: Option<LlmRoleProfileV2>,
         mapping_profile: Option<LlmRoleProfileV2>,
         embedding_profile: Option<EmbeddingRoleProfileV2>,
@@ -1273,7 +1276,7 @@ mod tests {
 
     #[test]
     fn model_provider_kind_serializes_and_deserializes() -> Result<(), serde_json::Error> {
-        use super::ModelProviderKindV1;
+        use super::{ModelProviderKindV1, ModelProviderKindV2};
         assert_eq!(
             serde_json::to_string(&ModelProviderKindV1::Ollama)?,
             "\"ollama\""
@@ -1285,6 +1288,14 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&ModelProviderKindV1::OpenAi)?,
             "\"openai\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ModelProviderKindV2::OpenAiCompatible)?,
+            "\"openaiCompatible\""
+        );
+        assert_eq!(
+            serde_json::from_str::<ModelProviderKindV2>("\"openaiCompatible\"")?,
+            ModelProviderKindV2::OpenAiCompatible
         );
         assert_eq!(
             serde_json::from_str::<ModelProviderKindV1>("\"ollama\"")?,

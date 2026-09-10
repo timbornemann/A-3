@@ -7,11 +7,13 @@ import {
   discoverProviderModels,
   parseProviderModelsResponseV1,
   parseSettingsResponseV1,
+  parseSettingsResponseV2,
   probeModelRole,
   querySettings,
   setModelProviderCredential,
   type SettingsResponseV1,
 } from './settings';
+import { settingsLayoutFixture } from './settings-layout.fixture';
 
 const emptyResponse: SettingsResponseV1 = {
   protocolVersion: CURRENT_PROTOCOL_VERSION,
@@ -47,6 +49,28 @@ const verifiedCodingProfile = {
 };
 
 describe('settings IPC client', () => {
+  it('accepts the canonical four-provider snapshot and private LAN Ollama only', () => {
+    const response = settingsLayoutFixture();
+    expect(parseSettingsResponseV2(response)).toEqual(response);
+
+    const lan = structuredClone(response);
+    lan.settings.providers[0].endpoint = {
+      providerId: 'ollama',
+      origin: 'http://192.168.1.25:11434',
+      scope: 'remote',
+      access: 'explicitUserInitiatedRemote',
+    };
+    expect(parseSettingsResponseV2(lan)).toEqual(lan);
+
+    const publicHttp = structuredClone(lan);
+    publicHttp.settings.providers[0].endpoint!.origin = 'http://192.0.2.10:11434';
+    expect(() => parseSettingsResponseV2(publicHttp)).toThrow('invalid endpoint');
+
+    const unsafeCompatible = structuredClone(response);
+    unsafeCompatible.settings.providers[3].endpoint!.origin = 'https://openrouter.ai/api/v1/';
+    expect(() => parseSettingsResponseV2(unsafeCompatible)).toThrow('invalid endpoint');
+  });
+
   it('queries without endpoint, project identity, or provider access authority', async () => {
     const invokeCommand = vi.fn(async () => emptyResponse);
 

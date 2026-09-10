@@ -2,10 +2,10 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import { describe, expect, it, vi } from 'vitest';
 import SettingsPanel from './SettingsPanel.svelte';
 import { layoutModelIds, settingsLayoutFixture } from './settings-layout.fixture';
-import type { ModelProviderKindV1, ProviderModelsResponseV2, SettingsResponseV2 } from './settings';
+import type { ModelProviderKindV2, ProviderModelsResponseV2, SettingsResponseV2 } from './settings';
 
 const fixtureCatalog = (
-  kind: ModelProviderKindV1,
+  kind: ModelProviderKindV2,
   response = settingsLayoutFixture(),
 ): ProviderModelsResponseV2 => ({
   ...response,
@@ -38,14 +38,14 @@ async function chooseCoding(): Promise<HTMLElement> {
 }
 
 describe('SettingsPanel multi-provider layout', () => {
-  it('keeps three independent cards and compact role rows without automatic discovery', async () => {
+  it('keeps four independent cards and compact role rows without automatic discovery', async () => {
     const discover = vi.fn();
     render(SettingsPanel, {
       settingsLoaderV2: async () => settingsLayoutFixture(),
       modelDiscovererV2: discover,
     });
     await openModels();
-    for (const name of ['Ollama', 'Google Gemini', 'OpenAI']) {
+    for (const name of ['Ollama', 'Google Gemini', 'OpenAI', 'OpenAI-kompatibel']) {
       const card = screen.getByRole('article', { name });
       expect(
         within(card)
@@ -61,10 +61,20 @@ describe('SettingsPanel multi-provider layout', () => {
         .getAllByRole('button', { name: 'Modell wählen' })
         .every((button) => (button as HTMLButtonElement).disabled),
     ).toBe(true);
+    const compatible = screen.getByRole('article', { name: 'OpenAI-kompatibel' });
+    await fireEvent.click(within(compatible).getByText('Verbindung bearbeiten'));
+    expect(
+      (within(compatible).getByLabelText('OpenAI-kompatibel Adresse') as HTMLInputElement).value,
+    ).toBe('https://openrouter.ai/api/v1');
+    expect(within(compatible).getByLabelText('OpenAI-kompatibel API-Key')).toBeTruthy();
+
+    const ollama = screen.getByRole('article', { name: 'Ollama' });
+    await fireEvent.click(within(ollama).getByText('Verbindung bearbeiten'));
+    expect(ollama.textContent).toContain('Private LAN-Adressen sind erlaubt');
   });
 
   it('bounds large catalogs, searches and pages locally, and preserves an unambiguous selection', async () => {
-    const discover = vi.fn(async (_revision, kind: ModelProviderKindV1) => fixtureCatalog(kind));
+    const discover = vi.fn(async (_revision, kind: ModelProviderKindV2) => fixtureCatalog(kind));
     const probe = vi.fn().mockResolvedValue(settingsLayoutFixture());
     render(SettingsPanel, {
       settingsLoaderV2: async () => settingsLayoutFixture(),

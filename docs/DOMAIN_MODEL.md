@@ -444,7 +444,8 @@ Providerpayload bleiben im Adapter. Ein Katalogeintrag beweist ausschließlich, 
 konfigurierte Provider den Namen zum Abfragezeitpunkt gemeldet hat. Er kann weder ein
 `ModelProfile` erzeugen noch eine Capability aktivieren.
 
-ADR-0066 schließt `ModelProviderKind` auf Ollama, Gemini und OpenAI und modelliert die drei
+ADR-0066 und die Erweiterung ADR-0107 schließen `ModelProviderKind` auf Ollama, Gemini, OpenAI und
+OpenAI-kompatibel und modellieren die vier
 Provider als eindeutige Slots im globalen Settings-Zustand. Endpoint, Revision, Credentialstatus,
 Health, Verifikationszeit und Aktivierung gehören jeweils zu genau einem Slot. Aktivierung ist
 erst nach Endpoint-/Credentialprüfung und erfolgreicher Discovery zulässig; eine Konfigurations-

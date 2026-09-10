@@ -103,7 +103,7 @@ async fn load_with_invalid_profiles(
     let mut settings =
         DesktopSettings::from_stored_parts(endpoint.clone(), credential, health, None, None, None)
             .map_err(|_| SettingsRepositoryError::InvalidStoredData)?;
-    let mut provider_kinds = Vec::with_capacity(3);
+    let mut provider_kinds = Vec::with_capacity(4);
     let mut table_rows = connection
         .query(
             "SELECT 1 FROM sqlite_master
@@ -127,7 +127,7 @@ async fn load_with_invalid_profiles(
                  endpoint_access, credential_requirement, credential_state, credential_generation,
                  enabled, configuration_revision, connection_verified_at_unix_millis,
                  health_status, health_checked_at_unix_millis
-                 FROM desktop_provider_settings WHERE revision = ?1 ORDER BY provider_kind LIMIT 4",
+                 FROM desktop_provider_settings WHERE revision = ?1 ORDER BY provider_kind LIMIT 5",
                 [u64_to_i64(version.get())?],
             )
             .await
@@ -138,7 +138,7 @@ async fn load_with_invalid_profiles(
             .map_err(SettingsRepositoryError::Read)?
         {
             let kind = decode_provider_kind(&read_string(&row, 0)?)?;
-            if provider_kinds.contains(&kind) || provider_kinds.len() == 3 {
+            if provider_kinds.contains(&kind) || provider_kinds.len() == 4 {
                 return Err(SettingsRepositoryError::InvalidStoredData);
             }
             provider_kinds.push(kind);
@@ -173,11 +173,11 @@ async fn load_with_invalid_profiles(
         }
     }
     let provider_count = provider_kinds.len();
-    if provider_count != 0 && provider_count != 3 {
+    if provider_count != 0 && provider_count != 4 {
         return Err(SettingsRepositoryError::InvalidStoredData);
     }
     let mut invalid = Vec::new();
-    if provider_count == 3 {
+    if provider_count == 4 {
         (settings, invalid) = load_provider_profiles(connection, version, settings).await?;
     } else {
         // Genuine pre-V8 snapshots still obey the single-provider invariant.

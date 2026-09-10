@@ -685,13 +685,14 @@ eindeutige, streng sortierte Modell-IDs. Sie ist flüchtige Auswahlhilfe und kei
 `probe_model_role` bleibt die einzige Modellaktivierungsgrenze; Discovery und Probe lassen sich
 über den gemeinsamen engen `cancel_model_probe`-Command kooperativ abbrechen.
 
-## Settings V2: drei Provider-Slots
+## Settings V2: vier Provider-Slots
 
 ADR-0066 ersetzt die V1-Einzelproviderprojektion als produktive Settingsansicht. Die registrierten
 V2-Commands sind `query_settings_v2`, `configure_model_provider_v2`,
 `set_model_provider_credential_v2`, `delete_model_provider_credential_v2`,
 `discover_provider_models_v2`, `set_model_provider_enabled_v2` und `probe_model_role_v2`.
-`SettingsV2` liefert exakt die kanonisch sortierten Slots `ollama`, `gemini` und `openai` mit
+`SettingsV2` liefert exakt die kanonisch sortierten Slots `ollama`, `gemini`, `openai` und
+`openaiCompatible` mit
 Default-Origin, optionalem Endpoint, Aktivierung, eigener Konfigurationsrevision,
 Credentialstatus, Verifikationszeit und Healthstatus. Rollenprofile tragen zusätzlich die
 Providerart; ein Modell ist deshalb immer ein Provider-/Modell-Tupel.
@@ -702,6 +703,11 @@ Katalog zusammen mit dem aktualisierten Snapshot. Probe- und Discovery-Requests 
 vom WebView vorgegebenen Endpoints, Capabilitystatus oder Zeitwerte. Die historischen V1-
 Settings-Commands bleiben für alte Domain-/Componenttests lesbar, sind aber nicht mehr im
 produktiven Tauri-Handler registriert; `cancel_model_probe` bleibt die gemeinsame Abbruchgrenze.
+`openaiCompatible` wird intern als Provider-ID `openai-compatible` gebunden und akzeptiert nur eine
+bestätigte HTTPS-Basis-URL mit sicherem optionalem Pfadpräfix. Ollama akzeptiert zusätzlich zu
+Loopback ausschließlich literale private/link-lokale LAN-IP-Adressen per HTTP; öffentliches HTTP
+und Hostnamen werden vor dem Speichern abgelehnt. Beide nicht-loopback Formen lösen eine native
+Bestätigung der exakten Zieladresse aus.
 
 ## Command Error V1
 

@@ -4,10 +4,12 @@ mod endpoint;
 mod gemini;
 mod ollama;
 mod openai;
+mod openai_compatible;
 
 pub use endpoint::{
-    LocalOnlyOllamaEndpointPolicy, OllamaEndpoint, OllamaEndpointError, OllamaEndpointPolicy,
-    OllamaEndpointPolicyError, OllamaEndpointScope, OllamaSettingsEndpointValidator,
+    ExactOllamaEndpointPolicy, LocalOnlyOllamaEndpointPolicy, OllamaEndpoint, OllamaEndpointError,
+    OllamaEndpointPolicy, OllamaEndpointPolicyError, OllamaEndpointScope,
+    OllamaSettingsEndpointValidator,
 };
 pub use gemini::{
     ExactGeminiEndpointPolicy, GeminiEndpoint, GeminiEndpointError, GeminiEndpointPolicy,
@@ -19,4 +21,11 @@ pub use openai::{
     ExactOpenAiEndpointPolicy, LocalOnlyOpenAiEndpointPolicy, OpenAiEndpoint, OpenAiEndpointError,
     OpenAiEndpointPolicy, OpenAiEndpointPolicyError, OpenAiEndpointScope, OpenAiModelProvider,
     OpenAiProviderCreateError, OpenAiSettingsEndpointValidator, StandardOpenAiEndpointPolicy,
+};
+pub use openai_compatible::{
+    ExactOpenAiCompatibleEndpointPolicy, LocalOnlyOpenAiCompatibleEndpointPolicy,
+    OpenAiCompatibleEndpoint, OpenAiCompatibleEndpointError, OpenAiCompatibleEndpointPolicy,
+    OpenAiCompatibleEndpointPolicyError, OpenAiCompatibleEndpointScope,
+    OpenAiCompatibleModelProvider, OpenAiCompatibleProviderCreateError,
+    OpenAiCompatibleSettingsEndpointValidator,
 };

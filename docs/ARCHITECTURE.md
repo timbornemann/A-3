@@ -152,7 +152,8 @@ Regeln:
 
 Gemäß ADR-0018 besitzt `a3-application` den allgemeinen `ModelProvider`-Port und alle neutralen
 Request-, Event-, Timeout-, Cancellation- und Fehlertypen. `a3-provider` implementiert diesen Port,
-kennt die nativen Ollama-, Gemini- und OpenAI-Wireverträge und hängt ausschließlich nach innen von
+kennt die nativen Ollama-, Gemini- und OpenAI-Wireverträge sowie den begrenzten
+OpenAI-kompatiblen Chat-Completions-Vertrag und hängt ausschließlich nach innen von
 Application und Domain ab. Die HTTP-Adapter verwenden das gepinnte `reqwest` nur mit JSON-,
 Streaming- und Rustls-Unterstützung, weil die Standardbibliothek keinen asynchronen, abbrechbaren
 HTTP-Body-Stream bereitstellt. Redirects und Umgebungsproxies sind für diese Clients deaktiviert.
@@ -775,8 +776,9 @@ fragt erst nach explizitem Nutzeraufruf den begrenzten nativen Modellkatalog ab.
 sortierte Katalog ist nur Auswahlhilfe, wird nicht persistiert und ist niemals
 Capability-Evidence.
 
-ADR-0066 ersetzt diese produktive Einzelproviderprojektion durch genau drei kanonisch sortierte,
-dauerhaft sichtbare Slots für Ollama, Gemini und OpenAI. Jeder Slot besitzt eigene Revision,
+ADR-0066 ersetzt diese produktive Einzelproviderprojektion durch kanonisch sortierte,
+dauerhaft sichtbare Slots. ADR-0107 ergänzt als vierten Slot `openai-compatible` neben Ollama,
+Gemini und OpenAI. Jeder Slot besitzt eigene Revision,
 credentialfreie Endpointkonfiguration, Credential-Lifecycle, Health, Verifikationszeit und
 Aktivierung; ein Slot darf erst nach erfolgreicher expliziter Discovery aktiviert werden.
 Discovery und Capability-Probes bleiben im globalen abbrechbaren Operations-Slot serialisiert.
@@ -799,13 +801,20 @@ Provider-, Credential- und Probe-Änderungen. Fehlt Profil, erforderliches Crede
 bleibt Deep Map bewusst unavailable; die Settings-Grenze simuliert keine Ausführbarkeit.
 Agent-Runs bleiben unabhängig davon unavailable, solange kein eigener Agent-Executor komponiert ist.
 
-OpenAI verwendet standardmäßig `https://api.openai.com`; nach der ADR-0066-Adaptervalidierung
-und nativen Originbestätigung sind auch kompatible credentialfreie HTTPS-Origins zulässig. Der
-native Adapter verwendet `GET /v1/models`, `POST /v1/responses` und `POST /v1/embeddings`; Requests setzen
+OpenAI verwendet standardmäßig `https://api.openai.com`. Der native Adapter verwendet
+`GET /v1/models`, `POST /v1/responses` und `POST /v1/embeddings`; Requests setzen
 `store: false`, deaktivieren Provider-Tools und übertragen den Bearer-Key erst nach der exakten
 Policyprüfung. GPT- und Embeddingnamen bleiben Kandidaten. Nur eine echte strikte JSON-Schema-Probe
 beziehungsweise ein validierter Vektor aktiviert ein Rollenprofil. Der Deep-Map-Composition-Root
 rekonstruiert OpenAI wie Gemini erst aus revisionsgebundenem Endpoint, Profil und OS-Credential.
+
+ADR-0107 trennt davon den Provider `openai-compatible`. Seine bestätigte HTTPS-Basis-URL darf ein
+sicheres API-Pfadpräfix wie `/api/v1` oder `/openai/v1` enthalten; der Adapter hängt ausschließlich
+`models`, `chat/completions` und `embeddings` an. Authentifizierung ist fest auf Bearer-Key begrenzt,
+Redirects und Umgebungsproxys bleiben deaktiviert. Ein echter Strict-JSON-Schema-Self-Test entscheidet
+auch hier über die Ausführbarkeit. Ollama darf zusätzlich zu Loopback über literale private oder
+link-lokale IP-Adressen per HTTP arbeiten. Öffentliches HTTP und Hostnamen bleiben abgelehnt; jeder
+nicht-loopback Endpoint wird nativ bestätigt und bei jeder Anfrage exakt erneut autorisiert.
 
 Für Ollama formt der Adapter den operativen `num_ctx` aus konservativ gezähltem Request,
 Outputlimit und festem Chat-Template-Overhead und begrenzt ihn durch das verifizierte Profil. Das

@@ -769,7 +769,7 @@ struct OpenAiTextFormat {
     schema: Value,
 }
 
-fn translate_openai_json_schema(schema: &Value) -> Result<Value, ModelProviderFailure> {
+pub(crate) fn translate_openai_json_schema(schema: &Value) -> Result<Value, ModelProviderFailure> {
     let mut nodes = 0usize;
     let mut translated = translate_openai_schema_node(schema, 0, &mut nodes)?;
     compact_openai_prefix_items(&mut translated)?;

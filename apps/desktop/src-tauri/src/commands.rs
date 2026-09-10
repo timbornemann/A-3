@@ -96,7 +96,7 @@ use a3_protocol::{
 };
 use a3_provider::{
     GeminiSettingsEndpointValidator, OllamaSettingsEndpointValidator,
-    OpenAiSettingsEndpointValidator,
+    OpenAiCompatibleSettingsEndpointValidator, OpenAiSettingsEndpointValidator,
 };
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::{
@@ -913,7 +913,7 @@ pub async fn query_settings(
 }
 
 #[tauri::command]
-/// Reads the complete three-provider Settings V2 snapshot without provider access.
+/// Reads the complete four-provider Settings V2 snapshot without provider access.
 pub async fn query_settings_v2(
     request: QuerySettingsRequestV1,
     root: State<'_, CompositionRoot>,
@@ -1106,29 +1106,32 @@ async fn execute_configure_model_provider_v2(
         return Err(CommandErrorV1::unsupported_protocol_version());
     }
     if let Some(origin) = request.endpoint_origin() {
-        let canonical_origin = match request.provider_kind() {
-            a3_protocol::ModelProviderKindV2::Ollama => OllamaSettingsEndpointValidator
-                .validate(origin)
-                .map(|endpoint| endpoint.canonical_origin().to_owned()),
-            a3_protocol::ModelProviderKindV2::Gemini => GeminiSettingsEndpointValidator
-                .validate(origin)
-                .map(|endpoint| endpoint.canonical_origin().to_owned()),
-            a3_protocol::ModelProviderKindV2::OpenAi => OpenAiSettingsEndpointValidator
-                .validate(origin)
-                .map(|endpoint| endpoint.canonical_origin().to_owned()),
+        let configured_endpoint = match request.provider_kind() {
+            a3_protocol::ModelProviderKindV2::Ollama => {
+                OllamaSettingsEndpointValidator.validate(origin)
+            }
+            a3_protocol::ModelProviderKindV2::Gemini => {
+                GeminiSettingsEndpointValidator.validate(origin)
+            }
+            a3_protocol::ModelProviderKindV2::OpenAi => {
+                OpenAiSettingsEndpointValidator.validate(origin)
+            }
+            a3_protocol::ModelProviderKindV2::OpenAiCompatible => {
+                OpenAiCompatibleSettingsEndpointValidator.validate(origin)
+            }
         }
         .map_err(|_| CommandErrorV1::settings(a3_protocol::ErrorCodeV1::ModelEndpointInvalid))?;
-        let is_cloud = matches!(
-            request.provider_kind(),
-            a3_protocol::ModelProviderKindV2::Gemini | a3_protocol::ModelProviderKindV2::OpenAi
-        );
-        if is_cloud {
+        if configured_endpoint.access()
+            == a3_application::ModelEndpointAccess::ExplicitUserInitiatedRemote
+        {
             let provider_label = match request.provider_kind() {
                 a3_protocol::ModelProviderKindV2::Gemini => "Google Gemini",
                 a3_protocol::ModelProviderKindV2::OpenAi => "OpenAI",
                 a3_protocol::ModelProviderKindV2::Ollama => "Ollama",
+                a3_protocol::ModelProviderKindV2::OpenAiCompatible => "OpenAI-kompatibel",
             };
-            let result = app.dialog().message(format!("Provider: {provider_label}\nExakte Origin: {canonical_origin}\n\nNur bestätigen, wenn dieses Ziel denselben nativen Providervertrag unterstützt."))
+            let canonical_origin = configured_endpoint.canonical_origin();
+            let result = app.dialog().message(format!("Provider: {provider_label}\nExakte Zieladresse: {canonical_origin}\n\nNur bestätigen, wenn du diesem Ziel vertraust und es den ausgewählten Providervertrag unterstützt."))
                 .title("A^3 Provider-Origin bestätigen")
                 .kind(MessageDialogKind::Warning)
                 .buttons(MessageDialogButtons::YesNo)

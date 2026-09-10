@@ -332,6 +332,7 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
         "openai" => ModelProviderKind::OpenAi,
         "gemini" => ModelProviderKind::Gemini,
         "ollama" => ModelProviderKind::Ollama,
+        "openai-compatible" => ModelProviderKind::OpenAiCompatible,
         _ => return Err("unreviewed live Agent provider".into()),
     };
     let settings = original.settings().clone().with_provider_llm_probe(

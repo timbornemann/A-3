@@ -1,12 +1,12 @@
 // Synthetic settings for component contracts and offline browser layout QA.
-import type { ModelProviderKindV1, ProviderSettingsV2, SettingsResponseV2 } from './settings';
+import type { ModelProviderKindV2, ProviderSettingsV2, SettingsResponseV2 } from './settings';
 
 export function settingsLayoutFixture(): SettingsResponseV2 {
-  const slot = (providerKind: ModelProviderKindV1, origin: string): ProviderSettingsV2 => ({
+  const slot = (providerKind: ModelProviderKindV2, origin: string): ProviderSettingsV2 => ({
     providerKind,
     defaultOrigin: origin,
     endpoint: {
-      providerId: providerKind,
+      providerId: providerKind === 'openaiCompatible' ? 'openai-compatible' : providerKind,
       origin,
       scope: providerKind === 'ollama' ? 'localLoopback' : 'remote',
       access: providerKind === 'ollama' ? 'local' : 'explicitUserInitiatedRemote',
@@ -25,6 +25,7 @@ export function settingsLayoutFixture(): SettingsResponseV2 {
         slot('ollama', 'http://127.0.0.1:11434'),
         slot('gemini', 'https://generativelanguage.googleapis.com'),
         slot('openai', 'https://api.openai.com'),
+        slot('openaiCompatible', 'https://openrouter.ai/api/v1'),
       ],
       codingProfile: null,
       mappingProfile: null,

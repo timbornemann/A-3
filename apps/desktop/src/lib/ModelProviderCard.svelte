@@ -70,7 +70,7 @@
       <span class="connection-mark" aria-hidden="true">{label.slice(0, 1)}</span>
       <div>
         <strong id={`provider-${slot.providerKind}`}>{label}</strong><span
-          >{needsKey ? 'Cloud' : 'Lokal'} · {health}</span
+          >{needsKey ? 'Cloud' : 'Lokal / LAN'} · {health}</span
         >
       </div>
     </div>
@@ -182,8 +182,17 @@
           Verbindungstests fragen die Modellliste bei der gespeicherten Adresse ab. Modellprüfungen
           senden eine Testanfrage und können Kosten verursachen.
         </p>
+        {#if slot.providerKind === 'openaiCompatible'}
+          <p class="connection-note">
+            A^3 sendet Modellanfragen und die dafür ausgewählten Projektquellen per Chat Completions
+            an genau diese Basisadresse. Verwende nur einen Dienst, dem du diese Daten anvertrauen
+            möchtest.
+          </p>
+        {/if}
       {:else}<p class="connection-note">
-          Ollama muss unter dieser Adresse erreichbar sein. Ein API-Key ist nicht erforderlich.
+          Ollama muss unter dieser Adresse erreichbar sein. Private LAN-Adressen sind erlaubt; ein
+          API-Key ist nicht erforderlich. Bei einer LAN-Adresse erreichen Modellanfragen und die
+          dafür ausgewählten Projektquellen den anderen Rechner.
         </p>{/if}
       <div class="connection-maintenance">
         {#if slot.credential?.status === 'configured'}<button

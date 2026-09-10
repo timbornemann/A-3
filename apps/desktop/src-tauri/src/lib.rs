@@ -1970,7 +1970,7 @@ impl CompositionRoot {
             .await
     }
 
-    /// Reads the complete three-provider Settings V2 snapshot without provider access.
+    /// Reads the complete four-provider Settings V2 snapshot without provider access.
     pub async fn query_settings_v2(
         &self,
     ) -> Result<a3_protocol::SettingsResponseV2, CommandErrorV1> {

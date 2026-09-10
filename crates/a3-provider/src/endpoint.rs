@@ -1,6 +1,6 @@
 use a3_application::{
-    ConfiguredModelEndpoint, ModelEndpointScope, ModelEndpointValidationFailure,
-    ModelEndpointValidator,
+    ConfiguredModelEndpoint, ModelEndpointAccess, ModelEndpointScope,
+    ModelEndpointValidationFailure, ModelEndpointValidator, ProviderCredentialRequirement,
 };
 use a3_domain::ModelProviderId;
 use std::error::Error;
@@ -41,11 +41,12 @@ impl OllamaEndpoint {
             url.set_host(Some("127.0.0.1"))
                 .map_err(|_| OllamaEndpointError::InvalidUrl)?;
         }
-        let scope = url
-            .host_str()
-            .and_then(|host| host.parse::<IpAddr>().ok())
-            .map_or(OllamaEndpointScope::Remote, endpoint_scope);
-        if scope == OllamaEndpointScope::Remote && url.scheme() != "https" {
+        let address = url.host_str().and_then(|host| host.parse::<IpAddr>().ok());
+        let scope = address.map_or(OllamaEndpointScope::Remote, endpoint_scope);
+        if scope == OllamaEndpointScope::Remote
+            && url.scheme() != "https"
+            && !address.is_some_and(is_private_network_address)
+        {
             return Err(OllamaEndpointError::InsecureRemote);
         }
         Ok(Self { url, scope })
@@ -105,10 +106,16 @@ impl ModelEndpointValidator for OllamaSettingsEndpointValidator {
             OllamaEndpointScope::LocalLoopback => ModelEndpointScope::LocalLoopback,
             OllamaEndpointScope::Remote => ModelEndpointScope::Remote,
         };
-        ConfiguredModelEndpoint::from_validated_adapter(
+        let access = match scope {
+            ModelEndpointScope::LocalLoopback => ModelEndpointAccess::Local,
+            ModelEndpointScope::Remote => ModelEndpointAccess::ExplicitUserInitiatedRemote,
+        };
+        ConfiguredModelEndpoint::from_validated_adapter_with_security(
             provider_id,
             endpoint.canonical_origin(),
             scope,
+            access,
+            ProviderCredentialRequirement::None,
         )
         .map_err(|_| ModelEndpointValidationFailure::Invalid)
     }
@@ -130,6 +137,13 @@ fn endpoint_scope(address: IpAddr) -> OllamaEndpointScope {
         OllamaEndpointScope::LocalLoopback
     } else {
         OllamaEndpointScope::Remote
+    }
+}
+
+fn is_private_network_address(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => address.is_private() || address.is_link_local(),
+        IpAddr::V6(address) => address.is_unique_local() || address.is_unicast_link_local(),
     }
 }
 
@@ -185,6 +199,32 @@ impl OllamaEndpointPolicy for LocalOnlyOllamaEndpointPolicy {
     }
 }
 
+/// Exact-endpoint policy used after native confirmation of a configured Ollama server.
+#[derive(Debug, Clone)]
+pub struct ExactOllamaEndpointPolicy {
+    origin: String,
+}
+
+impl ExactOllamaEndpointPolicy {
+    /// Binds every request to one canonical credential-free endpoint.
+    #[must_use]
+    pub fn new(origin: impl Into<String>) -> Self {
+        Self {
+            origin: origin.into(),
+        }
+    }
+}
+
+impl OllamaEndpointPolicy for ExactOllamaEndpointPolicy {
+    fn authorize(&self, endpoint: &OllamaEndpoint) -> Result<(), OllamaEndpointPolicyError> {
+        if endpoint.canonical_origin() == self.origin {
+            Ok(())
+        } else {
+            Err(OllamaEndpointPolicyError::Denied)
+        }
+    }
+}
+
 /// Endpoint was not covered by current local or explicit remote authorization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OllamaEndpointPolicyError {
@@ -203,8 +243,8 @@ impl Error for OllamaEndpointPolicyError {}
 #[cfg(test)]
 mod tests {
     use super::{
-        LocalOnlyOllamaEndpointPolicy, OllamaEndpoint, OllamaEndpointError, OllamaEndpointPolicy,
-        OllamaEndpointPolicyError, OllamaEndpointScope,
+        ExactOllamaEndpointPolicy, LocalOnlyOllamaEndpointPolicy, OllamaEndpoint,
+        OllamaEndpointError, OllamaEndpointPolicy, OllamaEndpointPolicyError, OllamaEndpointScope,
     };
 
     #[derive(Debug)]
@@ -221,21 +261,35 @@ mod tests {
     }
 
     #[test]
-    fn localhost_is_normalized_and_remote_requires_https_plus_policy()
+    fn localhost_and_lan_are_normalized_while_public_http_is_rejected()
     -> Result<(), Box<dyn std::error::Error>> {
         let local = OllamaEndpoint::parse("http://localhost:11434")?;
         assert_eq!(local.scope(), OllamaEndpointScope::LocalLoopback);
         assert!(LocalOnlyOllamaEndpointPolicy.authorize(&local).is_ok());
         assert!(!format!("{local:?}").contains("localhost"));
 
+        let lan = OllamaEndpoint::parse("http://192.168.1.25:11434")?;
+        assert_eq!(lan.scope(), OllamaEndpointScope::Remote);
+        assert!(LocalOnlyOllamaEndpointPolicy.authorize(&lan).is_err());
+        assert!(
+            ExactOllamaEndpointPolicy::new(lan.canonical_origin())
+                .authorize(&lan)
+                .is_ok()
+        );
         assert_eq!(
             OllamaEndpoint::parse("http://192.0.2.1:11434"),
             Err(OllamaEndpointError::InsecureRemote)
         );
+        assert!(OllamaEndpoint::parse("http://ollama.internal:11434").is_err());
         let remote = OllamaEndpoint::parse("https://models.example.invalid")?;
         assert_eq!(remote.scope(), OllamaEndpointScope::Remote);
         assert!(!format!("{remote:?}").contains("models.example.invalid"));
         assert!(LocalOnlyOllamaEndpointPolicy.authorize(&remote).is_err());
+        assert!(
+            ExactOllamaEndpointPolicy::new(remote.canonical_origin())
+                .authorize(&remote)
+                .is_ok()
+        );
         assert!(
             ApproveExactEndpoint(remote.clone())
                 .authorize(&remote)

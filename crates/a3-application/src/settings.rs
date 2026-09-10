@@ -21,7 +21,7 @@ const MAX_SETTINGS_TIMESTAMP_MILLIS: u64 = i64::MAX as u64;
 pub enum ModelEndpointScope {
     /// The origin resolves from a literal loopback address and needs no network approval.
     LocalLoopback,
-    /// The credential-free HTTPS origin is non-local and remains blocked without exact approval.
+    /// The endpoint is non-loopback and remains blocked without its configured access policy.
     Remote,
 }
 
@@ -121,7 +121,7 @@ impl ProviderCredentialMetadata {
     }
 }
 
-/// Credential-free canonical origin produced by a concrete provider adapter.
+/// Credential-free canonical endpoint produced by a concrete provider adapter.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ConfiguredModelEndpoint {
     provider_id: ModelProviderId,
@@ -171,13 +171,38 @@ impl ConfiguredModelEndpoint {
             .strip_prefix("http://")
             .or_else(|| canonical_origin.strip_prefix("https://"))
             .ok_or(ConfiguredModelEndpointError::InvalidOrigin)?;
-        if remainder.is_empty()
-            || remainder.contains(['/', '?', '#', '@'])
-            || (scope == ModelEndpointScope::Remote && !canonical_origin.starts_with("https://"))
+        let (authority, path) = remainder
+            .split_once('/')
+            .map_or((remainder, None), |(authority, path)| {
+                (authority, Some(path))
+            });
+        let compatible_base_path = provider_id.as_str() == "openai-compatible";
+        let path_is_valid = match path {
+            None => true,
+            Some(path) if compatible_base_path => {
+                !path.is_empty()
+                    && path.split('/').all(|segment| {
+                        !segment.is_empty()
+                            && !matches!(segment, "." | "..")
+                            && segment.bytes().all(|byte| {
+                                byte.is_ascii_alphanumeric()
+                                    || matches!(byte, b'-' | b'.' | b'_' | b'~')
+                            })
+                    })
+            }
+            Some(_) => false,
+        };
+        if authority.is_empty()
+            || authority.contains(['?', '#', '@', '\\'])
+            || canonical_origin.ends_with('/')
+            || !path_is_valid
+            || (scope == ModelEndpointScope::Remote
+                && !canonical_origin.starts_with("https://")
+                && !(provider_id.as_str() == "ollama" && canonical_origin.starts_with("http://")))
         {
             return Err(ConfiguredModelEndpointError::InvalidOrigin);
         }
-        let policy_is_valid = matches!(
+        let policy_shape_is_valid = matches!(
             (scope, access, credential_requirement),
             (
                 ModelEndpointScope::LocalLoopback,
@@ -191,9 +216,23 @@ impl ConfiguredModelEndpoint {
                 ModelEndpointScope::Remote,
                 ModelEndpointAccess::ExplicitUserInitiatedRemote,
                 ProviderCredentialRequirement::ApiKey
+            ) | (
+                ModelEndpointScope::Remote,
+                ModelEndpointAccess::ExplicitUserInitiatedRemote,
+                ProviderCredentialRequirement::None
             )
         );
-        if !policy_is_valid {
+        let provider_policy_is_valid = match credential_requirement {
+            ProviderCredentialRequirement::None => {
+                access != ModelEndpointAccess::ExplicitUserInitiatedRemote
+                    || provider_id.as_str() == "ollama"
+            }
+            ProviderCredentialRequirement::ApiKey => matches!(
+                provider_id.as_str(),
+                "gemini" | "openai" | "openai-compatible"
+            ),
+        };
+        if !policy_shape_is_valid || !provider_policy_is_valid {
             return Err(ConfiguredModelEndpointError::InvalidSecurityPolicy);
         }
         Ok(Self {
@@ -266,7 +305,7 @@ pub enum ConfiguredModelEndpointError {
     },
     /// The origin contained a control character.
     UnsafeCharacter,
-    /// The value was not a pathless HTTP(S) origin or a remote origin was not HTTPS.
+    /// The value was not a safe canonical endpoint or a remote origin was not HTTPS.
     InvalidOrigin,
     /// Locality, access, and credential policy formed an unsupported combination.
     InvalidSecurityPolicy,
@@ -458,7 +497,7 @@ pub enum ProviderHealthStatus {
     RemoteBlocked,
 }
 
-/// The three closed provider slots exposed by the desktop settings boundary.
+/// The four closed provider slots exposed by the desktop settings boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ModelProviderKind {
     /// Local Ollama-compatible provider.
@@ -467,6 +506,8 @@ pub enum ModelProviderKind {
     Gemini,
     /// OpenAI-compatible provider using the native OpenAI wire contract.
     OpenAi,
+    /// User-configured OpenAI-compatible Chat Completions provider.
+    OpenAiCompatible,
 }
 
 impl ModelProviderKind {
@@ -477,6 +518,7 @@ impl ModelProviderKind {
             Self::Ollama => "ollama",
             Self::Gemini => "gemini",
             Self::OpenAi => "openai",
+            Self::OpenAiCompatible => "openai-compatible",
         }
     }
 
@@ -487,6 +529,7 @@ impl ModelProviderKind {
             Self::Ollama => "http://127.0.0.1:11434",
             Self::Gemini => "https://generativelanguage.googleapis.com",
             Self::OpenAi => "https://api.openai.com",
+            Self::OpenAiCompatible => "https://openrouter.ai/api/v1",
         }
     }
 
@@ -500,8 +543,13 @@ impl ModelProviderKind {
 
     /// Returns the canonical ordering used by persistence and IPC.
     #[must_use]
-    pub const fn all() -> [Self; 3] {
-        [Self::Ollama, Self::Gemini, Self::OpenAi]
+    pub const fn all() -> [Self; 4] {
+        [
+            Self::Ollama,
+            Self::Gemini,
+            Self::OpenAi,
+            Self::OpenAiCompatible,
+        ]
     }
 
     /// Resolves a stable provider identifier.
@@ -511,6 +559,7 @@ impl ModelProviderKind {
             "ollama" => Some(Self::Ollama),
             "gemini" => Some(Self::Gemini),
             "openai" => Some(Self::OpenAi),
+            "openai-compatible" => Some(Self::OpenAiCompatible),
             _ => None,
         }
     }
@@ -730,7 +779,7 @@ impl DataPrivacySettings {
 /// Complete application-owned Settings V1 snapshot without persistence metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopSettings {
-    providers: [ProviderSettings; 3],
+    providers: [ProviderSettings; 4],
     endpoint: Option<ConfiguredModelEndpoint>,
     credential: ProviderCredentialMetadata,
     provider_health: Option<ProviderHealthObservation>,
@@ -749,6 +798,7 @@ impl DesktopSettings {
                 ProviderSettings::initial(ModelProviderKind::Ollama),
                 ProviderSettings::initial(ModelProviderKind::Gemini),
                 ProviderSettings::initial(ModelProviderKind::OpenAi),
+                ProviderSettings::initial(ModelProviderKind::OpenAiCompatible),
             ],
             endpoint: None,
             credential: ProviderCredentialMetadata::not_required(),
@@ -760,9 +810,9 @@ impl DesktopSettings {
         }
     }
 
-    /// Returns the exactly three canonical provider slots in stable order.
+    /// Returns the exactly four canonical provider slots in stable order.
     #[must_use]
-    pub const fn providers(&self) -> &[ProviderSettings; 3] {
+    pub const fn providers(&self) -> &[ProviderSettings; 4] {
         &self.providers
     }
 
@@ -1528,6 +1578,7 @@ fn provider_index(kind: ModelProviderKind) -> usize {
         ModelProviderKind::Ollama => 0,
         ModelProviderKind::Gemini => 1,
         ModelProviderKind::OpenAi => 2,
+        ModelProviderKind::OpenAiCompatible => 3,
     }
 }
 
@@ -2464,9 +2515,9 @@ mod tests {
     }
 
     #[test]
-    fn initial_settings_expose_three_disabled_provider_slots() {
+    fn initial_settings_expose_four_disabled_provider_slots() {
         let settings = DesktopSettings::unconfigured();
-        assert_eq!(settings.providers().len(), 3);
+        assert_eq!(settings.providers().len(), 4);
         assert_eq!(
             settings
                 .providers()
@@ -2477,6 +2528,7 @@ mod tests {
                 ModelProviderKind::Ollama,
                 ModelProviderKind::Gemini,
                 ModelProviderKind::OpenAi,
+                ModelProviderKind::OpenAiCompatible,
             ]
         );
         assert!(settings.providers().iter().all(|provider| {

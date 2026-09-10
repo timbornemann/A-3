@@ -29,6 +29,7 @@
     type LlmRoleProfileV2,
     type ModelProbeInputV1,
     type ModelProviderKindV1,
+    type ModelProviderKindV2,
     type ModelRoleV1,
     type ProviderModelsResponseV1,
     type SettingsResponseV1,
@@ -61,30 +62,30 @@
     settingsLoaderV2?: () => Promise<SettingsResponseV2>;
     providerConfigurerV2?: (
       expectedRevision: string,
-      providerKind: ModelProviderKindV1,
+      providerKind: ModelProviderKindV2,
       endpointOrigin: string | null,
     ) => Promise<SettingsResponseV2>;
     credentialSetterV2?: (
       expectedRevision: string,
-      providerKind: ModelProviderKindV1,
+      providerKind: ModelProviderKindV2,
       apiKeyBytes: Uint8Array,
     ) => Promise<SettingsResponseV2>;
     credentialDeleterV2?: (
       expectedRevision: string,
-      providerKind: ModelProviderKindV1,
+      providerKind: ModelProviderKindV2,
     ) => Promise<SettingsResponseV2>;
     modelDiscovererV2?: (
       expectedRevision: string,
-      providerKind: ModelProviderKindV1,
+      providerKind: ModelProviderKindV2,
     ) => Promise<ProviderModelsResponseV2>;
     providerEnablerV2?: (
       expectedRevision: string,
-      providerKind: ModelProviderKindV1,
+      providerKind: ModelProviderKindV2,
       enabled: boolean,
     ) => Promise<SettingsResponseV2>;
     roleProberV2?: (
       expectedRevision: string,
-      providerKind: ModelProviderKindV1,
+      providerKind: ModelProviderKindV2,
       input: ModelProbeInputV1,
     ) => Promise<SettingsResponseV2>;
   }
@@ -141,9 +142,9 @@
 
   let view = $state<View>({ kind: 'loading' });
   let v2Settings = $state<SettingsV2 | null>(null);
-  let v2Catalogs = $state<Partial<Record<ModelProviderKindV1, ProviderModelsResponseV2>>>({});
+  let v2Catalogs = $state<Partial<Record<ModelProviderKindV2, ProviderModelsResponseV2>>>({});
   let v2Action = $state<string | null>(null);
-  let v2Error = $state<{ kind: ModelProviderKindV1; message: string } | null>(null);
+  let v2Error = $state<{ kind: ModelProviderKindV2; message: string } | null>(null);
   let v2RoleDialog = $state<ModelRoleV1 | null>(null);
   let v2Cancelling = $state(false);
   let v2CancellationFailed = $state(false);
@@ -229,7 +230,7 @@
     return v2Settings?.providers ? [...v2Settings.providers] : [];
   }
 
-  function v2ProviderLabel(kind: ModelProviderKindV1): string {
+  function v2ProviderLabel(kind: ModelProviderKindV2): string {
     return providerLabel(kind);
   }
 
@@ -252,7 +253,7 @@
     return labels[status] ?? 'Nicht geprüft';
   }
 
-  async function reportV2Error(kind: ModelProviderKindV1, error: unknown): Promise<void> {
+  async function reportV2Error(kind: ModelProviderKindV2, error: unknown): Promise<void> {
     v2Error = { kind, message: recoveryMessage(error) };
     try {
       // Failed probes can still persist health and advance the settings revision.
@@ -263,7 +264,7 @@
     }
   }
 
-  async function configureProviderV2(kind: ModelProviderKindV1, origin: string): Promise<void> {
+  async function configureProviderV2(kind: ModelProviderKindV2, origin: string): Promise<void> {
     if (v2Settings === null || v2Busy) return;
     v2Error = null;
     v2Action = `configuring:${kind}`;
@@ -281,7 +282,7 @@
   }
 
   async function saveProviderCredentialV2(
-    kind: ModelProviderKindV1,
+    kind: ModelProviderKindV2,
     bytes: Uint8Array,
   ): Promise<void> {
     if (v2Settings === null || v2Busy || !requiresApiKey(kind) || bytes.length === 0) return;
@@ -301,7 +302,7 @@
     }
   }
 
-  async function deleteProviderCredentialV2(kind: ModelProviderKindV1): Promise<void> {
+  async function deleteProviderCredentialV2(kind: ModelProviderKindV2): Promise<void> {
     if (v2Settings === null || v2Busy) return;
     v2Error = null;
     v2Action = `deleteCredential:${kind}`;
@@ -317,7 +318,7 @@
     }
   }
 
-  async function discoverProviderV2(kind: ModelProviderKindV1): Promise<void> {
+  async function discoverProviderV2(kind: ModelProviderKindV2): Promise<void> {
     if (v2Settings === null || v2Busy) return;
     v2Error = null;
     v2CancellationFailed = false;
@@ -341,7 +342,7 @@
     }
   }
 
-  async function enableProviderV2(kind: ModelProviderKindV1, enabled: boolean): Promise<void> {
+  async function enableProviderV2(kind: ModelProviderKindV2, enabled: boolean): Promise<void> {
     if (v2Settings === null || v2Busy) return;
     v2Error = null;
     v2Action = `enabled:${kind}`;
@@ -497,6 +498,8 @@
   function providerLabel(providerId: string): string {
     if (providerId === 'gemini') return 'Google Gemini';
     if (providerId === 'openai') return 'OpenAI';
+    if (providerId === 'openaiCompatible' || providerId === 'openai-compatible')
+      return 'OpenAI-kompatibel';
     return 'Ollama';
   }
 
@@ -518,8 +521,8 @@
     return 'O';
   }
 
-  function requiresApiKey(kind: ModelProviderKindV1): boolean {
-    return kind === 'gemini' || kind === 'openai';
+  function requiresApiKey(kind: ModelProviderKindV1 | ModelProviderKindV2): boolean {
+    return kind !== 'ollama';
   }
 
   function remoteProviderHost(providerId: string): string {
@@ -927,6 +930,9 @@
     }
     if (providerId === 'openai') {
       return 'Die OpenAI-Modelle konnten nicht abgefragt werden. Prüfe den gespeicherten API-Key, deinen OpenAI-Zugriff und die Internetverbindung.';
+    }
+    if (providerId === 'openaiCompatible' || providerId === 'openai-compatible') {
+      return 'Die Modelle des OpenAI-kompatiblen Dienstes konnten nicht abgefragt werden. Prüfe API-Basisadresse, API-Key und Internetverbindung.';
     }
     return 'Die lokalen Modelle konnten nicht abgefragt werden. Prüfe, ob Ollama läuft, und versuche es erneut.';
   }

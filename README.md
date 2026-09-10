@@ -37,19 +37,23 @@ und bestätigt den konstruktiv deaktivierten Embedding-Batchpfad. Der Durable Ha
 einen revisionierten Goal Contract, ein verifiziertes Task Ledger und ein append-only Run Journal
 mit atomarer libSQL-Materialisierung, sicherer Redaction und versioniertem JSONL-Export. Der
 allgemeine `ModelProvider` besitzt begrenzte neutrale Streaming-Events, Cancellation und
-Gesamttimeout; sein Ollama-kompatibler Adapter erzwingt eine Local-only-Endpoint-Policy, strikte
+Gesamttimeout; sein Ollama-kompatibler Adapter erlaubt Loopback sowie explizit bestätigte literale
+private/link-lokale LAN-Adressen, erzwingt eine exakte Endpoint-Policy und verwendet strikte
 NDJSON-Validierung und content-freie Fehler. Das versionierte `ModelProfile`, konservative
 Tokenzählung, manuelle laufparametersichere Overrides sowie ein echter Ollama-Capability-Self-Test
 sind ebenfalls abgeschlossen. Fehlgeschlagene Structured-Output-Proben können keine ausführbaren
 Aktionen freischalten. Die Desktop-Settings verwalten Ollama sowie die kanonischen Google-Gemini-
-und OpenAI-Endpoints als typisierte Provider. Seit ADR-0066 verwaltet die Desktop-Settings drei
-dauerhaft sichtbare Provider-Slots für Ollama, Google Gemini und OpenAI. Jeder Slot wird unabhängig
+und OpenAI-Endpoints als typisierte Provider. ADR-0107 erweitert die Desktop-Settings auf vier
+dauerhaft sichtbare Provider-Slots für Ollama, Google Gemini, OpenAI und einen frei
+konfigurierbaren OpenAI-kompatiblen HTTPS-Dienst. Jeder Slot wird unabhängig
 konfiguriert, nativ bestätigt, getestet und aktiviert; die Rollenwahl vereinigt ausschließlich die
-ausdrücklich geladenen Kataloge verbundener und aktivierter Provider. Gemini- und OpenAI-Schlüssel
-liegen ausschließlich
+ausdrücklich geladenen Kataloge verbundener und aktivierter Provider. Die API-Schlüssel der
+Cloud-Provider liegen ausschließlich
 im nativen Betriebssystem-Schlüsselspeicher; libSQL und IPC führen nur inhaltsfreien Status und
-monotone Generation. Der OpenAI-Adapter verwendet die Responses API mit deaktivierter
-Response-Speicherung, striktem JSON Schema und ohne Provider-Tools. Modellkataloge werden nur nach
+monotone Generation. Der native OpenAI-Adapter verwendet die Responses API mit deaktivierter
+Response-Speicherung, striktem JSON Schema und ohne Provider-Tools. Der separate kompatible
+Adapter verwendet Chat Completions sowie einen sicheren optionalen API-Basispfad und bindet seinen
+OS-Keyring-Key an die vollständige Basis-URL. Modellkataloge werden nur nach
 expliziter Nutzeraktion begrenzt und flüchtig
 abgefragt; Modellnamen bleiben ohne Capability-Probe nicht ausführbar. Der
 statische Promptvertrag und die allgemeine versionierte AgentAction-

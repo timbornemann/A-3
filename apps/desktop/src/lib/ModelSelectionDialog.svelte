@@ -1,6 +1,6 @@
 <script module lang="ts">
   export interface ModelOption {
-    kind: ModelProviderKindV1;
+    kind: ModelProviderKindV2;
     modelId: string;
     label: string;
   }
@@ -12,7 +12,7 @@
     EmbeddingRoleProfileV2,
     LlmRoleProfileV2,
     ModelProbeInputV1,
-    ModelProviderKindV1,
+    ModelProviderKindV2,
     ModelRoleV1,
   } from './settings';
 
@@ -43,7 +43,7 @@
     onchoose,
   }: Props = $props();
   const PAGE_SIZE = 40;
-  const optionKey = (option: { kind: ModelProviderKindV1; modelId: string }): string =>
+  const optionKey = (option: { kind: ModelProviderKindV2; modelId: string }): string =>
     JSON.stringify([option.kind, option.modelId]);
   let selectedKey = $state(
     untrack(() =>
@@ -272,7 +272,7 @@
         </fieldset>
       </details>
       <p class="picker-hint">
-        {selected?.kind === 'gemini' || selected?.kind === 'openai'
+        {selected?.kind !== undefined && selected.kind !== 'ollama'
           ? 'Die Prüfung sendet eine Testanfrage an den gewählten Anbieter und kann Kosten verursachen.'
           : 'A^3 prüft vor dem Speichern, ob das Modell diese Aufgabe unterstützt.'}
       </p>

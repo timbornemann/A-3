@@ -269,11 +269,11 @@ fn existing_user_catalog_loads_read_only() -> TestResult {
 }
 
 #[test]
-fn newer_schemas_and_missing_v8_provider_tables_are_not_legacy_recovery() -> TestResult {
+fn newer_schemas_and_missing_current_provider_tables_are_not_legacy_recovery() -> TestResult {
     crate::run_native_libsql_test(async {
         let (_database, connection) = fixture().await?;
         profiles(&connection, "invalid model", "mapper", "embed").await?;
-        connection.execute("PRAGMA user_version = 9", ()).await?;
+        connection.execute("PRAGMA user_version = 10", ()).await?;
         assert!(matches!(
             load_from_connection(&connection).await,
             Err(SettingsRepositoryError::Open(
@@ -285,7 +285,7 @@ fn newer_schemas_and_missing_v8_provider_tables_are_not_legacy_recovery() -> Tes
                 .await
                 .is_err()
         );
-        connection.execute("PRAGMA user_version = 8", ()).await?;
+        connection.execute("PRAGMA user_version = 9", ()).await?;
         connection
             .execute("DROP TABLE desktop_provider_settings", ())
             .await?;

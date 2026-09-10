@@ -1,14 +1,15 @@
 use a3_application::{
     ConfiguredModelEndpoint, DesktopSettings, DesktopSettingsStore, GetDesktopSettings,
-    LlmModelRole, LlmProfileActivation, LoadDesktopProviderCredential, ModelEndpointScope,
-    ModelFinishReason, ModelMessage, ModelMessageRole, ModelOperationControl, ModelProvider,
-    ModelProviderFailure, ModelProviderKind, ModelProviderRequest, ModelRequestTimeout,
-    ProviderCredentialStore, ProviderEvent, StructuredOutputSchema,
+    LlmModelRole, LlmProfileActivation, LoadDesktopProviderCredential, ModelFinishReason,
+    ModelMessage, ModelMessageRole, ModelOperationControl, ModelProvider, ModelProviderFailure,
+    ModelProviderKind, ModelProviderRequest, ModelRequestTimeout, ProviderCredentialStore,
+    ProviderEvent, StructuredOutputSchema,
 };
 use a3_domain::{AgentSessionMode, ModelPromptSchemaGrounding, SecretCandidateClassifierV1};
 use a3_provider::{
-    ExactGeminiEndpointPolicy, ExactOpenAiEndpointPolicy, GeminiEndpoint, GeminiModelProvider,
-    LocalOnlyOllamaEndpointPolicy, OllamaEndpoint, OllamaModelProvider, OpenAiEndpoint,
+    ExactGeminiEndpointPolicy, ExactOllamaEndpointPolicy, ExactOpenAiCompatibleEndpointPolicy,
+    ExactOpenAiEndpointPolicy, GeminiEndpoint, GeminiModelProvider, OllamaEndpoint,
+    OllamaModelProvider, OpenAiCompatibleEndpoint, OpenAiCompatibleModelProvider, OpenAiEndpoint,
     OpenAiModelProvider,
 };
 use futures::StreamExt;
@@ -491,10 +492,11 @@ pub(crate) async fn resolve_provider(
     credentials: &Arc<dyn ProviderCredentialStore>,
 ) -> Result<Arc<dyn ModelProvider>, AgentConversationFailure> {
     match endpoint.provider_id().as_str() {
-        "ollama" if endpoint.scope() == ModelEndpointScope::LocalLoopback => {
+        "ollama" => {
+            let origin = endpoint.canonical_origin().to_owned();
             let endpoint = OllamaEndpoint::parse(endpoint.canonical_origin())
                 .map_err(|_| AgentConversationFailure::Unavailable)?;
-            OllamaModelProvider::new(endpoint, Arc::new(LocalOnlyOllamaEndpointPolicy))
+            OllamaModelProvider::new(endpoint, Arc::new(ExactOllamaEndpointPolicy::new(origin)))
                 .map(|provider| Arc::new(provider) as Arc<dyn ModelProvider>)
                 .map_err(|_| AgentConversationFailure::Unavailable)
         }
@@ -527,6 +529,23 @@ pub(crate) async fn resolve_provider(
             OpenAiModelProvider::new(
                 endpoint,
                 Arc::new(ExactOpenAiEndpointPolicy::new(origin)),
+                key,
+            )
+            .map(|provider| Arc::new(provider) as Arc<dyn ModelProvider>)
+            .map_err(|_| AgentConversationFailure::Unavailable)
+        }
+        "openai-compatible" => {
+            let endpoint = OpenAiCompatibleEndpoint::parse(endpoint.canonical_origin())
+                .map_err(|_| AgentConversationFailure::Unavailable)?;
+            let base_url = endpoint.canonical_base_url();
+            let key = LoadDesktopProviderCredential::new(Arc::clone(credentials))
+                .execute_for(settings, ModelProviderKind::OpenAiCompatible)
+                .await
+                .map_err(|_| AgentConversationFailure::Unavailable)?
+                .ok_or(AgentConversationFailure::ModelNotConfigured)?;
+            OpenAiCompatibleModelProvider::new(
+                endpoint,
+                Arc::new(ExactOpenAiCompatibleEndpointPolicy::new(base_url)),
                 key,
             )
             .map(|provider| Arc::new(provider) as Arc<dyn ModelProvider>)

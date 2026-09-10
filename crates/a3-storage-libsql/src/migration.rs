@@ -459,6 +459,52 @@ const CATALOG_MIGRATIONS: &[Migration] = &[
             SELECT RAISE(ABORT, 'desktop provider settings are append-only');
           END;",
     },
+    Migration {
+        version: 9,
+        name: "openai_compatible_provider_slot",
+        sql: "DROP TRIGGER desktop_provider_settings_update_guard;
+          DROP TRIGGER desktop_provider_settings_delete_guard;
+          CREATE TABLE desktop_provider_settings_v9 (
+          revision INTEGER NOT NULL CHECK (revision > 0),
+          provider_kind TEXT NOT NULL CHECK (provider_kind IN ('ollama', 'gemini', 'openai', 'openai-compatible')),
+          endpoint_provider_id TEXT CHECK (endpoint_provider_id IS NULL OR length(CAST(endpoint_provider_id AS BLOB)) BETWEEN 1 AND 128),
+          endpoint_origin TEXT CHECK (endpoint_origin IS NULL OR length(CAST(endpoint_origin AS BLOB)) BETWEEN 1 AND 2048),
+          endpoint_scope TEXT CHECK (endpoint_scope IS NULL OR endpoint_scope IN ('local_loopback', 'remote')),
+          endpoint_access TEXT CHECK (endpoint_access IS NULL OR endpoint_access IN ('local', 'remote_blocked', 'explicit_user_initiated_remote')),
+          credential_requirement TEXT NOT NULL CHECK (credential_requirement IN ('none', 'api_key')),
+          credential_state TEXT NOT NULL CHECK (credential_state IN ('not_required', 'missing', 'storing', 'configured', 'deleting')),
+          credential_generation INTEGER NOT NULL CHECK (credential_generation >= 0),
+          enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+          configuration_revision INTEGER NOT NULL CHECK (configuration_revision >= 0),
+          connection_verified_at_unix_millis INTEGER CHECK (connection_verified_at_unix_millis IS NULL OR connection_verified_at_unix_millis >= 0),
+          health_status TEXT NOT NULL CHECK (health_status IN ('not_checked', 'healthy', 'capability_limited', 'unreachable', 'cancelled', 'remote_blocked')),
+          health_checked_at_unix_millis INTEGER CHECK (health_checked_at_unix_millis IS NULL OR health_checked_at_unix_millis >= 0),
+          PRIMARY KEY (revision, provider_kind),
+          FOREIGN KEY (revision) REFERENCES desktop_settings_revisions(revision)
+            ON UPDATE RESTRICT ON DELETE RESTRICT
+          ) STRICT;
+          INSERT INTO desktop_provider_settings_v9
+            SELECT * FROM desktop_provider_settings;
+          INSERT INTO desktop_provider_settings_v9 (
+            revision, provider_kind, endpoint_provider_id, endpoint_origin, endpoint_scope,
+            endpoint_access, credential_requirement, credential_state, credential_generation,
+            enabled, configuration_revision, connection_verified_at_unix_millis,
+            health_status, health_checked_at_unix_millis
+          ) SELECT revision, 'openai-compatible', NULL, NULL, NULL, NULL,
+            'none', 'not_required', 0, 0, 0, NULL, 'not_checked', NULL
+            FROM desktop_provider_settings_v9
+            GROUP BY revision HAVING COUNT(*) = 3;
+          DROP TABLE desktop_provider_settings;
+          ALTER TABLE desktop_provider_settings_v9 RENAME TO desktop_provider_settings;
+          CREATE TRIGGER desktop_provider_settings_update_guard
+          BEFORE UPDATE ON desktop_provider_settings BEGIN
+            SELECT RAISE(ABORT, 'desktop provider settings are immutable');
+          END;
+          CREATE TRIGGER desktop_provider_settings_delete_guard
+          BEFORE DELETE ON desktop_provider_settings BEGIN
+            SELECT RAISE(ABORT, 'desktop provider settings are append-only');
+          END;",
+    },
 ];
 
 const KNOWLEDGE_BOOTSTRAP_MIGRATION: Migration = Migration {
@@ -3299,7 +3345,7 @@ pub struct CatalogSchemaVersion(u32);
 
 impl CatalogSchemaVersion {
     /// Current schema version understood by this build.
-    pub const CURRENT: Self = Self::new(8);
+    pub const CURRENT: Self = Self::new(9);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -4987,6 +5033,72 @@ mod tests {
                     0
                 );
             }
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn catalog_v9_adds_one_disabled_compatible_slot_to_complete_v8_snapshots()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            migrate(
+                &connection,
+                &CATALOG_MIGRATIONS[..8],
+                8,
+                CATALOG_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute(
+                    "INSERT INTO desktop_settings_revisions VALUES
+                     (1, NULL, NULL, NULL, NULL, 'none', 'not_required', 0, NULL, NULL)",
+                    (),
+                )
+                .await?;
+            connection
+                .execute(
+                    "INSERT INTO desktop_provider_settings VALUES
+                     (1, 'ollama', NULL, NULL, NULL, NULL, 'none', 'not_required', 0, 0, 0, NULL, 'not_checked', NULL),
+                     (1, 'gemini', NULL, NULL, NULL, NULL, 'none', 'not_required', 0, 0, 0, NULL, 'not_checked', NULL),
+                     (1, 'openai', NULL, NULL, NULL, NULL, 'none', 'not_required', 0, 0, 0, NULL, 'not_checked', NULL)",
+                    (),
+                )
+                .await?;
+
+            assert_eq!(
+                super::migrate_catalog(&connection).await?,
+                CatalogSchemaVersion::CURRENT
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM desktop_provider_settings WHERE revision = 1",
+                )
+                .await?,
+                4
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM desktop_provider_settings
+                     WHERE revision = 1 AND provider_kind = 'openai-compatible'
+                       AND enabled = 0 AND credential_state = 'not_required'",
+                )
+                .await?,
+                1
+            );
+            assert!(
+                connection
+                    .execute(
+                        "UPDATE desktop_provider_settings SET enabled = 1
+                         WHERE revision = 1 AND provider_kind = 'openai-compatible'",
+                        (),
+                    )
+                    .await
+                    .is_err()
+            );
             Ok::<(), Box<dyn std::error::Error>>(())
         })
     }
