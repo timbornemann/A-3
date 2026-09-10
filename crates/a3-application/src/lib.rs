@@ -79,6 +79,7 @@ pub use function_flow::{
 };
 mod health_query;
 mod index_overview;
+mod index_trace;
 mod jobs;
 mod knowledge_index_store;
 mod knowledge_search_store;
@@ -303,6 +304,14 @@ pub use index_overview::{
     GetPublishedIndexOverview, GetPublishedIndexOverviewError, PublishedDiagnostic,
     PublishedFileDiagnostics, PublishedIndexOverview, RepositoryPathDisplay,
 };
+pub use index_trace::{
+    INDEX_TRACE_EVENT_LIMIT, INDEX_TRACE_FILE_DIAGNOSTIC_LIMIT, INDEX_TRACE_FILE_PAGE_LIMIT,
+    INDEX_TRACE_SEARCH_BYTES, IndexTraceCheckpoint, IndexTraceCounts, IndexTraceDataError,
+    IndexTraceEvent, IndexTraceEventKind, IndexTraceFileFilter, IndexTraceFilePage,
+    IndexTraceFileQuery, IndexTraceFileRecord, IndexTracePhaseProgress, IndexTraceRunSummary,
+    IndexTraceSnapshot, IndexTraceStore, IndexTraceStoreFailure, IndexTraceStoreFuture,
+    RetainedIndexTraces,
+};
 pub use jobs::{
     CancellationToken, JobCancelResult, JobCancellationError, JobClock, JobCompletion, JobContext,
     JobEvent, JobEventKind, JobEventSequence, JobEventStream, JobEventStreamClosed, JobScheduler,
@@ -491,7 +500,7 @@ pub use repository_index::{
     IndexRunIdFactory, IndexRunIdFactoryFailure, RefreshRepositoryIndex,
     RefreshRepositoryIndexError, RepositoryIndexCompilation, RepositoryIndexCompiler,
     RepositoryIndexCompilerFailure, RepositoryIndexControl, RepositoryIndexControlError,
-    RepositoryIndexMode, RepositoryIndexPhase, RepositoryIndexRefresh,
+    RepositoryIndexMode, RepositoryIndexObservation, RepositoryIndexPhase, RepositoryIndexRefresh,
 };
 pub use repository_snapshot::{
     IncrementalRepositorySnapshotBuild, IncrementalRepositorySnapshotBuilder,

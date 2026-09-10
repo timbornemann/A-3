@@ -26,6 +26,7 @@ mod graph_retrieval;
 mod id;
 mod index_analysis;
 mod index_run;
+mod index_trace;
 mod indexed_function_flow;
 mod invalidation;
 mod language;
@@ -195,15 +196,20 @@ pub use graph_retrieval::{
 pub use id::{
     AcceptanceCriterionId, AgentDiagramArtifactId, AgentQueuedMessageId, AgentRunId,
     AgentSessionId, AgentWorkItemId, ApprovalId, ApprovalRequestId, AskResearchSourceId,
-    CommandCatalogId, DeepMapRunId, DiscoveredCommandId, IndexRunId, PolicyDecisionId,
-    PolicyResourceId, ProjectId, RemoteIdentity, RepositoryId, RunEventId, SnapshotId,
-    StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId, VerificationRunId,
-    VerificationSpecId, WorktreeAnchorId, WorktreeId,
+    CommandCatalogId, DeepMapRunId, DiscoveredCommandId, IndexRunId, IndexTraceId,
+    PolicyDecisionId, PolicyResourceId, ProjectId, RemoteIdentity, RepositoryId, RunEventId,
+    SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId,
+    VerificationRunId, VerificationSpecId, WorktreeAnchorId, WorktreeId,
 };
 pub use index_analysis::{IndexedFileAnalysis, IndexedFileAnalysisError};
 pub use index_run::{
     IndexRunRecord, IndexRunSequence, IndexRunSequenceError, IndexRunStart, IndexRunStatus,
     IndexRunStatusError, IndexRunTerminalOutcome, RankingPolicyVersion, RankingPolicyVersionError,
+};
+pub use index_trace::{
+    IndexTraceDiagnosticCode, IndexTraceFileChange, IndexTraceHashOutcome, IndexTraceParseOutcome,
+    IndexTracePhase, IndexTracePhaseState, IndexTraceRevision, IndexTraceRevisionError,
+    IndexTraceState, IndexTraceTimestamp, IndexTraceTimestampError, IndexTraceTrigger,
 };
 pub use invalidation::{
     IndexInvalidationPlan, InvalidationPlanError, InvalidationReason, ModuleCardInvalidation,

@@ -67,6 +67,10 @@ stable_id!(
     IndexRunId
 );
 stable_id!(
+    /// Stable identity of one diagnostic Fast-Index trace, created before discovery.
+    IndexTraceId
+);
+stable_id!(
     /// Stable identity of one durable Deep-Map run.
     DeepMapRunId
 );

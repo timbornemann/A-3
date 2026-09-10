@@ -754,6 +754,29 @@ Slash Commands und Diagramme verwenden ausschließlich
 `allow-query-agent-diagram-artifacts`, `allow-query-agent-diagram-artifact` und
 `allow-export-agent-diagram`. Der Exportcommand öffnet seinen Dialog ausschließlich im nativen
 Rust-Adapter und stellt der WebView keine allgemeine Dialog- oder Dateicapability bereit.
+Der Fast-Index-Laufinspektor besitzt ausschließlich `allow-query-index-run-inspection`,
+`allow-query-index-run-files` und `allow-control-index-run`; keine davon nimmt einen
+Dateisystempfad oder ein frei gewähltes Projekt entgegen.
 Der Projektkatalog besitzt ausschließlich `allow-query-project-catalog`,
 `allow-activate-catalog-project`, `allow-restore-last-project` und
 `allow-remove-catalog-project`; keine dieser Capabilities akzeptiert einen Pfad.
+# Ergänzung: Fast-Index-Laufinspektor V1
+
+`query_index_activity` V1 bleibt der pathless, nicht blockierende 500-ms-Statusread. Das Modal
+verwendet getrennt `query_index_run_inspection`, `query_index_run_files` und `control_index_run`.
+Alle Requests sind `deny_unknown_fields`, tragen `protocolVersion: 1` und akzeptieren nur
+Core-ausgestellte 64-stellige Trace-Referenzen und kanonische positive Dezimalrevisionen.
+
+Die Detailprojektion enthält den aktiven und nur währenddessen den vorherigen terminalen Lauf;
+ohne aktiven Lauf den neuesten terminalen. Sie liefert sechs geordnete Phasen, bounded Events,
+exakte Zähler, Zeitwerte, aktuelle Datei sowie geschlossene Diagnosecodes mit lokalisierter
+Erklärung und Recovery. Dateilisten werden serverseitig gesucht und gefiltert und enthalten je
+Seite höchstens 100 Zeilen. Cursor sind opak und kryptografisch an Worktree, Trace, Revision,
+Suche, Filter und Offset gebunden. Manipulation, fremde Traces, übergroße Suche und unbekannte
+Felder werden abgelehnt.
+
+`cancel` und `retry` sind optimistic, revisionsgebundene Aktionen. Eine stale Revision kann keinen
+neueren Job beeinflussen. Der Rückkanal unterscheidet accepted, noProject, notFound,
+staleRevision, invalidState, busy und unavailable. Die WebView erhält keine absoluten Pfade,
+Quelltexte, Rohfehler, Secrets oder Storage-Handles. Repository-relative Anzeigen sind
+kontrollzeichenfrei, auf 512 Zeichen begrenzt und markieren Kürzungen.

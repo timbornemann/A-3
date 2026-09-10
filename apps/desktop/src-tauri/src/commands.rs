@@ -47,34 +47,36 @@ use a3_protocol::{
     ConfirmProjectCommandAllowlistRequestV1, ContinueAgentResearchRequestV1,
     ControlAgentApprovalRequestV1, ControlAgentSessionQueueRequestV1, ControlAgentSessionRequestV1,
     ControlAgentSessionRequestV2, ControlAgentTaskRunRequestV1, ControlDeepMapRequestV1,
-    CreateAgentGoalRequestV1, DeepMapAtlasImpactResponseV1, DeepMapControlResponseV1,
-    DeepMapEntryDetailResponseV1, DeepMapEntryPageResponseV1, DeepMapModeV2,
-    DeepMapModuleStepsResponseV1, DeepMapRunDashboardResponseV1, DeepMapRunModulesResponseV1,
-    DeepMapRunPageResponseV1, DeepMapStartResponseV2, DeepMapStatusResponseV3,
-    DeleteModelProviderCredentialRequestV1, DeleteModelProviderCredentialRequestV2,
-    DiscoverProviderModelsRequestV1, DiscoverProviderModelsRequestV2, ExportAgentDiagramRequestV1,
-    HealthRequestV1, HealthResponseV1, IndexActivityResponseV1, IndexOverviewResponseV1,
-    ListRecentProjectsRequestV1, ModuleCardDetailResponseV1, ModuleCardEvidenceResponseV1,
-    ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1, ModuleRuntimeFlowResponseV1,
-    ModuleRuntimeMapResponseV1, ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1,
-    ProbeModelRoleRequestV1, ProbeModelRoleRequestV2, ProjectActivationResponseV1,
-    ProjectCatalogResponseV1, ProjectMapSceneResponseV1, ProjectMapSearchResponseV1,
-    ProjectMapSourcePreviewResponseV1, ProjectSettingsResponseV1, ProjectStatusResponseV1,
-    ProtocolVersion, ProviderModelsResponseV1, ProviderModelsResponseV2,
-    QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1, QueryAgentAskResearchDetailRequestV1,
-    QueryAgentAskResearchSourcePreviewRequestV1, QueryAgentAskResearchSourcesRequestV1,
-    QueryAgentAskResearchTurnsRequestV1, QueryAgentDiagramArtifactRequestV1,
-    QueryAgentDiagramArtifactsRequestV1, QueryAgentGoalRequestV1, QueryAgentInspectionLogRequestV1,
-    QueryAgentInspectionRequestV1, QueryAgentSessionRequestV1, QueryAgentSessionsRequestV1,
-    QueryAgentSlashCommandsRequestV1, QueryAgentTaskRecoveryRequestV1,
-    QueryDeepMapAtlasImpactRequestV1, QueryDeepMapEntriesRequestV1,
-    QueryDeepMapEntryDetailRequestV1, QueryDeepMapModuleStepsRequestV1, QueryDeepMapRequestV1,
-    QueryDeepMapRunDashboardRequestV1, QueryDeepMapRunModulesRequestV1, QueryDeepMapRunsRequestV1,
-    QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1,
-    QueryModuleCardEvidenceRequestV1, QueryModuleCardFreshnessRequestV1,
-    QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
-    QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectCatalogRequestV1,
-    QueryProjectMapSceneRequestV1, QueryProjectMapSearchRequestV1,
+    ControlIndexRunRequestV1, CreateAgentGoalRequestV1, DeepMapAtlasImpactResponseV1,
+    DeepMapControlResponseV1, DeepMapEntryDetailResponseV1, DeepMapEntryPageResponseV1,
+    DeepMapModeV2, DeepMapModuleStepsResponseV1, DeepMapRunDashboardResponseV1,
+    DeepMapRunModulesResponseV1, DeepMapRunPageResponseV1, DeepMapStartResponseV2,
+    DeepMapStatusResponseV3, DeleteModelProviderCredentialRequestV1,
+    DeleteModelProviderCredentialRequestV2, DiscoverProviderModelsRequestV1,
+    DiscoverProviderModelsRequestV2, ExportAgentDiagramRequestV1, HealthRequestV1,
+    HealthResponseV1, IndexActivityResponseV1, IndexOverviewResponseV1, IndexRunControlResponseV1,
+    IndexRunFilesResponseV1, IndexRunInspectionResponseV1, ListRecentProjectsRequestV1,
+    ModuleCardDetailResponseV1, ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1,
+    ModuleDependencyGraphResponseV1, ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1,
+    ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1, ProbeModelRoleRequestV1,
+    ProbeModelRoleRequestV2, ProjectActivationResponseV1, ProjectCatalogResponseV1,
+    ProjectMapSceneResponseV1, ProjectMapSearchResponseV1, ProjectMapSourcePreviewResponseV1,
+    ProjectSettingsResponseV1, ProjectStatusResponseV1, ProtocolVersion, ProviderModelsResponseV1,
+    ProviderModelsResponseV2, QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1,
+    QueryAgentAskResearchDetailRequestV1, QueryAgentAskResearchSourcePreviewRequestV1,
+    QueryAgentAskResearchSourcesRequestV1, QueryAgentAskResearchTurnsRequestV1,
+    QueryAgentDiagramArtifactRequestV1, QueryAgentDiagramArtifactsRequestV1,
+    QueryAgentGoalRequestV1, QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1,
+    QueryAgentSessionRequestV1, QueryAgentSessionsRequestV1, QueryAgentSlashCommandsRequestV1,
+    QueryAgentTaskRecoveryRequestV1, QueryDeepMapAtlasImpactRequestV1,
+    QueryDeepMapEntriesRequestV1, QueryDeepMapEntryDetailRequestV1,
+    QueryDeepMapModuleStepsRequestV1, QueryDeepMapRequestV1, QueryDeepMapRunDashboardRequestV1,
+    QueryDeepMapRunModulesRequestV1, QueryDeepMapRunsRequestV1, QueryIndexActivityRequestV1,
+    QueryIndexOverviewRequestV1, QueryIndexRunFilesRequestV1, QueryIndexRunInspectionRequestV1,
+    QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
+    QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
+    QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
+    QueryProjectCatalogRequestV1, QueryProjectMapSceneRequestV1, QueryProjectMapSearchRequestV1,
     QueryProjectMapSourcePreviewRequestV1, QueryProjectSettingsRequestV1,
     QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, QuerySettingsRequestV1,
     QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1, QueryUiPreferencesRequestV1,
@@ -164,6 +166,33 @@ pub fn query_index_activity(
     root: State<'_, CompositionRoot>,
 ) -> Result<IndexActivityResponseV1, CommandErrorV1> {
     execute_query_index_activity(request, root.inner())
+}
+
+#[tauri::command]
+/// Returns the retained detailed Fast-Index runs for the active project.
+pub fn query_index_run_inspection(
+    request: QueryIndexRunInspectionRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<IndexRunInspectionResponseV1, CommandErrorV1> {
+    execute_query_index_run_inspection(request, root.inner())
+}
+
+#[tauri::command]
+/// Returns one bounded server-filtered file page for a retained Fast-Index run.
+pub fn query_index_run_files(
+    request: QueryIndexRunFilesRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<IndexRunFilesResponseV1, CommandErrorV1> {
+    execute_query_index_run_files(request, root.inner())
+}
+
+#[tauri::command]
+/// Applies a revision-bound cancel or full retry action to a retained run.
+pub fn control_index_run(
+    request: ControlIndexRunRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<IndexRunControlResponseV1, CommandErrorV1> {
+    execute_control_index_run(request, root.inner())
 }
 
 #[tauri::command]
@@ -1380,6 +1409,36 @@ fn execute_query_index_activity(
     }
 
     Ok(root.query_index_activity())
+}
+
+fn execute_query_index_run_inspection(
+    request: QueryIndexRunInspectionRequestV1,
+    root: &CompositionRoot,
+) -> Result<IndexRunInspectionResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    Ok(root.query_index_run_inspection())
+}
+
+fn execute_query_index_run_files(
+    request: QueryIndexRunFilesRequestV1,
+    root: &CompositionRoot,
+) -> Result<IndexRunFilesResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    root.query_index_run_files(&request)
+}
+
+fn execute_control_index_run(
+    request: ControlIndexRunRequestV1,
+    root: &CompositionRoot,
+) -> Result<IndexRunControlResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    root.control_index_run(&request)
 }
 
 async fn execute_query_index_overview(

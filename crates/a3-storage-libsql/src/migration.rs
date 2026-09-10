@@ -3334,6 +3334,11 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
         name: "replan_evidence_need",
         sql: include_str!("migrations/knowledge_v38.sql"),
     },
+    Migration {
+        version: 39,
+        name: "fast_index_trace_journal",
+        sql: include_str!("migrations/knowledge_v39.sql"),
+    },
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -3366,7 +3371,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(38);
+    pub const CURRENT: Self = Self::new(39);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -4000,6 +4005,7 @@ mod tests {
         (knowledge_upgrades_from_v35, 35),
         (knowledge_upgrades_from_v36, 36),
         (knowledge_upgrades_from_v37, 37),
+        (knowledge_upgrades_from_v38, 38),
     );
 
     #[test]
@@ -6936,7 +6942,7 @@ mod tests {
                 }
                 let result = migrate(
                     &connection,
-                    &migrations,
+                    &migrations[..38],
                     38,
                     super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
                 )
@@ -7113,6 +7119,75 @@ mod tests {
                 .await?;
         }
         Ok(())
+    }
+
+    #[test]
+    fn knowledge_v39_trace_tables_upgrade_or_roll_back_atomically()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            for fail_after_first_table in [false, true] {
+                let database = libsql::Builder::new_local(":memory:").build().await?;
+                let connection = database.connect()?;
+                let repository = [151; 32];
+                let worktree = [152; 32];
+                super::apply_knowledge_bootstrap(&connection, &repository, &worktree).await?;
+                migrate(
+                    &connection,
+                    &KNOWLEDGE_MIGRATIONS[..38],
+                    38,
+                    super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+                )
+                .await?;
+                let mut migrations = KNOWLEDGE_MIGRATIONS.to_vec();
+                if fail_after_first_table {
+                    migrations[38] = Migration {
+                        version: 39,
+                        name: "fast_index_trace_journal",
+                        sql: "CREATE TABLE index_trace_runs (trace_id BLOB PRIMARY KEY);\n\
+                              CREATE TABLE index_trace_runs (duplicate INTEGER);",
+                    };
+                }
+
+                let result = migrate(
+                    &connection,
+                    &migrations,
+                    39,
+                    super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+                )
+                .await;
+                if fail_after_first_table {
+                    assert!(matches!(
+                        result,
+                        Err(MigrationError::Apply { version: 39, .. })
+                    ));
+                } else {
+                    result?;
+                }
+                let expected_version = if fail_after_first_table { 38 } else { 39 };
+                assert_eq!(
+                    query_i64(&connection, "PRAGMA user_version").await?,
+                    expected_version
+                );
+                assert_eq!(
+                    query_i64(&connection, "SELECT COUNT(*) FROM schema_migrations").await?,
+                    expected_version
+                );
+                assert_eq!(
+                    query_i64(
+                        &connection,
+                        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN \
+                         ('index_trace_runs','index_trace_phases','index_trace_events','index_trace_files')",
+                    )
+                    .await?,
+                    if fail_after_first_table { 0 } else { 4 },
+                );
+                assert_eq!(
+                    query_i64(&connection, "SELECT COUNT(*) FROM pragma_foreign_key_check").await?,
+                    0
+                );
+            }
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
     }
 
     #[test]

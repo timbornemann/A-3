@@ -4,11 +4,12 @@
   interface Props {
     index: GlobalStatusItem;
     model: GlobalStatusItem;
+    onIndexClick: () => void;
     project: GlobalStatusItem;
     run: GlobalStatusItem;
   }
 
-  let { index, model, project, run }: Props = $props();
+  let { index, model, onIndexClick, project, run }: Props = $props();
 </script>
 
 <section class="global-status" aria-label="Globaler Arbeitsstatus" aria-live="polite">
@@ -29,7 +30,15 @@
       class:warning={index.tone === 'warning'}
     >
       <dt>Index</dt>
-      <dd title={index.value}>{index.value}</dd>
+      <dd>
+        <button
+          type="button"
+          class="index-inspector-trigger"
+          title={`${index.value} – Details zum Indexlauf öffnen`}
+          aria-haspopup="dialog"
+          onclick={onIndexClick}>{index.value}</button
+        >
+      </dd>
     </div>
     <div
       class:failed={model.tone === 'failed'}
@@ -51,3 +60,26 @@
     </div>
   </dl>
 </section>
+
+<style>
+  .index-inspector-trigger {
+    appearance: none;
+    border: 0;
+    border-radius: 0.3rem;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    padding: 0.08rem 0.2rem;
+    text-align: left;
+  }
+
+  .index-inspector-trigger:hover {
+    background: color-mix(in srgb, currentColor 10%, transparent);
+  }
+
+  .index-inspector-trigger:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+  }
+</style>

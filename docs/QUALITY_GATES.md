@@ -129,6 +129,16 @@ offengelegt werden, nicht als isolierter Prosaeffekt erscheinen.
   `query_index_activity`-Contract darf nur das in-memory Manager-Read-Model liefern; TypeScript
   lehnt unbekannte Felder, fremde Phasen, widersprüchliche Ordinale und falsche Completion ab. Der
   Component-Test hält den letzten publizierten Snapshot während eines laufenden Jobs sichtbar.
+
+- Der Laufinspektor-Contract aus [ADR-0108](adrs/0108-fast-index-laufinspektor.md) prüft monotone
+  Tracezustände einschließlich `Interrupted`, exakt sechs Phasen, Full-/Incremental-Dateiergebnisse,
+  Löschungen, sichere Diagnosezuordnung und den nicht fatalen `detailsIncomplete`-Pfad. Storage-
+  Tests decken V38→V39, atomaren Rollback, Worktree-Isolation, Retention, Reopen, Rebuild-Erhalt,
+  Suche/Pagination sowie verwaiste `building`-Runs ab. Manager-/IPC-Negativtests prüfen
+  kooperativen Abbruch, Retry ohne Löschung, stale Controls, manipulierte Cursor und alle
+  Text-/Seitengrenzen. Component- und Accessibility-Tests prüfen Statusleistenbutton, Fokus,
+  aktuelle/vorherige Läufe, sechs Phasen, Seitenwechsel, sichere Fehler-Recovery und die
+  60-Sekunden-Warnung ohne automatische Beendigung.
 - Der U3-Analysecontract verlangt eine lückenlose file-genaue V5-Publikation von Sprache,
   Adapterrevision, Diagnostics und Coverage. Migration V23 muss aus V22 atomar vorrollen und bei
   einem Schemafehler vollständig auf V22 zurückrollen. Der Storage-Roundtrip prüft partielle
@@ -1032,6 +1042,15 @@ derselbe unveränderte Release-Test am 2026-08-06 P50 816 ms, P95 884 ms, Watche
 Refresh-/Publish-P95 491 ms. Ein isolierter Diagnoselauf maß den neuen Invalidierungsabschnitt bei
 leerem Cardbestand mit rund 0,7 ms pro Publish; daraus wird kein allgemeiner Geschwindigkeitsclaim
 für große Cardbestände abgeleitet.
+
+U13 misst den Fast-Index-Laufinspektor mit demselben eingecheckten Release-Fixture direkt gegen
+`HEAD` vor der Änderung. Auf dem lokalen Windows-Rechner vom 2026-09-10 stieg der Cold-Index-P95
+von 1,160 s auf 1,184 s (+2,1 %), der P95 der 30 gezielten Reads von 16,13 ms auf 16,54 ms (+2,5 %)
+und der Watcher-bis-Publish-P95 des Ein-Datei-Laufs von 913,8 ms auf 930,3 ms (+1,8 %). Der reine
+Refresh-/Publish-P95 stieg von 604,1 ms auf 609,2 ms (+0,8 %). Beide Stände verwendeten 200 Dateien,
+100.000 LOC, fünf Cold-Index- und 30 Incremental-Samples im selben optimierten Binaryprofil. Damit
+bleiben die 30-s-Cold-, 2-s-Read- und 2-s-Incremental-Grenzen erfüllt; aus den kleinen Unterschieden
+wird keine allgemeine Geschwindigkeitsbehauptung abgeleitet.
 
 R1 besitzt den reproduzierbaren ignorierten Release-Test
 `exact_search_performance::exact_symbol_search_meets_the_100_millisecond_p95_target`. Das Fixture

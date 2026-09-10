@@ -222,6 +222,9 @@ pub trait RepositorySnapshotControl: fmt::Debug + Send + Sync {
     ) -> Result<(), RepositorySnapshotControlError> {
         Ok(())
     }
+
+    /// Emits safe Fast-Index detail without making diagnostics an execution dependency.
+    fn observe(&self, _observation: crate::RepositoryIndexObservation) {}
 }
 
 /// Coarse snapshot phase mapped into the end-to-end Fast-Index lifecycle by its owner.

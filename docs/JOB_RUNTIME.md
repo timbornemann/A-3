@@ -54,6 +54,19 @@ Lifecycle, aktuelle Phase und `completed/6` in einen kleinen Mutex-geschützten 
 `query_index_activity` liest ausschließlich diesen Zustand; Polling rekonstruiert weder den Index,
 misst Storage noch liest es Repositorydateien. Der Scheduler bleibt alleiniger Besitzer des Jobs.
 
+Der ergänzende Laufinspektor aus [ADR-0108](adrs/0108-fast-index-laufinspektor.md) ändert diesen
+leichten Read nicht. Der Manager legt vor Discovery einen jobgebundenen Trace an und übernimmt
+getrennte Detailereignisse für alle sechs Phasen, Unterfortschritt und zugelassene Dateien in einen
+bounded In-Memory-Zustand. Kurze Journal-Checkpoints werden über einen Application-Port geschrieben;
+ein Fehler markiert `detailsIncomplete`, beendet aber keinen gültigen Indexjob. Projektwechsel und
+späte Ereignisse alter Jobs sind durch Trace- und Ownerbindung getrennt.
+
+Cancel verwendet ausschließlich die bestehende kooperative Scheduler-Cancellation und ist an die
+angezeigte Trace-Revision gebunden. Retry wird nur für den letzten terminalen Trace akzeptiert und
+plant einen Full Rescan ohne vorgelagerten Rebuild ein. Der veröffentlichte Index bleibt dabei bis
+zum erfolgreichen Publish erhalten. 60 Sekunden ohne Fortschritt erzeugen nur eine UI-Warnung;
+der Scheduler erzwingt daraus keinen Timeout.
+
 Der Deep-Map-Produktzustand ergänzt darüber bewusst `Pausing` und `Paused`, ohne den verbindlichen
 Scheduler-Automaten um einen nicht terminalen Pausezustand zu erweitern. `pause_deep_map` ist nur
 für einen tatsächlich laufenden Versuch zulässig und fordert kooperative Cancellation an. Erst

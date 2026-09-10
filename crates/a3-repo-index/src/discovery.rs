@@ -124,6 +124,7 @@ impl RepositoryDiscoverer for GitRepositoryDiscoverer {
 
         for (index, (path_bytes, origin)) in candidates.into_iter().enumerate() {
             ensure_active(control)?;
+            let previous_len = files.len();
             classify_candidate(
                 root,
                 path_bytes,
@@ -135,6 +136,11 @@ impl RepositoryDiscoverer for GitRepositoryDiscoverer {
                 &mut exclusions,
                 &mut files,
             )?;
+            if files.len() > previous_len
+                && let Some(file) = files.last()
+            {
+                control.report_discovered_path(file.path());
+            }
             let completed = index.saturating_add(1);
             if completed == total || completed % report_stride == 0 {
                 report(

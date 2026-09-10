@@ -5,10 +5,12 @@ use crate::{
     RepositorySnapshotFailure, RepositorySnapshotPolicy, SnapshotBaseline, SnapshotCompatibility,
 };
 use a3_domain::{
-    DiscoveryResult, IndexPublication, IndexRunId, IndexRunStart, IndexRunTerminalOutcome,
-    Progress, ProjectIdentity, PublishedIndex, RankingPolicyVersion, RepositoryFileState,
-    RepositoryPath, Snapshot, SnapshotDelta,
+    DiscoveryResult, FileDelta, IndexLanguage, IndexPublication, IndexRunId, IndexRunStart,
+    IndexRunTerminalOutcome, IndexTraceDiagnosticCode, IndexTraceFileChange, IndexTraceHashOutcome,
+    IndexTraceParseOutcome, Progress, ProjectIdentity, PublishedIndex, RankingPolicyVersion,
+    RepositoryFileState, RepositoryPath, Snapshot, SnapshotDelta,
 };
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
@@ -23,10 +25,48 @@ pub trait RepositoryIndexControl: fmt::Debug + Send + Sync {
 
     /// Reports the current deterministic Fast-Index phase and its fixed six-phase progress.
     fn report_phase(&self, phase: RepositoryIndexPhase) -> Result<(), RepositoryIndexControlError> {
+        self.observe(RepositoryIndexObservation::PhaseStarted(phase));
         let progress = Progress::determinate(phase.completed_boundaries(), 6)
             .map_err(|_| RepositoryIndexControlError::Unavailable)?;
         self.report_progress(progress)
     }
+
+    /// Reports safe diagnostic detail without making journal availability an index precondition.
+    fn observe(&self, _observation: RepositoryIndexObservation) {}
+}
+
+/// Safe, storage-independent detail emitted by the six-phase Fast-Index pipeline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RepositoryIndexObservation {
+    /// The deterministic pipeline entered one of its six phases.
+    PhaseStarted(RepositoryIndexPhase),
+    /// A bounded sub-operation reported determinate or indeterminate phase progress.
+    PhaseProgress {
+        /// Phase whose sub-operation advanced.
+        phase: RepositoryIndexPhase,
+        /// Monotone sub-operation progress.
+        progress: Progress,
+    },
+    /// The worker is currently processing this allowed repository-relative path.
+    CurrentFile {
+        /// Phase processing the path.
+        phase: RepositoryIndexPhase,
+        /// Allowed repository-relative path.
+        path: RepositoryPath,
+    },
+    /// Discovery accepted this path after every exclusion and safety check.
+    FileDiscovered(RepositoryPath),
+    /// The complete current outcome for one allowed or deleted trace path.
+    FileResult(crate::IndexTraceFileRecord),
+    /// A safe failure classification, optionally associated with one path.
+    Diagnostic {
+        /// Phase that classified the failure.
+        phase: RepositoryIndexPhase,
+        /// Optional allowed repository-relative path.
+        path: Option<RepositoryPath>,
+        /// Stable safe diagnostic code.
+        code: IndexTraceDiagnosticCode,
+    },
 }
 
 /// User-visible phase of the deterministic Fast Index defined by ADR-0006.
@@ -334,6 +374,13 @@ impl RefreshRepositoryIndex {
         let hashed_paths = confirmed.hashed_paths().to_vec();
         let (snapshot, discovery, current_files, delta, created) =
             observation_parts(confirmed.into_observation(), latest)?;
+        report_snapshot_files(
+            control,
+            baseline.files(),
+            &current_files,
+            &delta,
+            &hashed_paths,
+        )?;
         if created {
             self.store.append_snapshot(project, &snapshot).await?;
         }
@@ -393,6 +440,13 @@ impl RefreshRepositoryIndex {
                 return Err(error.into());
             }
         };
+        report_parse_results(
+            control,
+            &compilation,
+            baseline.files(),
+            &delta,
+            &hashed_paths,
+        )?;
         if control.report_phase(RepositoryIndexPhase::Publish).is_err() {
             finish_after_refresh_error(self.store.as_ref(), project, active_run, control).await?;
             return Err(RefreshRepositoryIndexError::ProgressUnavailable);
@@ -556,6 +610,10 @@ impl RepositorySnapshotControl for MutedControl<'_> {
             .report_phase(phase)
             .map_err(|_| RepositorySnapshotControlError::Unavailable)
     }
+
+    fn observe(&self, observation: RepositoryIndexObservation) {
+        self.inner.observe(observation);
+    }
 }
 
 impl RepositoryIndexControl for MutedControl<'_> {
@@ -570,6 +628,10 @@ impl RepositoryIndexControl for MutedControl<'_> {
     fn report_phase(&self, phase: RepositoryIndexPhase) -> Result<(), RepositoryIndexControlError> {
         self.inner.report_phase(phase)
     }
+
+    fn observe(&self, observation: RepositoryIndexObservation) {
+        self.inner.observe(observation);
+    }
 }
 
 impl IndexPersistenceControl for MutedControl<'_> {
@@ -577,9 +639,126 @@ impl IndexPersistenceControl for MutedControl<'_> {
         self.inner.is_cancelled()
     }
 
-    fn report_progress(&self, _progress: Progress) -> Result<(), IndexPersistenceControlError> {
+    fn report_progress(&self, progress: Progress) -> Result<(), IndexPersistenceControlError> {
+        self.inner
+            .observe(RepositoryIndexObservation::PhaseProgress {
+                phase: RepositoryIndexPhase::Publish,
+                progress,
+            });
         Ok(())
     }
+}
+
+fn report_snapshot_files(
+    control: &dyn RepositoryIndexControl,
+    baseline: &RepositoryFileState,
+    current: &RepositoryFileState,
+    delta: &SnapshotDelta,
+    hashed_paths: &[RepositoryPath],
+) -> Result<(), RefreshRepositoryIndexError> {
+    let baseline_paths = baseline
+        .revisions()
+        .iter()
+        .map(|revision| revision.path().clone())
+        .collect::<BTreeSet<_>>();
+    let changed_paths = delta
+        .files()
+        .iter()
+        .filter(|change| matches!(change, FileDelta::Added { .. } | FileDelta::Modified { .. }))
+        .map(|change| change.path().clone())
+        .collect::<BTreeSet<_>>();
+    let hashed_paths = hashed_paths.iter().cloned().collect::<BTreeSet<_>>();
+    for revision in current.revisions() {
+        let path = revision.path().clone();
+        let change = if !baseline_paths.contains(&path) {
+            IndexTraceFileChange::New
+        } else if changed_paths.contains(&path) {
+            IndexTraceFileChange::Changed
+        } else {
+            IndexTraceFileChange::Unchanged
+        };
+        let hash = if hashed_paths.contains(&path) {
+            IndexTraceHashOutcome::Hashed
+        } else {
+            IndexTraceHashOutcome::Reused
+        };
+        let record = crate::IndexTraceFileRecord::new(path, change, hash, None, Vec::new(), false)
+            .map_err(|_| RefreshRepositoryIndexError::InvalidBaseline)?;
+        control.observe(RepositoryIndexObservation::FileResult(record));
+    }
+    for change in delta
+        .files()
+        .iter()
+        .filter(|change| matches!(change, FileDelta::Deleted { .. }))
+    {
+        let record = crate::IndexTraceFileRecord::new(
+            change.path().clone(),
+            IndexTraceFileChange::Deleted,
+            IndexTraceHashOutcome::NotApplicable,
+            Some(IndexTraceParseOutcome::NotApplicable),
+            Vec::new(),
+            false,
+        )
+        .map_err(|_| RefreshRepositoryIndexError::InvalidBaseline)?;
+        control.observe(RepositoryIndexObservation::FileResult(record));
+    }
+    Ok(())
+}
+
+fn report_parse_results(
+    control: &dyn RepositoryIndexControl,
+    compilation: &RepositoryIndexCompilation,
+    baseline: &RepositoryFileState,
+    delta: &SnapshotDelta,
+    hashed_paths: &[RepositoryPath],
+) -> Result<(), RefreshRepositoryIndexError> {
+    let baseline_paths = baseline
+        .revisions()
+        .iter()
+        .map(|revision| revision.path().clone())
+        .collect::<BTreeSet<_>>();
+    let changed_paths = delta
+        .files()
+        .iter()
+        .filter(|change| matches!(change, FileDelta::Added { .. } | FileDelta::Modified { .. }))
+        .map(|change| change.path().clone())
+        .collect::<BTreeSet<_>>();
+    let hashed_paths = hashed_paths.iter().cloned().collect::<BTreeSet<_>>();
+    let parsed_paths = compilation.parsed_paths().iter().collect::<BTreeSet<_>>();
+    for analysis in compilation.publication().file_analyses() {
+        let path = analysis.revision().path().clone();
+        let change = if !baseline_paths.contains(&path) {
+            IndexTraceFileChange::New
+        } else if changed_paths.contains(&path) {
+            IndexTraceFileChange::Changed
+        } else {
+            IndexTraceFileChange::Unchanged
+        };
+        let hash = if hashed_paths.contains(&path) {
+            IndexTraceHashOutcome::Hashed
+        } else {
+            IndexTraceHashOutcome::Reused
+        };
+        let diagnostics = if analysis.diagnostics().is_empty() {
+            Vec::new()
+        } else {
+            vec![IndexTraceDiagnosticCode::Parse]
+        };
+        let parse = if !diagnostics.is_empty() {
+            IndexTraceParseOutcome::Failed
+        } else if analysis.language() == IndexLanguage::Generic {
+            IndexTraceParseOutcome::Generic
+        } else if parsed_paths.contains(&path) {
+            IndexTraceParseOutcome::Structural
+        } else {
+            IndexTraceParseOutcome::Reused
+        };
+        let record =
+            crate::IndexTraceFileRecord::new(path, change, hash, Some(parse), diagnostics, false)
+                .map_err(|_| RefreshRepositoryIndexError::InvalidBaseline)?;
+        control.observe(RepositoryIndexObservation::FileResult(record));
+    }
+    Ok(())
 }
 
 /// Stable end-to-end refresh failures.

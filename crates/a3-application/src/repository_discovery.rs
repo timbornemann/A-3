@@ -1,5 +1,5 @@
 use crate::JobContext;
-use a3_domain::{DiscoveryPolicy, DiscoveryResult, Progress, ProjectIdentity};
+use a3_domain::{DiscoveryPolicy, DiscoveryResult, Progress, ProjectIdentity, RepositoryPath};
 use std::error::Error;
 use std::fmt;
 
@@ -10,6 +10,9 @@ pub trait RepositoryDiscoveryControl: fmt::Debug + Send + Sync {
 
     /// Reports an indeterminate enumeration or determinate classification observation.
     fn report_progress(&self, progress: Progress) -> Result<(), RepositoryDiscoveryControlError>;
+
+    /// Reports one path only after the discovery policy accepted it.
+    fn report_discovered_path(&self, _path: &RepositoryPath) {}
 }
 
 impl RepositoryDiscoveryControl for JobContext {

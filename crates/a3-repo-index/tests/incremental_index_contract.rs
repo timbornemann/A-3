@@ -6,13 +6,13 @@ use a3_application::{
     DeepMapPublicationState, DeepMapPublicationStateStore, IndexPersistenceControl,
     IndexPersistenceControlError, KnowledgeIndexStore, KnowledgeSearchControl,
     KnowledgeSearchStore, KnowledgeStore, RefreshRepositoryIndex, RepositoryChangeBatch,
-    RepositoryIndexControl, RepositoryIndexControlError, RepositoryIndexMode, RepositoryIndexPhase,
-    RepositoryRescanReason,
+    RepositoryIndexControl, RepositoryIndexControlError, RepositoryIndexMode,
+    RepositoryIndexObservation, RepositoryIndexPhase, RepositoryRescanReason,
 };
 use a3_domain::{
     ExactSearchPageSize, ExactSearchQuery, ExactSearchRole, ExactSearchTerm, IndexSchemaVersion,
-    LexicalSearchPageSize, LexicalSearchQuery, LexicalSearchTerm, Progress, RepositoryPath,
-    SnapshotChangeKind,
+    IndexTraceFileChange, IndexTraceHashOutcome, IndexTraceParseOutcome, LexicalSearchPageSize,
+    LexicalSearchQuery, LexicalSearchTerm, Progress, RepositoryPath, SnapshotChangeKind,
 };
 use a3_repo_index::{
     Blake3IndexRunIdFactory, Blake3RepositorySnapshotBuilder, BuiltinIncrementalIndexCompiler,
@@ -28,6 +28,7 @@ use support::{TempDirectory, run_libsql_test};
 
 #[derive(Debug, Default)]
 struct RecordingControl {
+    observations: Mutex<Vec<RepositoryIndexObservation>>,
     progress: Mutex<Vec<Progress>>,
     phases: Mutex<Vec<RepositoryIndexPhase>>,
 }
@@ -46,6 +47,7 @@ impl RepositoryIndexControl for RecordingControl {
     }
 
     fn report_phase(&self, phase: RepositoryIndexPhase) -> Result<(), RepositoryIndexControlError> {
+        self.observe(RepositoryIndexObservation::PhaseStarted(phase));
         self.phases
             .lock()
             .map_err(|_| RepositoryIndexControlError::Unavailable)?
@@ -55,6 +57,12 @@ impl RepositoryIndexControl for RecordingControl {
             Progress::determinate(phase.completed_boundaries(), 6)
                 .map_err(|_| RepositoryIndexControlError::Unavailable)?,
         )
+    }
+
+    fn observe(&self, observation: RepositoryIndexObservation) {
+        if let Ok(mut observations) = self.observations.lock() {
+            observations.push(observation);
+        }
     }
 }
 
@@ -188,6 +196,38 @@ fn one_file_refresh_hashes_and_parses_only_that_file_then_publishes() -> Result<
                 .map(|completed| (Some(completed), Some(6)))
                 .collect::<Vec<_>>()
         );
+        let initial_observations = control
+            .observations
+            .lock()
+            .map_err(|_| "observation recording lock was poisoned")?
+            .clone();
+        assert_eq!(
+            initial_observations
+                .iter()
+                .filter(|event| matches!(event, RepositoryIndexObservation::FileDiscovered(_)))
+                .count(),
+            4
+        );
+        assert!(initial_observations.iter().all(|event| {
+            !matches!(event, RepositoryIndexObservation::FileDiscovered(path) if path.as_bytes() == b".env")
+        }));
+        assert!(
+            initial_observations
+                .iter()
+                .filter_map(|event| match event {
+                    RepositoryIndexObservation::FileResult(file) => Some(file),
+                    _ => None,
+                })
+                .all(|file| {
+                    file.change() == IndexTraceFileChange::New
+                        && file.hash() == IndexTraceHashOutcome::Hashed
+                })
+        );
+        control
+            .observations
+            .lock()
+            .map_err(|_| "observation recording lock was poisoned")?
+            .clear();
 
         repository.write("src/alpha.rs", b"pub fn omega() -> u8 { 1 }\n")?;
         let changed = RepositoryPath::try_from_bytes(b"src/alpha.rs".to_vec())?;
@@ -205,8 +245,35 @@ fn one_file_refresh_hashes_and_parses_only_that_file_then_publishes() -> Result<
             incremental.compilation().mode(),
             RepositoryIndexMode::Incremental
         );
-        assert_eq!(incremental.compilation().parsed_paths(), &[changed]);
+        assert_eq!(
+            incremental.compilation().parsed_paths(),
+            std::slice::from_ref(&changed)
+        );
         assert!(incremental.published());
+        let incremental_observations = control
+            .observations
+            .lock()
+            .map_err(|_| "observation recording lock was poisoned")?
+            .clone();
+        let file_results = incremental_observations
+            .iter()
+            .filter_map(|event| match event {
+                RepositoryIndexObservation::FileResult(file) => Some(file),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(file_results.iter().any(|file| {
+            file.path() == &changed
+                && file.change() == IndexTraceFileChange::Changed
+                && file.hash() == IndexTraceHashOutcome::Hashed
+                && file.parse() == Some(IndexTraceParseOutcome::Structural)
+        }));
+        assert!(file_results.iter().any(|file| {
+            file.path().as_bytes() == b"src/beta.rs"
+                && file.change() == IndexTraceFileChange::Unchanged
+                && file.hash() == IndexTraceHashOutcome::Reused
+                && file.parse() == Some(IndexTraceParseOutcome::Reused)
+        }));
         assert!(
             incremental
                 .compilation()
@@ -387,6 +454,11 @@ fn burst_add_modify_delete_and_rename_produces_one_consistent_delta() -> Result<
                 &control,
             )
             .await?;
+        control
+            .observations
+            .lock()
+            .map_err(|_| "observation recording lock was poisoned")?
+            .clear();
 
         fs::rename(
             repository.path().join("src/rename_me.rs"),
@@ -429,6 +501,36 @@ fn burst_add_modify_delete_and_rename_produces_one_consistent_delta() -> Result<
                 .filter(|change| change.kind() == SnapshotChangeKind::Delete)
                 .count(),
             2
+        );
+        let observations = control
+            .observations
+            .lock()
+            .map_err(|_| "observation recording lock was poisoned")?
+            .clone();
+        let outcomes = observations
+            .iter()
+            .filter_map(|event| match event {
+                RepositoryIndexObservation::FileResult(file) => Some(file),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|file| file.change() == IndexTraceFileChange::Deleted)
+                .count(),
+            2
+        );
+        assert!(
+            outcomes
+                .iter()
+                .filter(|file| {
+                    matches!(
+                        file.change(),
+                        IndexTraceFileChange::New | IndexTraceFileChange::Changed
+                    )
+                })
+                .all(|file| file.hash() == IndexTraceHashOutcome::Hashed)
         );
         assert!(result.published());
         Ok::<(), Box<dyn Error>>(())

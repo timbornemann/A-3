@@ -20,6 +20,8 @@ mod deep_map_manager;
 mod deep_map_runtime;
 mod diagram_export;
 mod function_flow_commands;
+mod index_trace_mapping;
+mod index_trace_runtime;
 mod job_ids;
 mod model_settings_manager;
 mod platform;
@@ -53,49 +55,49 @@ use a3_application::{
     GetProjectMapScene, GetProjectMapSourcePreview, GetProjectStorageUsage,
     GetProjectStorageUsageError, GetPublishedIndexOverview, GetPublishedIndexOverviewError,
     GetRepositoryTreePage, GetTaskLensTask, GetTaskVerificationInspection, GoalContractStore,
-    HealthQuery, IndexPersistenceControl, IndexPersistenceControlError, InspectAgentTaskRecovery,
-    JobEventStream, JobScheduler, JobSchedulerConfig, JobSchedulerConfigError,
-    JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeSearchControl,
-    KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects,
-    ListRecentProjectsError, ListTaskLensTasks, ModuleCardClaimState, ModuleCardCoverageBand,
-    ModuleCardDetail, ModuleCardDetailControl, ModuleCardDetailControlError,
-    ModuleCardDetailFailure, ModuleCardDetailLoadResult, ModuleCardDetailQuery,
-    ModuleCardDetailStore, ModuleCardEvidenceControl, ModuleCardEvidenceControlError,
-    ModuleCardEvidenceDetail, ModuleCardEvidenceFailure, ModuleCardEvidenceFreshness,
-    ModuleCardEvidenceLoadResult, ModuleCardEvidencePayload, ModuleCardEvidenceQuery,
-    ModuleCardEvidenceStore, ModuleCardFreshness, ModuleCardFreshnessControl,
-    ModuleCardFreshnessControlError, ModuleCardFreshnessFailure, ModuleCardFreshnessStatus,
-    ModuleCardFreshnessStore, ModuleDependencyEdge, ModuleDependencyGraph,
-    ModuleDependencyGraphControl, ModuleDependencyGraphControlError, ModuleDependencyGraphFailure,
-    ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery, ModuleDependencyGraphStore,
-    ModuleDependencyNode, ModuleDependencyNodeLimit, ModuleDependencyRelation,
-    ModuleRuntimeControl, ModuleRuntimeControlError, ModuleRuntimeFailure, ModuleRuntimeFlowKind,
-    ModuleRuntimeFlowLoadResult, ModuleRuntimeFlowQuery, ModuleRuntimeMap,
-    ModuleRuntimeMapLoadResult, ModuleRuntimeMapQuery, ModuleRuntimeRoot, ModuleRuntimeRootKind,
-    ModuleRuntimeRootLimit, ModuleRuntimeRootSet, ModuleRuntimeStore, ModuleTreeChildState,
-    ModuleTreeControl, ModuleTreeControlError, ModuleTreeEntry, ModuleTreeEntryKind,
-    ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePage, ModuleTreePageSize, ModuleTreeQuery,
-    ModuleTreeStore, OpenProject, OpenProjectError, OpenProjectOutcome, PolicyStore,
-    ProjectCatalogAdmin, ProjectCatalogAdminFailure, ProjectCatalogPage, ProjectCatalogQuery,
-    ProjectDirectoryPicker, ProjectIndexStatus, ProjectInspectionFailure, ProjectMapMappingStatus,
-    ProjectMapScene, ProjectMapSceneControl, ProjectMapSceneControlError, ProjectMapSceneFailure,
-    ProjectMapSceneLoadResult, ProjectMapSceneModule, ProjectMapSceneModuleKind,
-    ProjectMapSceneQuery, ProjectMapSceneRelation, ProjectMapSceneStore, ProjectMapSearchQuery,
-    ProjectMapSearchResult, ProjectMapSourcePreview, ProjectMapSourcePreviewControl,
-    ProjectMapSourcePreviewControlError, ProjectMapSourcePreviewFailure,
-    ProjectMapSourcePreviewQuery, ProjectMapSourcePreviewResult, ProjectReconciliationConfirmer,
-    ProjectStorageControl, ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore,
-    PublishedIndexOverview, RecentProject, RemoveProjectFromList, RemoveProjectFromListError,
-    RepositoryTreeChildName, RepositoryTreeControl, RepositoryTreeControlError,
-    RepositoryTreeEntryKind, RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize,
-    RepositoryTreeQuery, RepositoryTreeStore, ReviseAgentGoal, ReviseAgentGoalFailure,
-    RunJournalStore, RunJournalStoreFailure, SearchProjectMap, SearchProjectMapFailure,
-    TaskLedgerStore, TaskLedgerStoreFailure, TaskLedgerStoreVersion, TaskLensClaimStore,
-    TaskLensCompilation, TaskLensControl, TaskLensControlError, TaskLensIndexStore,
-    TaskLensTaskLoadResult, TaskLensWorkspaceControl, TaskLensWorkspaceFailure,
-    TaskLensWorkspaceStore, TaskVerificationInspection, TaskVerificationInspectionLoadResult,
-    TraceModuleRuntimeFlow, UiPreferencesError, UiPreferencesStore, UiPreferencesStoreVersion,
-    VerificationEvidenceStore,
+    HealthQuery, IndexPersistenceControl, IndexPersistenceControlError, IndexTraceStore,
+    InspectAgentTaskRecovery, JobEventStream, JobScheduler, JobSchedulerConfig,
+    JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore,
+    KnowledgeSearchControl, KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure,
+    ListRecentProjects, ListRecentProjectsError, ListTaskLensTasks, ModuleCardClaimState,
+    ModuleCardCoverageBand, ModuleCardDetail, ModuleCardDetailControl,
+    ModuleCardDetailControlError, ModuleCardDetailFailure, ModuleCardDetailLoadResult,
+    ModuleCardDetailQuery, ModuleCardDetailStore, ModuleCardEvidenceControl,
+    ModuleCardEvidenceControlError, ModuleCardEvidenceDetail, ModuleCardEvidenceFailure,
+    ModuleCardEvidenceFreshness, ModuleCardEvidenceLoadResult, ModuleCardEvidencePayload,
+    ModuleCardEvidenceQuery, ModuleCardEvidenceStore, ModuleCardFreshness,
+    ModuleCardFreshnessControl, ModuleCardFreshnessControlError, ModuleCardFreshnessFailure,
+    ModuleCardFreshnessStatus, ModuleCardFreshnessStore, ModuleDependencyEdge,
+    ModuleDependencyGraph, ModuleDependencyGraphControl, ModuleDependencyGraphControlError,
+    ModuleDependencyGraphFailure, ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery,
+    ModuleDependencyGraphStore, ModuleDependencyNode, ModuleDependencyNodeLimit,
+    ModuleDependencyRelation, ModuleRuntimeControl, ModuleRuntimeControlError,
+    ModuleRuntimeFailure, ModuleRuntimeFlowKind, ModuleRuntimeFlowLoadResult,
+    ModuleRuntimeFlowQuery, ModuleRuntimeMap, ModuleRuntimeMapLoadResult, ModuleRuntimeMapQuery,
+    ModuleRuntimeRoot, ModuleRuntimeRootKind, ModuleRuntimeRootLimit, ModuleRuntimeRootSet,
+    ModuleRuntimeStore, ModuleTreeChildState, ModuleTreeControl, ModuleTreeControlError,
+    ModuleTreeEntry, ModuleTreeEntryKind, ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePage,
+    ModuleTreePageSize, ModuleTreeQuery, ModuleTreeStore, OpenProject, OpenProjectError,
+    OpenProjectOutcome, PolicyStore, ProjectCatalogAdmin, ProjectCatalogAdminFailure,
+    ProjectCatalogPage, ProjectCatalogQuery, ProjectDirectoryPicker, ProjectIndexStatus,
+    ProjectInspectionFailure, ProjectMapMappingStatus, ProjectMapScene, ProjectMapSceneControl,
+    ProjectMapSceneControlError, ProjectMapSceneFailure, ProjectMapSceneLoadResult,
+    ProjectMapSceneModule, ProjectMapSceneModuleKind, ProjectMapSceneQuery,
+    ProjectMapSceneRelation, ProjectMapSceneStore, ProjectMapSearchQuery, ProjectMapSearchResult,
+    ProjectMapSourcePreview, ProjectMapSourcePreviewControl, ProjectMapSourcePreviewControlError,
+    ProjectMapSourcePreviewFailure, ProjectMapSourcePreviewQuery, ProjectMapSourcePreviewResult,
+    ProjectReconciliationConfirmer, ProjectStorageControl, ProjectStorageControlError,
+    ProjectStorageFailure, ProjectStorageStore, PublishedIndexOverview, RecentProject,
+    RemoveProjectFromList, RemoveProjectFromListError, RepositoryTreeChildName,
+    RepositoryTreeControl, RepositoryTreeControlError, RepositoryTreeEntryKind,
+    RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize, RepositoryTreeQuery,
+    RepositoryTreeStore, ReviseAgentGoal, ReviseAgentGoalFailure, RunJournalStore,
+    RunJournalStoreFailure, SearchProjectMap, SearchProjectMapFailure, TaskLedgerStore,
+    TaskLedgerStoreFailure, TaskLedgerStoreVersion, TaskLensClaimStore, TaskLensCompilation,
+    TaskLensControl, TaskLensControlError, TaskLensIndexStore, TaskLensTaskLoadResult,
+    TaskLensWorkspaceControl, TaskLensWorkspaceFailure, TaskLensWorkspaceStore,
+    TaskVerificationInspection, TaskVerificationInspectionLoadResult, TraceModuleRuntimeFlow,
+    UiPreferencesError, UiPreferencesStore, UiPreferencesStoreVersion, VerificationEvidenceStore,
 };
 use a3_application::{
     ExploreProjectMapAtlas, ProjectMapAtlasControl, ProjectMapAtlasControlError,
@@ -194,6 +196,11 @@ use a3_protocol::{
     TaskLensPriorityV1, TaskLensRetrievalChannelV1, TaskLensRetrievalSourceV1,
     TaskLensStepStatusV1, TaskLensStepV1, TaskLensTaskResponseV1, TaskLensTaskSummaryV1,
     TaskLensTasksResponseV1, TaskLensV1, UiPreferencesResponseV1,
+};
+use a3_protocol::{
+    ControlIndexRunRequestV1, IndexRunControlActionV1, IndexRunControlResponseV1,
+    IndexRunControlResultV1, IndexRunFilesResponseV1, IndexRunInspectionResponseV1,
+    QueryIndexRunFilesRequestV1,
 };
 use a3_protocol::{
     DeepMapAtlasImpactItemV1, DeepMapAtlasImpactKindV1, DeepMapAtlasImpactResponseV1,
@@ -2399,6 +2406,80 @@ impl CompositionRoot {
             RepositoryIndexManager::activity,
         );
         IndexActivityResponseV1::active(map_index_activity_to_v1(activity))
+    }
+
+    /// Returns the retained detailed Fast-Index trace projection for the active project.
+    #[must_use]
+    pub fn query_index_run_inspection(&self) -> IndexRunInspectionResponseV1 {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return IndexRunInspectionResponseV1::no_project();
+        };
+        self.index_manager
+            .as_ref()
+            .map_or_else(IndexRunInspectionResponseV1::no_runs, |manager| {
+                index_trace_mapping::map_inspection(manager.traces(active.project.worktree().id()))
+            })
+    }
+
+    /// Returns one fixed-size file page for a retained trace and opaque cursor.
+    pub fn query_index_run_files(
+        &self,
+        request: &QueryIndexRunFilesRequestV1,
+    ) -> Result<IndexRunFilesResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(IndexRunFilesResponseV1::no_project());
+        };
+        let query = index_trace_mapping::map_file_query(request, active.project.worktree().id())
+            .map_err(|()| CommandErrorV1::index_trace(ErrorCodeV1::InvalidIndexTraceRequest))?;
+        let Some(manager) = &self.index_manager else {
+            return Err(CommandErrorV1::index_trace(
+                ErrorCodeV1::IndexTraceUnavailable,
+            ));
+        };
+        match manager.query_trace_files(active.project.worktree().id(), &query) {
+            Ok(page) => Ok(index_trace_mapping::map_file_page(
+                active.project.worktree().id(),
+                &query,
+                page,
+            )),
+            Err(a3_application::IndexTraceStoreFailure::NotFound) => {
+                Ok(IndexRunFilesResponseV1::not_found())
+            }
+            Err(a3_application::IndexTraceStoreFailure::StaleRevision) => {
+                Ok(IndexRunFilesResponseV1::stale())
+            }
+            Err(_) => Err(CommandErrorV1::index_trace(
+                ErrorCodeV1::IndexTraceUnavailable,
+            )),
+        }
+    }
+
+    /// Applies one revision-bound cancel or full retry action to a retained trace.
+    pub fn control_index_run(
+        &self,
+        request: &ControlIndexRunRequestV1,
+    ) -> Result<IndexRunControlResponseV1, CommandErrorV1> {
+        if lock_recovering_poison(&self.active_project).is_none() {
+            return Ok(IndexRunControlResponseV1::new(
+                IndexRunControlResultV1::NoProject,
+            ));
+        }
+        let (trace_id, revision, action) = index_trace_mapping::map_control_request(request)
+            .map_err(|()| CommandErrorV1::index_trace(ErrorCodeV1::InvalidIndexTraceRequest))?;
+        let Some(manager) = &self.index_manager else {
+            return Ok(IndexRunControlResponseV1::new(
+                IndexRunControlResultV1::Unavailable,
+            ));
+        };
+        let result = match action {
+            IndexRunControlActionV1::Cancel => manager.cancel_trace(trace_id, revision),
+            IndexRunControlActionV1::Retry => manager.retry_trace(trace_id, revision),
+        };
+        Ok(match result {
+            Ok(()) => IndexRunControlResponseV1::new(IndexRunControlResultV1::Accepted),
+            Err(error) => index_trace_mapping::map_control_error(error),
+        })
     }
 
     /// Returns a bounded read-only projection of the last atomically published index.
@@ -5324,6 +5405,7 @@ struct OptionalCompositionPorts {
     command_allowlist_store: Option<Arc<dyn a3_application::CommandAllowlistStore>>,
     project_ignore_settings_source: Option<Arc<dyn a3_application::ProjectIgnoreSettingsSource>>,
     index_store: Option<Arc<dyn KnowledgeIndexStore>>,
+    index_trace_store: Option<Arc<dyn IndexTraceStore>>,
     module_card_freshness_store: Option<Arc<dyn ModuleCardFreshnessStore>>,
     module_card_detail_store: Option<Arc<dyn ModuleCardDetailStore>>,
     module_card_evidence_store: Option<Arc<dyn ModuleCardEvidenceStore>>,
@@ -5362,6 +5444,7 @@ struct IndexingCompositionPorts {
     command_allowlist_store: Arc<dyn a3_application::CommandAllowlistStore>,
     project_ignore_settings_source: Arc<dyn a3_application::ProjectIgnoreSettingsSource>,
     index_store: Arc<dyn KnowledgeIndexStore>,
+    index_trace_store: Arc<dyn IndexTraceStore>,
     module_card_freshness_store: Arc<dyn ModuleCardFreshnessStore>,
     module_card_detail_store: Arc<dyn ModuleCardDetailStore>,
     module_card_evidence_store: Arc<dyn ModuleCardEvidenceStore>,
@@ -5448,6 +5531,7 @@ impl CompositionBase {
                 command_allowlist_store: Some(ports.command_allowlist_store),
                 project_ignore_settings_source: Some(ports.project_ignore_settings_source),
                 index_store: Some(ports.index_store),
+                index_trace_store: Some(ports.index_trace_store),
                 module_card_freshness_store: Some(ports.module_card_freshness_store),
                 module_card_detail_store: Some(ports.module_card_detail_store),
                 module_card_evidence_store: Some(ports.module_card_evidence_store),
@@ -5744,7 +5828,8 @@ impl CompositionBase {
         let index_manager = ports
             .index_store
             .clone()
-            .map(|store| {
+            .zip(ports.index_trace_store.clone())
+            .map(|(store, trace_store)| {
                 let submitter = self
                     .job_scheduler
                     .submitter()
@@ -5753,6 +5838,7 @@ impl CompositionBase {
                     submitter,
                     self.job_events.clone(),
                     store,
+                    trace_store,
                     Arc::clone(&job_ids),
                 )
                 .map_err(|_| CompositionRootError::IndexManager)
@@ -5964,6 +6050,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             let repository_tree_store: Arc<dyn RepositoryTreeStore> = store.clone();
             let catalog_store: Arc<dyn KnowledgeStore> = store.clone();
             let index_store: Arc<dyn KnowledgeIndexStore> = store.clone();
+            let index_trace_store: Arc<dyn IndexTraceStore> = store.clone();
             let deep_map_publication_state: Arc<dyn a3_application::DeepMapPublicationStateStore> =
                 store.clone();
             let deep_map_journal: Arc<dyn a3_application::DeepMapRunJournalStore> = store.clone();
@@ -5991,6 +6078,7 @@ pub fn run() -> Result<(), DesktopRunError> {
                     command_allowlist_store,
                     project_ignore_settings_source,
                     index_store,
+                    index_trace_store,
                     module_card_freshness_store,
                     module_card_detail_store,
                     module_card_evidence_store,
@@ -6052,6 +6140,9 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_project_status,
             commands::query_project_settings,
             commands::query_index_activity,
+            commands::query_index_run_inspection,
+            commands::query_index_run_files,
+            commands::control_index_run,
             commands::query_index_overview,
             commands::query_module_card_freshness,
             commands::query_module_card_detail,

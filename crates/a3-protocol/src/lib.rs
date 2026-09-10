@@ -19,6 +19,7 @@ pub use function_flow::*;
 mod health;
 mod index_activity;
 mod index_overview;
+mod index_run_inspection;
 mod module_card_detail;
 mod module_card_evidence;
 mod module_card_freshness;
@@ -96,6 +97,7 @@ pub use index_overview::{
     IndexLanguageV1, IndexOverviewCountsV1, IndexOverviewResponseV1, IndexOverviewResultV1,
     IndexOverviewV1, QueryIndexOverviewRequestV1,
 };
+pub use index_run_inspection::*;
 pub use module_card_detail::{
     ModuleCardClaimKindV1, ModuleCardClaimStateV1, ModuleCardClaimV1, ModuleCardCoverageBandV1,
     ModuleCardCoverageV1, ModuleCardDetailFieldV1, ModuleCardDetailResponseV1,

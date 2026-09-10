@@ -353,8 +353,20 @@ impl RepositoryDiscoveryControl for SnapshotDiscoveryControl<'_> {
 
     fn report_progress(
         &self,
-        _progress: a3_domain::Progress,
+        progress: a3_domain::Progress,
     ) -> Result<(), RepositoryDiscoveryControlError> {
+        self.inner
+            .observe(a3_application::RepositoryIndexObservation::PhaseProgress {
+                phase: a3_application::RepositoryIndexPhase::Discover,
+                progress,
+            });
         Ok(())
+    }
+
+    fn report_discovered_path(&self, path: &a3_domain::RepositoryPath) {
+        self.inner
+            .observe(a3_application::RepositoryIndexObservation::FileDiscovered(
+                path.clone(),
+            ));
     }
 }

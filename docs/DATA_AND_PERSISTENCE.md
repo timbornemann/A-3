@@ -1,5 +1,23 @@
 # Daten und Persistenz
 
+## Ergänzung: Knowledge V39
+
+Knowledge-Schema V39 implementiert den in [ADR-0108](adrs/0108-fast-index-laufinspektor.md)
+entschiedenen lokalen Diagnosevertrag. `index_trace_runs` beginnt vor Discovery und bindet eine
+`IndexTraceId`, monotone Revision, sicheren Auslöser, Laufzustand, Zeitwerte, aktuelle Phase und
+vollständige Ergebniszähler an genau einen Worktree. `index_trace_phases` hält exakt die sechs
+geordneten Phasen. `index_trace_events` speichert höchstens die bounded Core-Ereignisse und
+`index_trace_files` die vollständige Menge der vom sicheren Discovery-Contract berücksichtigten
+Dateien einschließlich erkannter Löschungen und höchstens acht geschlossener Diagnosecodes.
+
+Die Tabellen enthalten weder Quelltext noch absolute Pfade, Adaptermeldungen, Providerdaten oder
+Secrets. Sie referenzieren bewusst keine regenerierbaren Indexruns oder Snapshots. Ein
+Fast-Index-Rebuild lässt sie daher bestehen. Batch-Upserts aktualisieren Journal und Dateizeilen;
+ein fehlgeschlagener Journalwrite setzt im Lauf `details_incomplete`, beeinflusst aber die atomare
+Indexpublikation nicht. Retention hält maximal einen aktiven und seinen unmittelbar vorherigen
+terminalen Trace; nach Abschluss nur den neuesten terminalen. Reopen schließt aktive Traces als
+`interrupted` und verwaiste `building`-Indexruns als `failed`, bevor neue Arbeit eingeplant wird.
+
 ## Ergänzung: Knowledge V38
 
 Die bestehende immutable Tabelle `agent_replan_research_checkpoints` ergänzt eine

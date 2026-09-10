@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import GlobalStatusBar from './lib/GlobalStatusBar.svelte';
+  import IndexRunInspector from './lib/IndexRunInspector.svelte';
   import PrimaryNavigation from './lib/PrimaryNavigation.svelte';
   import { UiScheduler } from './lib/ui-scheduler';
   import type { AgentActivityResponseV1 } from './lib/agent-activity';
@@ -316,6 +317,7 @@
   let removalView = $state<RemovalView>({ kind: 'idle' });
   let projectDialogOpen = $state(false);
   let projectDialogView = $state<ProjectDialogView>('overview');
+  let indexInspectorOpen = $state(false);
   let indexActivityObserved = false;
   let currentWorkspaceArea = $state<WorkspaceArea>('projects');
   let globalRunStatus = $state<GlobalRunStatus>({ kind: 'loading' });
@@ -1970,6 +1972,13 @@
       index={globalIndexItem()}
       model={globalModelItem()}
       run={globalRunItem()}
+      onIndexClick={() => (indexInspectorOpen = true)}
     />
   </section>
 </main>
+
+{#if indexInspectorOpen}
+  {#key projectStatusView.kind === 'active' ? projectStatusView.result.project.worktreeId : 'no-project'}
+    <IndexRunInspector onClose={() => (indexInspectorOpen = false)} />
+  {/key}
+{/if}

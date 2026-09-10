@@ -18,8 +18,9 @@ use a3_application::{
 };
 use a3_domain::{
     DiscoveredFileRole, DiscoveryResult, FileRevision, IndexLanguage, IndexPublication, IndexRunId,
-    IndexSchemaVersion, IndexedFileAnalysis, LanguageParseResult, Progress, ProjectIdentity,
-    RankingPolicyVersion, RepositoryFileState, RepositoryPath, Snapshot, SnapshotDelta,
+    IndexSchemaVersion, IndexTraceDiagnosticCode, IndexedFileAnalysis, LanguageParseResult,
+    Progress, ProjectIdentity, RankingPolicyVersion, RepositoryFileState, RepositoryPath, Snapshot,
+    SnapshotDelta,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -193,6 +194,10 @@ impl RepositoryIndexCompiler for BuiltinIncrementalIndexCompiler {
         let parse_control = CompilerParseControl { inner: control };
         for path in &parse_paths {
             ensure_active(control, started)?;
+            control.observe(a3_application::RepositoryIndexObservation::CurrentFile {
+                phase: RepositoryIndexPhase::Parse,
+                path: path.clone(),
+            });
             let revision = files_by_path
                 .get(path)
                 .ok_or(RepositoryIndexCompilerFailure::InvalidResult)?;
@@ -219,19 +224,34 @@ impl RepositoryIndexCompiler for BuiltinIncrementalIndexCompiler {
         }
         let parses = next_parses.values().cloned().collect::<Vec<_>>();
         report_phase(control, RepositoryIndexPhase::Link)?;
-        let graph_control = CompilerGraphControl { inner: control };
+        let graph_control = CompilerGraphControl {
+            inner: control,
+            phase: RepositoryIndexPhase::Link,
+        };
         let graph = DeterministicGraphLinker
             .link(
                 GraphLinkInput::new(snapshot, files, &parses),
                 GraphLinkPolicy::v1(),
                 &graph_control,
             )
-            .map_err(map_link_failure)?;
+            .map_err(|failure| {
+                let mapped = map_link_failure(failure);
+                observe_compiler_failure(control, RepositoryIndexPhase::Link, None, mapped);
+                mapped
+            })?;
         ensure_active(control, started)?;
         report_phase(control, RepositoryIndexPhase::Rank)?;
+        let graph_control = CompilerGraphControl {
+            inner: control,
+            phase: RepositoryIndexPhase::Rank,
+        };
         let ranking = DeterministicGraphRanker
             .rank(&graph, RankingPolicy::v1(), &graph_control)
-            .map_err(map_rank_failure)?;
+            .map_err(|failure| {
+                let mapped = map_rank_failure(failure);
+                observe_compiler_failure(control, RepositoryIndexPhase::Rank, None, mapped);
+                mapped
+            })?;
         ensure_active(control, started)?;
         let manifest_files = files_by_path
             .iter()
@@ -257,7 +277,11 @@ impl RepositoryIndexCompiler for BuiltinIncrementalIndexCompiler {
                 ModuleFormationPolicy::v1(),
                 &graph_control,
             )
-            .map_err(map_module_failure)?;
+            .map_err(|failure| {
+                let mapped = map_module_failure(failure);
+                observe_compiler_failure(control, RepositoryIndexPhase::Rank, None, mapped);
+                mapped
+            })?;
         let file_analyses = files_by_path
             .iter()
             .map(|(path, revision)| {
@@ -377,7 +401,12 @@ impl LanguageParseControl for CompilerParseControl<'_> {
         self.inner.is_cancelled()
     }
 
-    fn report_progress(&self, _progress: Progress) -> Result<(), LanguageParseControlError> {
+    fn report_progress(&self, progress: Progress) -> Result<(), LanguageParseControlError> {
+        self.inner
+            .observe(a3_application::RepositoryIndexObservation::PhaseProgress {
+                phase: RepositoryIndexPhase::Parse,
+                progress,
+            });
         Ok(())
     }
 }
@@ -385,6 +414,7 @@ impl LanguageParseControl for CompilerParseControl<'_> {
 #[derive(Debug)]
 struct CompilerGraphControl<'a> {
     inner: &'a dyn RepositoryIndexControl,
+    phase: RepositoryIndexPhase,
 }
 
 impl GraphComputationControl for CompilerGraphControl<'_> {
@@ -392,7 +422,12 @@ impl GraphComputationControl for CompilerGraphControl<'_> {
         self.inner.is_cancelled()
     }
 
-    fn report_progress(&self, _progress: Progress) -> Result<(), GraphComputationControlError> {
+    fn report_progress(&self, progress: Progress) -> Result<(), GraphComputationControlError> {
+        self.inner
+            .observe(a3_application::RepositoryIndexObservation::PhaseProgress {
+                phase: self.phase,
+                progress,
+            });
         Ok(())
     }
 }
@@ -462,6 +497,34 @@ fn map_module_failure(failure: ModuleFormationFailure) -> RepositoryIndexCompile
             RepositoryIndexCompilerFailure::InvalidResult
         }
     }
+}
+
+fn observe_compiler_failure(
+    control: &dyn RepositoryIndexControl,
+    phase: RepositoryIndexPhase,
+    path: Option<RepositoryPath>,
+    failure: RepositoryIndexCompilerFailure,
+) {
+    let code = match failure {
+        RepositoryIndexCompilerFailure::Cancelled => return,
+        RepositoryIndexCompilerFailure::Filesystem => IndexTraceDiagnosticCode::SourceUnavailable,
+        RepositoryIndexCompilerFailure::RevisionMismatch => {
+            IndexTraceDiagnosticCode::RevisionChanged
+        }
+        RepositoryIndexCompilerFailure::TimedOut => IndexTraceDiagnosticCode::Timeout,
+        RepositoryIndexCompilerFailure::ResourceLimitExceeded => {
+            IndexTraceDiagnosticCode::ResourceLimit
+        }
+        RepositoryIndexCompilerFailure::ProgressUnavailable => {
+            IndexTraceDiagnosticCode::ProgressUnavailable
+        }
+        RepositoryIndexCompilerFailure::InvalidResult => match phase {
+            RepositoryIndexPhase::Link => IndexTraceDiagnosticCode::Link,
+            RepositoryIndexPhase::Rank => IndexTraceDiagnosticCode::Rank,
+            _ => IndexTraceDiagnosticCode::Parse,
+        },
+    };
+    control.observe(a3_application::RepositoryIndexObservation::Diagnostic { phase, path, code });
 }
 
 /// Failure to construct one of the pinned built-in language adapters.

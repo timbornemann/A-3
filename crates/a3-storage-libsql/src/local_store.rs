@@ -8,14 +8,14 @@ use crate::{
     command_allowlist_repository, deep_map_journal_repository, deep_map_repository,
     exact_search_repository, goal_contract_repository, graph_traversal_repository,
     index_publication, index_repository, index_repository::IndexRepositoryError,
-    lexical_search_repository, module_card_detail_repository, module_card_evidence_repository,
-    module_card_freshness_repository, module_card_repository, module_dependency_graph_repository,
-    module_remap_queue_repository, module_runtime_repository, module_tree_repository,
-    policy_repository, project_map_atlas_insight_repository, project_map_scene_repository,
-    project_map_search_repository, repository_tree_repository, run_journal_repository,
-    semantic_embedding_repository, settings_repository, task_ledger_repository,
-    task_lens_claim_repository, task_lens_workspace_repository, ui_preferences_repository,
-    verification_evidence_repository,
+    index_trace_repository, lexical_search_repository, module_card_detail_repository,
+    module_card_evidence_repository, module_card_freshness_repository, module_card_repository,
+    module_dependency_graph_repository, module_remap_queue_repository, module_runtime_repository,
+    module_tree_repository, policy_repository, project_map_atlas_insight_repository,
+    project_map_scene_repository, project_map_search_repository, repository_tree_repository,
+    run_journal_repository, semantic_embedding_repository, settings_repository,
+    task_ledger_repository, task_lens_claim_repository, task_lens_workspace_repository,
+    ui_preferences_repository, verification_evidence_repository,
 };
 use a3_application::{
     AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, AgentControllerControl,
@@ -30,25 +30,27 @@ use a3_application::{
     DeepMapRunCursor, DeepMapRunJournalFuture, DeepMapRunJournalStore, DeepMapRunPage,
     DeepMapRunStart, DesktopSettingsStore, DesktopSettingsStoreFuture, DesktopSettingsStoreVersion,
     EmbeddingOperationControl, EvaluatedPolicyAction, GoalContractStore, GoalContractStoreFailure,
-    GoalContractStoreFuture, IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture,
-    KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture,
-    KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture,
-    ModuleCardDetailControl, ModuleCardDetailControlError, ModuleCardDetailFailure,
-    ModuleCardDetailFuture, ModuleCardDetailLoadResult, ModuleCardDetailQuery,
-    ModuleCardDetailStore, ModuleCardEvidenceControl, ModuleCardEvidenceFailure,
-    ModuleCardEvidenceFuture, ModuleCardEvidenceQuery, ModuleCardEvidenceStore,
-    ModuleCardFreshnessControl, ModuleCardFreshnessFailure, ModuleCardFreshnessFuture,
-    ModuleCardFreshnessStore, ModuleCardPublicationTimeout, ModuleCardVerificationControl,
-    ModuleDependencyGraphControl, ModuleDependencyGraphFailure, ModuleDependencyGraphFuture,
-    ModuleDependencyGraphQuery, ModuleDependencyGraphStore, ModuleRemapQueueFailure,
-    ModuleRemapQueueFuture, ModuleRemapQueueStore, ModuleRuntimeControl, ModuleRuntimeFailure,
-    ModuleRuntimeFlowQuery, ModuleRuntimeFlowRootValidation, ModuleRuntimeFuture,
-    ModuleRuntimeMapLoadResult, ModuleRuntimeMapQuery, ModuleRuntimeStore, ModuleTreeControl,
-    ModuleTreeFailure, ModuleTreeFuture, ModuleTreeQuery, ModuleTreeStore, PolicyStore,
-    PolicyStoreFailure, PolicyStoreFuture, ProjectCatalogAdmin, ProjectCatalogAdminFuture,
-    ProjectCatalogPage, ProjectCatalogQuery, ProjectMapAtlasControl, ProjectMapAtlasFailure,
-    ProjectMapAtlasFuture, ProjectMapAtlasLoadResult, ProjectMapAtlasModuleInsight,
-    ProjectMapAtlasScene, ProjectMapAtlasSceneQuery, ProjectMapAtlasStore, ProjectMapEntityContext,
+    GoalContractStoreFuture, IndexPersistenceControl, IndexTraceCheckpoint, IndexTraceFilePage,
+    IndexTraceFileQuery, IndexTraceSnapshot, IndexTraceStore, IndexTraceStoreFailure,
+    IndexTraceStoreFuture, KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore,
+    KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
+    KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ModuleCardDetailControl,
+    ModuleCardDetailControlError, ModuleCardDetailFailure, ModuleCardDetailFuture,
+    ModuleCardDetailLoadResult, ModuleCardDetailQuery, ModuleCardDetailStore,
+    ModuleCardEvidenceControl, ModuleCardEvidenceFailure, ModuleCardEvidenceFuture,
+    ModuleCardEvidenceQuery, ModuleCardEvidenceStore, ModuleCardFreshnessControl,
+    ModuleCardFreshnessFailure, ModuleCardFreshnessFuture, ModuleCardFreshnessStore,
+    ModuleCardPublicationTimeout, ModuleCardVerificationControl, ModuleDependencyGraphControl,
+    ModuleDependencyGraphFailure, ModuleDependencyGraphFuture, ModuleDependencyGraphQuery,
+    ModuleDependencyGraphStore, ModuleRemapQueueFailure, ModuleRemapQueueFuture,
+    ModuleRemapQueueStore, ModuleRuntimeControl, ModuleRuntimeFailure, ModuleRuntimeFlowQuery,
+    ModuleRuntimeFlowRootValidation, ModuleRuntimeFuture, ModuleRuntimeMapLoadResult,
+    ModuleRuntimeMapQuery, ModuleRuntimeStore, ModuleTreeControl, ModuleTreeFailure,
+    ModuleTreeFuture, ModuleTreeQuery, ModuleTreeStore, PolicyStore, PolicyStoreFailure,
+    PolicyStoreFuture, ProjectCatalogAdmin, ProjectCatalogAdminFuture, ProjectCatalogPage,
+    ProjectCatalogQuery, ProjectMapAtlasControl, ProjectMapAtlasFailure, ProjectMapAtlasFuture,
+    ProjectMapAtlasLoadResult, ProjectMapAtlasModuleInsight, ProjectMapAtlasScene,
+    ProjectMapAtlasSceneQuery, ProjectMapAtlasStore, ProjectMapEntityContext,
     ProjectMapEntitySelection, ProjectMapFlowScene, ProjectMapFlowSceneQuery,
     ProjectMapIndexEvidenceSelection, ProjectMapIndexEvidenceTarget, ProjectMapInventoryPage,
     ProjectMapInventoryPageQuery, ProjectMapSceneControl, ProjectMapSceneFailure,
@@ -57,8 +59,8 @@ use a3_application::{
     ProjectStorageFuture, ProjectStorageStore, ProjectStorageUsage, RecentProject,
     RecentProjectLimit, RecordedAgentRead, RemapQueueControl, RemapQueueLimit,
     RepositoryTreeControl, RepositoryTreeFailure, RepositoryTreeFuture, RepositoryTreeQuery,
-    RepositoryTreeStore, ResearchHandoff, RunEventPage, RunEventPageLimit, RunJournalStore,
-    RunJournalStoreFailure, RunJournalStoreFuture, SemanticCacheRebuildControl,
+    RepositoryTreeStore, ResearchHandoff, RetainedIndexTraces, RunEventPage, RunEventPageLimit,
+    RunJournalStore, RunJournalStoreFailure, RunJournalStoreFuture, SemanticCacheRebuildControl,
     SemanticEmbeddingStore, SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture,
     StoredDesktopSettings, StoredProjectCommandAllowlist, StoredProjectTarget, TaskLedgerStore,
     TaskLedgerStoreFailure, TaskLedgerStoreFuture, TaskLedgerStoreVersion, TaskLensClaimLimit,
@@ -83,12 +85,12 @@ use a3_domain::{
     EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector, ExactSearchCursor, ExactSearchPage,
     ExactSearchPageSize, ExactSearchQuery, ExactSearchTarget, ExplorePlan, GoalContract,
     GoalContractRevision, GraphTraversalResult, IndexPublication, IndexRunId, IndexRunRecord,
-    IndexRunSequence, IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor,
-    LexicalSearchPage, LexicalSearchPageSize, LexicalSearchQuery, ModuleCardClaimId, ModuleId,
-    MutationActionFingerprint, PolicyDecision, PolicyDecisionId, ProjectCommandAllowlist,
-    ProjectId, ProjectIdentity, PublishedIndex, RepositoryId, RunEvent, RunEventSequence,
-    SemanticEmbedding, Snapshot, SnapshotId, TaskEvidenceId, TaskId, TaskLedger, ToolRunId,
-    TraversalQuery, VectorSearchCapability, VectorSearchLimit, VectorSearchResult,
+    IndexRunSequence, IndexRunStart, IndexRunTerminalOutcome, IndexTraceTimestamp,
+    LexicalSearchCursor, LexicalSearchPage, LexicalSearchPageSize, LexicalSearchQuery,
+    ModuleCardClaimId, ModuleId, MutationActionFingerprint, PolicyDecision, PolicyDecisionId,
+    ProjectCommandAllowlist, ProjectId, ProjectIdentity, PublishedIndex, RepositoryId, RunEvent,
+    RunEventSequence, SemanticEmbedding, Snapshot, SnapshotId, TaskEvidenceId, TaskId, TaskLedger,
+    ToolRunId, TraversalQuery, VectorSearchCapability, VectorSearchLimit, VectorSearchResult,
     VerificationEvidence, VerifiedModuleCardBatch, WorktreeId,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -2223,6 +2225,104 @@ impl AgentActionStore for LibsqlKnowledgeStore {
             )
             .await
             .map_err(|error| error.classify_agent_action())
+        })
+    }
+}
+
+impl IndexTraceStore for LibsqlKnowledgeStore {
+    fn reconcile_interrupted<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        at: IndexTraceTimestamp,
+    ) -> IndexTraceStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(|_| IndexTraceStoreFailure::Unavailable)?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(|_| IndexTraceStoreFailure::Unavailable)?;
+            index_trace_repository::reconcile_interrupted(&connection, project.worktree().id(), at)
+                .await
+        })
+    }
+
+    fn create_trace<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        snapshot: &'a IndexTraceSnapshot,
+    ) -> IndexTraceStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(|_| IndexTraceStoreFailure::Unavailable)?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(|_| IndexTraceStoreFailure::Unavailable)?;
+            index_trace_repository::create_trace(&connection, project.worktree().id(), snapshot)
+                .await
+        })
+    }
+
+    fn checkpoint_trace<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        checkpoint: &'a IndexTraceCheckpoint,
+    ) -> IndexTraceStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(|_| IndexTraceStoreFailure::Unavailable)?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(|_| IndexTraceStoreFailure::Unavailable)?;
+            index_trace_repository::checkpoint_trace(
+                &connection,
+                project.worktree().id(),
+                checkpoint,
+            )
+            .await
+        })
+    }
+
+    fn load_retained<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+    ) -> IndexTraceStoreFuture<'a, RetainedIndexTraces> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge_for_index_read(project)
+                .await
+                .map_err(|_| IndexTraceStoreFailure::Unavailable)?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(|_| IndexTraceStoreFailure::Unavailable)?;
+            index_trace_repository::load_retained(&connection, project.worktree().id()).await
+        })
+    }
+
+    fn query_files<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        query: &'a IndexTraceFileQuery,
+    ) -> IndexTraceStoreFuture<'a, IndexTraceFilePage> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge_for_index_read(project)
+                .await
+                .map_err(|_| IndexTraceStoreFailure::Unavailable)?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(|_| IndexTraceStoreFailure::Unavailable)?;
+            index_trace_repository::query_files(&connection, project.worktree().id(), query).await
         })
     }
 }

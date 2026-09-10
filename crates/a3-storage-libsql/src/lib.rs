@@ -17,6 +17,7 @@ mod index_codec;
 mod index_invalidation_repository;
 mod index_publication;
 mod index_repository;
+mod index_trace_repository;
 mod knowledge;
 mod layout;
 mod lexical_search_projection;

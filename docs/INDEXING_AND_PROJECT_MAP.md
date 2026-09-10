@@ -24,6 +24,21 @@ Die Karte muss ohne Vektorindex und ohne verfügbares LLM weiterhin nutzbar sein
 
 ## Fast Index
 
+### Lokale Laufdiagnose
+
+Der Fast Index erzeugt nach [ADR-0108](adrs/0108-fast-index-laufinspektor.md) vor Discovery einen
+eigenen Diagnose-Trace. Die unveränderliche Phasenordnung lautet Discover, Hash, Parse, Link, Rank
+und Publish. Discovery ergänzt nur Pfade, die den bestehenden sicheren Discovery-Contract passiert
+haben; danach bleibt die Pfadmenge für diesen Lauf stabil, ausgenommen die explizit erkannten
+Löschungen. Hashing und Parsing ersetzen die anfängliche Dateizeile durch das exakte Ergebnis
+`new/changed/unchanged/deleted`, `hashed/reused` und
+`structural/reused/generic/failed`. Linking, Ranking und Publish melden ihren eigenen bounded
+Unterfortschritt und sichere Fehlercodes.
+
+Die Diagnose ist nicht die Index-Wahrheitsquelle. Nur der atomisch publizierte Snapshot ist für
+Retrieval und Project Map sichtbar. Ein Retry löscht ihn nicht und ein Diagnosejournalfehler macht
+ihn nicht ungültig. Deep Map bleibt von diesem Vertrag unberührt.
+
 Phasen:
 
 ~~~text

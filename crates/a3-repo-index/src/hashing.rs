@@ -101,6 +101,10 @@ fn hash_discovery_selection(
             revisions.push(revision.clone());
             continue;
         }
+        control.observe(a3_application::RepositoryIndexObservation::CurrentFile {
+            phase: a3_application::RepositoryIndexPhase::Hash,
+            path: discovered.path().clone(),
+        });
         let observation = observe_repository_path(root, discovered.path())
             .map_err(|_| RepositorySnapshotFailure::Filesystem)?;
         let (path, observed_metadata) = match observation {
@@ -258,6 +262,10 @@ fn report(
     control: &dyn RepositorySnapshotControl,
     progress: Progress,
 ) -> Result<(), RepositorySnapshotFailure> {
+    control.observe(a3_application::RepositoryIndexObservation::PhaseProgress {
+        phase: a3_application::RepositoryIndexPhase::Hash,
+        progress,
+    });
     control
         .report_progress(progress)
         .map_err(|_| RepositorySnapshotFailure::ProgressUnavailable)

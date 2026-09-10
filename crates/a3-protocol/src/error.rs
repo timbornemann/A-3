@@ -97,6 +97,10 @@ pub enum ErrorCodeV1 {
     IndexRebuildAlreadyPending,
     /// The owned index coordinator could not accept a rebuild request.
     IndexRebuildUnavailable,
+    /// An index-trace identity, revision, cursor, search, or action was malformed.
+    InvalidIndexTraceRequest,
+    /// The local index-trace coordinator could not inspect or control the requested run.
+    IndexTraceUnavailable,
     /// Another Core-owned project lifecycle operation is still in progress.
     ProjectOperationBusy,
     /// Project-catalog search, cursor, direction, or worktree identity was invalid.
@@ -308,6 +312,12 @@ impl CommandErrorV1 {
             ErrorCodeV1::IndexRebuildUnavailable => {
                 "The local index coordinator could not accept the rebuild request."
             }
+            ErrorCodeV1::InvalidIndexTraceRequest => {
+                "The index run inspection request is outside the supported bounds."
+            }
+            ErrorCodeV1::IndexTraceUnavailable => {
+                "The local index run details could not be inspected or controlled safely."
+            }
             ErrorCodeV1::ProjectOperationBusy => "Another project operation is still in progress.",
             ErrorCodeV1::InvalidProjectCatalogRequest => {
                 "The project catalog request is outside the supported bounds."
@@ -371,6 +381,12 @@ impl CommandErrorV1 {
     /// Creates a safe active-project rebuild failure.
     #[must_use]
     pub fn project_rebuild(code: ErrorCodeV1) -> Self {
+        Self::project_open(code)
+    }
+
+    /// Creates a safe Fast-Index run inspection or control failure.
+    #[must_use]
+    pub fn index_trace(code: ErrorCodeV1) -> Self {
         Self::project_open(code)
     }
 

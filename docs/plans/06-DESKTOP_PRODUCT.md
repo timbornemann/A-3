@@ -2,7 +2,38 @@
 
 Ziel: Die technischen Fähigkeiten werden zu einer schnellen, verständlichen und zugänglichen A^3-Desktopanwendung.
 
-Relevante ADRs: 0001, 0002, 0012, 0014, 0029
+Relevante ADRs: 0001, 0002, 0012, 0014, 0029, 0108
+
+## U13 Fast-Index-Laufinspektor
+
+Abhängigkeiten: U1, U3 und Knowledge-Schema V38
+
+- [x] Statusleisten-Index als tastaturbedienbarer Modal-Auslöser
+- [x] aktueller beziehungsweise letzter Lauf und während aktiver Arbeit der vorherige Lauf
+- [x] sechs Phasen, Unterfortschritt, aktuelle Datei, vollständige Zähler und Dateipagination
+- [x] sichere Fehler- und Ereignisprojektion ohne Rohpfade, Quelltext oder Adapterfehler
+- [x] 60-Sekunden-Stillstandswarnung mit kooperativem Cancel und revisionssicherem Full-Retry
+- [x] Knowledge V39, bounded Batchjournal, Retention und Startup-Reconciliation
+
+Akzeptanz:
+
+- Ein Nutzer kann den aktuellen oder letzten Fast-Index-Lauf vollständig lokal nachvollziehen und
+  erkennt Phase, letzte Aktivität, verarbeitete Dateien und sichere Recovery ohne die WebView-
+  Trust-Boundary zu erweitern.
+- Ein Prozessabbruch blockiert keinen Folgelauf; der alte Trace erscheint als unterbrochen und ein
+  verwaister `building`-Indexrun wird geschlossen.
+- Abbruch und Retry wirken nur auf die angezeigte Revision. Retry bewahrt den veröffentlichten
+  Index bis zu einem neuen erfolgreichen Publish; Stillstand löst keine automatische Beendigung aus.
+
+Verifiziert am 2026-09-10: Domain-, Application-, Repository-, Manager-, Storage-, IPC- und
+Component-Verträge decken monotone Zustände, die sechs Phasen, Full-/Incremental-Verarbeitung,
+Wiederverwendung, Löschungen, sichere Fehler, unvollständige Journaldetails, Retention,
+Reconciliation, Cursorbindung, Cancel, Retry und den weiterhin veröffentlichten Snapshot ab. Der
+vollständige Rust-Workspace mit allen Features, Clippy mit verweigerten Warnungen, Rustfmt, das
+Frontend-Gate mit 413 bestandenen und 14 übersprungenen Tests, Produktions- und nativer
+Releasebuild sowie die Linkprüfung sind grün. Das bestehende 100.000-LOC-Fixture blieb im
+Vorher-/Nachher-Profil innerhalb aller Budgets; der gemessene Cold-Index-P95 stieg von 1,160 s auf
+1,184 s, ohne dass daraus eine allgemeine Geschwindigkeitsaussage abgeleitet wird.
 
 ## U1 Information Architecture
 
