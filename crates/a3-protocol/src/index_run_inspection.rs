@@ -186,7 +186,12 @@ impl IndexRunInspectionResponseV1 {
 
 /// Tagged retained-summary result.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "status")]
+#[serde(
+    deny_unknown_fields,
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "status"
+)]
 pub enum IndexRunInspectionResultV1 {
     /// No local project is active.
     NoProject,
@@ -519,7 +524,12 @@ impl IndexRunFilesResponseV1 {
 
 /// Tagged result of a file-page request.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "status")]
+#[serde(
+    deny_unknown_fields,
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "status"
+)]
 pub enum IndexRunFilesResultV1 {
     /// No local project is active.
     NoProject,
@@ -648,7 +658,9 @@ pub enum IndexRunControlResultV1 {
 
 #[cfg(test)]
 mod tests {
-    use super::{QueryIndexRunFilesRequestV1, QueryIndexRunInspectionRequestV1};
+    use super::{
+        IndexRunFilesResponseV1, QueryIndexRunFilesRequestV1, QueryIndexRunInspectionRequestV1,
+    };
 
     #[test]
     fn strict_requests_reject_unknown_fields() {
@@ -659,5 +671,35 @@ mod tests {
             .is_err()
         );
         assert!(serde_json::from_value::<QueryIndexRunFilesRequestV1>(serde_json::json!({"protocolVersion":1,"runRef":"00","revision":"1","filter":"all","cursor":null,"search":null,"extra":true})).is_err());
+    }
+
+    #[test]
+    fn file_page_struct_variant_uses_the_exact_camel_case_wire_fields()
+    -> Result<(), serde_json::Error> {
+        let response = IndexRunFilesResponseV1::page(
+            "ab".repeat(32),
+            "7".to_owned(),
+            Vec::new(),
+            "0".to_owned(),
+            Some("previous".to_owned()),
+            Some("next".to_owned()),
+        );
+
+        assert_eq!(
+            serde_json::to_value(response)?,
+            serde_json::json!({
+                "protocolVersion": 1,
+                "result": {
+                    "status": "page",
+                    "runRef": "ab".repeat(32),
+                    "revision": "7",
+                    "files": [],
+                    "total": "0",
+                    "previousCursor": "previous",
+                    "nextCursor": "next"
+                }
+            })
+        );
+        Ok(())
     }
 }

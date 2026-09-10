@@ -137,6 +137,32 @@ export interface IndexRunControlResponseV1 {
   result: { status: IndexRunControlResultV1 };
 }
 
+export interface IndexRunInspectionLoadFailure {
+  code: 'IDX-DETAIL-IPC' | `IDX-DETAIL-RESPONSE-${IndexRunInspectionContractIssue}`;
+  message: string;
+  recovery: string;
+}
+
+type IndexRunInspectionContractIssue =
+  | 'COUNTS'
+  | 'EVENTS'
+  | 'FILES'
+  | 'PATH'
+  | 'PHASES'
+  | 'REFERENCE'
+  | 'RETENTION'
+  | 'SHAPE'
+  | 'STATE'
+  | 'TEXT'
+  | 'TIMING'
+  | 'VERSION';
+
+class IndexRunInspectionContractError extends Error {
+  constructor(readonly issue: IndexRunInspectionContractIssue) {
+    super(`Index run inspection response failed the ${issue} contract.`);
+  }
+}
+
 const invokeThroughTauri: InvokeCommand = (command, arguments_) =>
   tauriInvoke<unknown>(command, arguments_);
 const PHASES: IndexRunPhaseV1[] = ['discover', 'hash', 'parse', 'link', 'rank', 'publish'];
@@ -192,6 +218,24 @@ export async function queryIndexRunInspection(
       request: { protocolVersion: CURRENT_PROTOCOL_VERSION },
     }),
   );
+}
+
+export function describeIndexRunInspectionLoadFailure(
+  cause: unknown,
+): IndexRunInspectionLoadFailure {
+  if (cause instanceof IndexRunInspectionContractError) {
+    return {
+      code: `IDX-DETAIL-RESPONSE-${cause.issue}`,
+      message: 'Die lokale Indexantwort wurde wegen eines ungültigen Formats abgelehnt.',
+      recovery:
+        'Erneut laden. Bleibt der Fehler bestehen, den angezeigten Code melden; die Indexdaten werden nicht verändert.',
+    };
+  }
+  return {
+    code: 'IDX-DETAIL-IPC',
+    message: 'Die lokale Indexschnittstelle ist nicht erreichbar.',
+    recovery: 'A^3 neu starten und den Lauf erneut öffnen.',
+  };
 }
 
 export async function queryIndexRunFiles(
@@ -566,7 +610,7 @@ function nullableBoundedString(value: unknown, max: number, label: string): stri
   return value === null ? null : boundedText(value, max, label);
 }
 function boundedText(value: unknown, max: number, label: string): string {
-  if (typeof value !== 'string' || value.length > max || hasControl(value)) fail(label);
+  if (typeof value !== 'string' || Array.from(value).length > max || hasControl(value)) fail(label);
   return value;
 }
 function boundedNonEmptyText(value: unknown, max: number, label: string): string {
@@ -605,5 +649,23 @@ function exactKeys(value: Record<string, unknown>, expected: string[], label: st
     fail(label);
 }
 function fail(label: string): never {
-  throw new Error(`${label} does not match the V1 schema.`);
+  throw new IndexRunInspectionContractError(contractIssue(label));
+}
+
+function contractIssue(label: string): IndexRunInspectionContractIssue {
+  if (label.includes('protocol version')) return 'VERSION';
+  if (label.includes('counter') || label === 'counts' || label.startsWith('count '))
+    return 'COUNTS';
+  if (label.includes('event')) return 'EVENTS';
+  if (label.includes('file')) return 'FILES';
+  if (label === 'path' || label === 'path truncation') return 'PATH';
+  if (label.includes('phase')) return 'PHASES';
+  if (label.includes('reference') || label === 'revision' || label === 'run reference')
+    return 'REFERENCE';
+  if (label.includes('retained')) return 'RETENTION';
+  if (label.includes('state') || label.includes('trigger')) return 'STATE';
+  if (label.includes('time') || label === 'duration') return 'TIMING';
+  if (label.includes('explanation') || label.includes('recovery') || label.includes('cursor'))
+    return 'TEXT';
+  return 'SHAPE';
 }

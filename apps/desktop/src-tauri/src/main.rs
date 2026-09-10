@@ -17,13 +17,13 @@ mod tests {
     use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
     use a3_protocol::{
         CommandErrorV1, DeepMapStatusResponseV2, DeepMapStatusResultV2, ErrorCodeV1,
-        HealthResponseV1, HealthStatusV1, ModuleCardFreshnessResponseV1,
-        ModuleCardFreshnessResultV1, ModuleDependencyGraphResponseV1,
-        ModuleDependencyGraphResultV1, ModuleRuntimeFlowResponseV1, ModuleRuntimeFlowResultV1,
-        ModuleRuntimeMapResponseV1, ModuleRuntimeMapResultV1, ModuleTreeResponseV1,
-        ModuleTreeResultV1, OpenProjectResponseV1, OpenProjectResultV1, PlatformV1,
-        ProtocolVersion, RecentProjectsResponseV1, RepositoryTreeResponseV1,
-        RepositoryTreeResultV1,
+        HealthResponseV1, HealthStatusV1, IndexRunInspectionResponseV1,
+        ModuleCardFreshnessResponseV1, ModuleCardFreshnessResultV1,
+        ModuleDependencyGraphResponseV1, ModuleDependencyGraphResultV1,
+        ModuleRuntimeFlowResponseV1, ModuleRuntimeFlowResultV1, ModuleRuntimeMapResponseV1,
+        ModuleRuntimeMapResultV1, ModuleTreeResponseV1, ModuleTreeResultV1, OpenProjectResponseV1,
+        OpenProjectResultV1, PlatformV1, ProtocolVersion, RecentProjectsResponseV1,
+        RepositoryTreeResponseV1, RepositoryTreeResultV1,
     };
     use serde_json::json;
     use std::error::Error;
@@ -166,6 +166,27 @@ mod tests {
         assert_eq!(response.application_version(), "1.2.3");
         assert_eq!(response.platform(), PlatformV1::Windows);
         assert_eq!(response.status(), HealthStatusV1::Ready);
+
+        let index_run_response = get_ipc_response(
+            &webview,
+            InvokeRequest {
+                cmd: "query_index_run_inspection".into(),
+                callback: CallbackFn(38),
+                error: CallbackFn(39),
+                url: local_app_url.clone(),
+                body: InvokeBody::Json(json!({
+                    "request": { "protocolVersion": 1 }
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_owned(),
+            },
+        )
+        .map_err(|error| io::Error::other(error.to_string()))?
+        .deserialize::<IndexRunInspectionResponseV1>()?;
+        assert_eq!(
+            serde_json::to_value(index_run_response)?["result"]["status"],
+            json!("noProject")
+        );
 
         let freshness_response = get_ipc_response(
             &webview,

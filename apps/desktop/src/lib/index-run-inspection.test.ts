@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   controlIndexRun,
+  describeIndexRunInspectionLoadFailure,
   parseIndexRunFilesResponseV1,
   parseIndexRunInspectionResponseV1,
   queryIndexRunFiles,
@@ -94,6 +95,53 @@ describe('Fast-Index run inspection V1 boundary', () => {
         },
       }),
     ).toThrow();
+  });
+
+  it('uses the Core Unicode-scalar bound for safe path displays', () => {
+    const boundedPath = '🚀'.repeat(512);
+    expect(
+      parseIndexRunInspectionResponseV1({
+        ...response,
+        result: {
+          ...response.result,
+          current: { ...run, currentFile: { display: boundedPath, truncated: true } },
+        },
+      }).result,
+    ).toMatchObject({
+      current: { currentFile: { display: boundedPath, truncated: true } },
+    });
+    expect(() =>
+      parseIndexRunInspectionResponseV1({
+        ...response,
+        result: {
+          ...response.result,
+          current: {
+            ...run,
+            currentFile: { display: `${boundedPath}🚀`, truncated: true },
+          },
+        },
+      }),
+    ).toThrow();
+  });
+
+  it('separates a rejected response from an unavailable IPC command without exposing payloads', () => {
+    let contractFailure: unknown;
+    try {
+      parseIndexRunInspectionResponseV1({ protocolVersion: 1, result: { status: 'unknown' } });
+    } catch (cause) {
+      contractFailure = cause;
+    }
+    expect(describeIndexRunInspectionLoadFailure(contractFailure)).toEqual({
+      code: 'IDX-DETAIL-RESPONSE-SHAPE',
+      message: 'Die lokale Indexantwort wurde wegen eines ungültigen Formats abgelehnt.',
+      recovery:
+        'Erneut laden. Bleibt der Fehler bestehen, den angezeigten Code melden; die Indexdaten werden nicht verändert.',
+    });
+    expect(describeIndexRunInspectionLoadFailure(new Error('raw backend detail'))).toEqual({
+      code: 'IDX-DETAIL-IPC',
+      message: 'Die lokale Indexschnittstelle ist nicht erreichbar.',
+      recovery: 'A^3 neu starten und den Lauf erneut öffnen.',
+    });
   });
 
   it('enforces the fixed file-page bound and strict row shape', () => {

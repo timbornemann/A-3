@@ -9,10 +9,10 @@ Relevante ADRs: 0001, 0002, 0012, 0014, 0029, 0108
 Abhängigkeiten: U1, U3 und Knowledge-Schema V38
 
 - [x] Statusleisten-Index als tastaturbedienbarer Modal-Auslöser
-- [x] aktueller beziehungsweise letzter Lauf und während aktiver Arbeit der vorherige Lauf
-- [x] sechs Phasen, Unterfortschritt, aktuelle Datei, vollständige Zähler und Dateipagination
-- [x] sichere Fehler- und Ereignisprojektion ohne Rohpfade, Quelltext oder Adapterfehler
-- [x] 60-Sekunden-Stillstandswarnung mit kooperativem Cancel und revisionssicherem Full-Retry
+- [ ] aktueller beziehungsweise letzter Lauf und während aktiver Arbeit der vorherige Lauf
+- [ ] sechs Phasen, Unterfortschritt, aktuelle Datei, vollständige Zähler und Dateipagination
+- [ ] sichere Fehler- und Ereignisprojektion ohne Rohpfade, Quelltext oder Adapterfehler
+- [ ] 60-Sekunden-Stillstandswarnung mit kooperativem Cancel und revisionssicherem Full-Retry
 - [x] Knowledge V39, bounded Batchjournal, Retention und Startup-Reconciliation
 
 Akzeptanz:
@@ -34,6 +34,20 @@ Frontend-Gate mit 413 bestandenen und 14 übersprungenen Tests, Produktions- und
 Releasebuild sowie die Linkprüfung sind grün. Das bestehende 100.000-LOC-Fixture blieb im
 Vorher-/Nachher-Profil innerhalb aller Budgets; der gemessene Cold-Index-P95 stieg von 1,160 s auf
 1,184 s, ohne dass daraus eine allgemeine Geschwindigkeitsaussage abgeleitet wird.
+
+Live-Abnahme am 2026-09-10 wieder geöffnet: Das Modal war erreichbar, die Detailabfrage endete bei
+einem realen Phase-3-Lauf jedoch in der generischen Ladefehlermeldung. Die Nachanalyse schloss die
+Tauri-Registrierung und den Phase-3-Wire-Vertrag mit echten Serialisierungsregressionen ab. Der
+gemeldete `IDX-DETAIL-RESPONSE-SHAPE` entstand, weil Serde die Felder getaggter Enum-Varianten ohne
+`rename_all_fields` als `server_time_unix_millis` und `stall_threshold_seconds` serialisierte,
+während die WebView vertragsgemäß camelCase verlangte. Zusammenfassung und Dateipagination
+verwenden nun explizit camelCase-Variantfelder. Zusätzlich wendet die WebView die
+512-Zeichen-Grenze wie Rust auf Unicode-Skalare statt UTF-16-Einheiten an. Der Index-Koordinator
+bestätigt eine Projektaktivierung außerdem erst nach Startup-Reconciliation und Laden der retained
+Traces, sodass der anschließende Katalogzugriff nicht mehr mit demselben Projektspeicher
+konkurriert. Verbleibende Ladefehler zeigen ausschließlich einen geschlossenen
+`IDX-DETAIL-IPC`- oder `IDX-DETAIL-RESPONSE-*`-Code und einen direkten Retry. Die vier betroffenen
+UI-Punkte bleiben bis zur erneuten Live-Abnahme offen.
 
 ## U1 Information Architecture
 

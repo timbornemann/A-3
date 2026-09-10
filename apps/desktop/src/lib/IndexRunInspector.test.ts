@@ -84,6 +84,26 @@ const previous: IndexRunDetailV1 = {
 afterEach(() => vi.clearAllMocks());
 
 describe('IndexRunInspector', () => {
+  it('shows a safe IPC code and permits an immediate retry after the initial load fails', async () => {
+    mocks.inspection.mockRejectedValueOnce(new Error('raw backend detail')).mockResolvedValue({
+      protocolVersion: 1,
+      result: {
+        status: 'available',
+        current: active,
+        previous: null,
+        serverTimeUnixMillis: '62000',
+        stallThresholdSeconds: 60,
+      },
+    });
+    const view = render(IndexRunInspector, { onClose: vi.fn() });
+
+    expect((await screen.findByRole('alert')).textContent).toContain('IDX-DETAIL-IPC');
+    await fireEvent.click(screen.getByRole('button', { name: 'Erneut laden' }));
+    expect(await screen.findByText('Quellcode finden')).toBeTruthy();
+    expect(mocks.inspection).toHaveBeenCalledTimes(2);
+    view.unmount();
+  });
+
   it('shows six phases, stall recovery, previous run, file paging, and revision-bound cancel', async () => {
     mocks.inspection.mockResolvedValue({
       protocolVersion: 1,

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import {
     controlIndexRun,
+    describeIndexRunInspectionLoadFailure,
     queryIndexRunFiles,
     queryIndexRunInspection,
     type IndexRunControlActionV1,
@@ -67,9 +68,10 @@
           await loadFiles(run, null);
         }
       }
-    } catch {
+    } catch (cause) {
       if (!destroyed) {
-        error = 'Die Indexlauf-Details konnten nicht sicher geladen werden.';
+        const failure = describeIndexRunInspectionLoadFailure(cause);
+        error = `${failure.message} ${failure.recovery} (${failure.code})`;
         loading = false;
       }
     } finally {
@@ -297,7 +299,17 @@
   {#if loading}
     <p role="status">Indexlauf-Details werden geladen …</p>
   {:else if error !== null && response === null}
-    <p role="alert" class="notice error">{error}</p>
+    <section class="notice error" role="alert">
+      <p>{error}</p>
+      <button
+        type="button"
+        onclick={() => {
+          error = null;
+          loading = true;
+          void refresh();
+        }}>Erneut laden</button
+      >
+    </section>
   {:else if response?.result.status === 'noProject'}
     <p>Öffne zuerst ein lokales Projekt.</p>
   {:else if response?.result.status === 'noRuns'}

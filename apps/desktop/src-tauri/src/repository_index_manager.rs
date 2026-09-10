@@ -25,6 +25,7 @@ use std::time::Duration;
 use tauri::async_runtime::block_on;
 
 const COORDINATOR_TICK: Duration = Duration::from_millis(20);
+const ACTIVATION_ACK_TIMEOUT: Duration = Duration::from_secs(5);
 const INDEX_JOB_OWNER: JobOwner = JobOwner::new(1);
 
 /// Owns active-project watching and translates bounded change batches into scheduler jobs.
@@ -90,13 +91,19 @@ impl RepositoryIndexManager {
             ParserPoolSize::new(1).map_err(RepositoryIndexActivationError::ParserPoolSize)?;
         let compiler = BuiltinIncrementalIndexCompiler::new(pool_size)
             .map_err(RepositoryIndexActivationError::Compiler)?;
-        let command = ManagerCommand::Activate(Box::new(ProjectActivation {
-            project,
-            watcher,
-            compiler: Box::new(compiler),
-        }));
+        let (response, receiver) = bounded(1);
+        let command = ManagerCommand::Activate {
+            activation: Box::new(ProjectActivation {
+                project,
+                watcher,
+                compiler: Box::new(compiler),
+            }),
+            response,
+        };
         match self.commands.try_send(command) {
-            Ok(()) => Ok(()),
+            Ok(()) => receiver
+                .recv_timeout(ACTIVATION_ACK_TIMEOUT)
+                .map_err(|_| RepositoryIndexActivationError::CoordinatorStopped),
             Err(TrySendError::Full(_)) => Err(RepositoryIndexActivationError::QueueFull),
             Err(TrySendError::Disconnected(_)) => {
                 Err(RepositoryIndexActivationError::CoordinatorStopped)
@@ -218,7 +225,10 @@ impl Drop for RepositoryIndexManager {
 }
 
 enum ManagerCommand {
-    Activate(Box<ProjectActivation>),
+    Activate {
+        activation: Box<ProjectActivation>,
+        response: Sender<()>,
+    },
     Deactivate(Sender<Result<(), RepositoryIndexDeactivationError>>),
     Rebuild(Sender<Result<(), RepositoryIndexRebuildRequestError>>),
     CancelTrace {
@@ -519,7 +529,10 @@ fn handle_manager_command(
     trace_runtime: &Mutex<IndexTraceRuntime>,
 ) -> bool {
     match command {
-        ManagerCommand::Activate(activation) => {
+        ManagerCommand::Activate {
+            activation,
+            response,
+        } => {
             let retiring_job = active.as_ref().and_then(|state| state.active_job);
             if let Some(job) = retiring_job {
                 let _cancellation = submitter.cancel(job.id);
@@ -546,6 +559,7 @@ fn handle_manager_command(
             });
             set_index_activity(activity, RepositoryIndexActivity::idle());
             set_rebuild_state(rebuild_state, RepositoryIndexRebuildState::Idle);
+            let _acknowledged = response.send(());
             false
         }
         ManagerCommand::Deactivate(response) => {
@@ -673,7 +687,7 @@ fn prepare_trace_for_command(
     store: &dyn IndexTraceStore,
     runtime: &Mutex<IndexTraceRuntime>,
 ) {
-    let ManagerCommand::Activate(activation) = command else {
+    let ManagerCommand::Activate { activation, .. } = command else {
         return;
     };
     let loaded = block_on(async {
@@ -1151,15 +1165,20 @@ mod tests {
         ManagedJob, ManagedJobKind, ManagerCommand, ProjectActivation, RepositoryIndexActivity,
         RepositoryIndexActivityState, RepositoryIndexDeactivationError,
         RepositoryIndexRebuildRequestError, RepositoryIndexRebuildState,
-        RepositoryIndexTraceControlError, handle_manager_command, set_index_activity_from_job,
-        trace_outcome_from_job_status, validate_trace_control,
+        RepositoryIndexTraceControlError, handle_manager_command, prepare_trace_for_command,
+        set_index_activity_from_job, trace_outcome_from_job_status, validate_trace_control,
     };
     use crate::clock::SystemJobClock;
     use crate::index_trace_runtime::IndexTraceRuntime;
     use a3_application::{
-        JobScheduler, JobSchedulerConfig, ProjectInspector, RepositoryIndexPhase, ShutdownMode,
+        IndexTraceCheckpoint, IndexTraceFilePage, IndexTraceFileQuery, IndexTraceStore,
+        IndexTraceStoreFailure, IndexTraceStoreFuture, JobScheduler, JobSchedulerConfig,
+        ProjectInspector, RepositoryIndexPhase, RetainedIndexTraces, ShutdownMode,
     };
-    use a3_domain::{IndexTraceState, IndexTraceTrigger, JobId, JobStatus, Progress};
+    use a3_domain::{
+        IndexTraceState, IndexTraceTimestamp, IndexTraceTrigger, JobId, JobStatus, Progress,
+        ProjectIdentity,
+    };
     use a3_repo_index::{
         BuiltinIncrementalIndexCompiler, ParserPoolSize, PollingRepositoryWatcher,
         RepositoryWatcherConfig,
@@ -1168,6 +1187,72 @@ mod tests {
     use crossbeam_channel::bounded;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
+
+    #[derive(Debug, Default)]
+    struct RecordingTraceStore {
+        calls: Mutex<Vec<&'static str>>,
+    }
+
+    impl RecordingTraceStore {
+        fn record(&self, call: &'static str) -> Result<(), IndexTraceStoreFailure> {
+            self.calls
+                .lock()
+                .map_err(|_| IndexTraceStoreFailure::Unavailable)?
+                .push(call);
+            Ok(())
+        }
+
+        fn calls(&self) -> Result<Vec<&'static str>, IndexTraceStoreFailure> {
+            self.calls
+                .lock()
+                .map(|calls| calls.clone())
+                .map_err(|_| IndexTraceStoreFailure::Unavailable)
+        }
+    }
+
+    impl IndexTraceStore for RecordingTraceStore {
+        fn reconcile_interrupted<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _at: IndexTraceTimestamp,
+        ) -> IndexTraceStoreFuture<'a, ()> {
+            Box::pin(async move { self.record("reconcile") })
+        }
+
+        fn create_trace<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _snapshot: &'a a3_application::IndexTraceSnapshot,
+        ) -> IndexTraceStoreFuture<'a, ()> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn checkpoint_trace<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _checkpoint: &'a IndexTraceCheckpoint,
+        ) -> IndexTraceStoreFuture<'a, ()> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn load_retained<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+        ) -> IndexTraceStoreFuture<'a, RetainedIndexTraces> {
+            Box::pin(async move {
+                self.record("load")?;
+                Ok(RetainedIndexTraces::default())
+            })
+        }
+
+        fn query_files<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _query: &'a IndexTraceFileQuery,
+        ) -> IndexTraceStoreFuture<'a, IndexTraceFilePage> {
+            Box::pin(async { Err(IndexTraceStoreFailure::NotFound) })
+        }
+    }
 
     #[test]
     fn refresh_activity_maps_only_the_fixed_six_phase_progress()
@@ -1202,6 +1287,63 @@ mod tests {
                 .state(),
             RepositoryIndexActivityState::Succeeded
         );
+        Ok(())
+    }
+
+    #[test]
+    fn activation_ack_follows_trace_reconciliation_and_load()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let config = JobSchedulerConfig::new(1, 1, 8)?;
+        let (scheduler, _events) = JobScheduler::new(config, Arc::new(SystemJobClock::new()))?;
+        let submitter = scheduler.submitter()?;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()?;
+        let project = RepositoryInspector::new().inspect_project(&root)?;
+        let activation = ProjectActivation {
+            watcher: PollingRepositoryWatcher::start(
+                project.clone(),
+                RepositoryWatcherConfig::v1(),
+            )?,
+            project,
+            compiler: Box::new(BuiltinIncrementalIndexCompiler::new(ParserPoolSize::new(
+                1,
+            )?)?),
+        };
+        let (response, receiver) = bounded(1);
+        let command = ManagerCommand::Activate {
+            activation: Box::new(activation),
+            response,
+        };
+        let trace_store = RecordingTraceStore::default();
+        let trace_runtime = Mutex::new(IndexTraceRuntime::default());
+
+        prepare_trace_for_command(&command, &trace_store, &trace_runtime);
+        assert!(receiver.try_recv().is_err());
+        assert_eq!(trace_store.calls()?, vec!["reconcile", "load"]);
+
+        let mut active = None;
+        let activity = Mutex::new(RepositoryIndexActivity::idle());
+        let rebuild_state = Mutex::new(RepositoryIndexRebuildState::Idle);
+        assert!(!handle_manager_command(
+            command,
+            &submitter,
+            &mut active,
+            &activity,
+            &rebuild_state,
+            &trace_runtime,
+        ));
+        assert_eq!(receiver.recv_timeout(Duration::from_secs(1))?, ());
+
+        assert!(handle_manager_command(
+            ManagerCommand::Shutdown,
+            &submitter,
+            &mut active,
+            &activity,
+            &rebuild_state,
+            &trace_runtime,
+        ));
+        scheduler.shutdown(ShutdownMode::CancelAndWait)?;
         Ok(())
     }
 
@@ -1293,14 +1435,22 @@ mod tests {
         let rebuild_state = Mutex::new(RepositoryIndexRebuildState::Idle);
         let trace_runtime = Mutex::new(IndexTraceRuntime::default());
 
+        let (activation_response, activation_receiver) = bounded(1);
         assert!(!handle_manager_command(
-            ManagerCommand::Activate(Box::new(activation)),
+            ManagerCommand::Activate {
+                activation: Box::new(activation),
+                response: activation_response,
+            },
             &submitter,
             &mut active,
             &activity,
             &rebuild_state,
             &trace_runtime,
         ));
+        assert_eq!(
+            activation_receiver.recv_timeout(Duration::from_secs(1))?,
+            ()
+        );
         let (response, receiver) = bounded(1);
         assert!(!handle_manager_command(
             ManagerCommand::Rebuild(response),
@@ -1382,14 +1532,22 @@ mod tests {
         let activity = Mutex::new(RepositoryIndexActivity::idle());
         let rebuild_state = Mutex::new(RepositoryIndexRebuildState::Idle);
         let trace_runtime = Mutex::new(IndexTraceRuntime::default());
+        let (activation_response, activation_receiver) = bounded(1);
         assert!(!handle_manager_command(
-            ManagerCommand::Activate(Box::new(activation)),
+            ManagerCommand::Activate {
+                activation: Box::new(activation),
+                response: activation_response,
+            },
             &submitter,
             &mut active,
             &activity,
             &rebuild_state,
             &trace_runtime,
         ));
+        assert_eq!(
+            activation_receiver.recv_timeout(Duration::from_secs(1))?,
+            ()
+        );
         let job_id = JobId::new(991);
         let queued = trace_runtime
             .lock()

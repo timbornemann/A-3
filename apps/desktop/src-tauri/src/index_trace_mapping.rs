@@ -508,9 +508,17 @@ fn encode_hex_bytes(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_cursor, encode_cursor};
-    use a3_application::IndexTraceFileFilter;
-    use a3_domain::{IndexTraceId, IndexTraceRevision, WorktreeId};
+    use super::{decode_cursor, encode_cursor, map_inspection};
+    use a3_application::{
+        IndexTraceCounts, IndexTraceEvent, IndexTraceEventKind, IndexTraceFileFilter,
+        IndexTraceFileRecord, IndexTracePhaseProgress, IndexTraceRunSummary, IndexTraceSnapshot,
+        RetainedIndexTraces,
+    };
+    use a3_domain::{
+        IndexTraceFileChange, IndexTraceHashOutcome, IndexTraceId, IndexTracePhase,
+        IndexTracePhaseState, IndexTraceRevision, IndexTraceState, IndexTraceTimestamp,
+        IndexTraceTrigger, RepositoryPath, WorktreeId,
+    };
 
     #[test]
     fn cursor_is_bound_to_query_and_rejects_tampering() -> Result<(), Box<dyn std::error::Error>> {
@@ -560,6 +568,132 @@ mod tests {
             )
             .is_err()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn active_parse_trace_serializes_to_the_exact_webview_contract()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let started = IndexTraceTimestamp::new(1_000)?;
+        let last_activity = IndexTraceTimestamp::new(2_000)?;
+        let path = RepositoryPath::try_from_bytes(b"src/main.rs".to_vec())?;
+        let revision = IndexTraceRevision::new(9)?;
+        let summary = IndexTraceRunSummary::restored(
+            IndexTraceId::from_bytes([0xaa; 32]),
+            revision,
+            IndexTraceState::Running,
+            IndexTraceTrigger::FileChanges,
+            started,
+            None,
+            last_activity,
+            Some(IndexTracePhase::Parse),
+            Some(path.clone()),
+            None,
+            false,
+            true,
+            IndexTraceCounts {
+                discovered: 2,
+                pending: 0,
+                new_files: 1,
+                changed: 0,
+                unchanged: 1,
+                deleted: 0,
+                hashed: 1,
+                hash_reused: 1,
+                structural: 0,
+                parse_reused: 0,
+                generic: 0,
+                failed: 0,
+            },
+        )?;
+        let phases = vec![
+            IndexTracePhaseProgress::new(
+                IndexTracePhase::Discover,
+                IndexTracePhaseState::Succeeded,
+                Some(started),
+                Some(IndexTraceTimestamp::new(1_200)?),
+                Some(2),
+                Some(2),
+            )?,
+            IndexTracePhaseProgress::new(
+                IndexTracePhase::Hash,
+                IndexTracePhaseState::Succeeded,
+                Some(IndexTraceTimestamp::new(1_200)?),
+                Some(IndexTraceTimestamp::new(1_500)?),
+                Some(2),
+                Some(2),
+            )?,
+            IndexTracePhaseProgress::new(
+                IndexTracePhase::Parse,
+                IndexTracePhaseState::Running,
+                Some(IndexTraceTimestamp::new(1_500)?),
+                None,
+                Some(1),
+                Some(2),
+            )?,
+            IndexTracePhaseProgress::pending_all().remove(3),
+            IndexTracePhaseProgress::pending_all().remove(4),
+            IndexTracePhaseProgress::pending_all().remove(5),
+        ];
+        let snapshot = IndexTraceSnapshot::new(
+            summary,
+            phases,
+            vec![IndexTraceEvent::new(
+                revision,
+                last_activity,
+                IndexTraceEventKind::FileObserved,
+                Some(IndexTracePhase::Parse),
+                Some(path.clone()),
+                None,
+            )],
+            vec![
+                IndexTraceFileRecord::new(
+                    path,
+                    IndexTraceFileChange::New,
+                    IndexTraceHashOutcome::Hashed,
+                    None,
+                    Vec::new(),
+                    false,
+                )?,
+                IndexTraceFileRecord::new(
+                    RepositoryPath::try_from_bytes(b"src/lib.rs".to_vec())?,
+                    IndexTraceFileChange::Unchanged,
+                    IndexTraceHashOutcome::Reused,
+                    None,
+                    Vec::new(),
+                    false,
+                )?,
+            ],
+        )?;
+
+        let value = serde_json::to_value(map_inspection(RetainedIndexTraces {
+            current: Some(snapshot),
+            previous: None,
+        }))?;
+        assert_eq!(value["protocolVersion"], 1);
+        assert_eq!(value["result"]["status"], "available");
+        assert!(
+            value["result"]["serverTimeUnixMillis"]
+                .as_str()
+                .is_some_and(|timestamp| !timestamp.is_empty())
+        );
+        assert_eq!(value["result"]["stallThresholdSeconds"], 60);
+        assert!(value["result"].get("server_time_unix_millis").is_none());
+        assert!(value["result"].get("stall_threshold_seconds").is_none());
+        assert_eq!(value["result"]["current"]["currentPhase"], "parse");
+        assert_eq!(value["result"]["current"]["counts"]["discovered"], "2");
+        assert_eq!(
+            value["result"]["current"]["currentFile"]["display"],
+            "src/main.rs"
+        );
+        assert_eq!(
+            value["result"]["current"]["phases"]
+                .as_array()
+                .map(Vec::len),
+            Some(6)
+        );
+        let _roundtrip =
+            serde_json::from_value::<a3_protocol::IndexRunInspectionResponseV1>(value)?;
         Ok(())
     }
 }
