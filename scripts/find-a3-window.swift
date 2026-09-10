@@ -26,8 +26,13 @@ while Date() < deadline {
               let layer = window[kCGWindowLayer] as? NSNumber,
               layer.intValue == 0,
               let number = window[kCGWindowNumber] as? NSNumber,
-              let boundsDictionary = window[kCGWindowBounds] as? CFDictionary,
-              let bounds = CGRect(dictionaryRepresentation: boundsDictionary),
+              // Swift cannot conditionally downcast `Any` to a CoreFoundation
+              // type. Check the toll-free bridged Foundation class first, then
+              // use the documented CFDictionary representation for CGRect.
+              let boundsDictionary = window[kCGWindowBounds] as? NSDictionary,
+              let bounds = CGRect(
+                  dictionaryRepresentation: boundsDictionary as CFDictionary
+              ),
               Int(bounds.width) >= minimumWidth,
               Int(bounds.height) >= minimumHeight else {
             continue

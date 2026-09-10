@@ -1150,6 +1150,11 @@ Fensterbild enthalten ist. macOS löst das konkrete Fenster über CoreGraphics a
 dimensionsgebundener JSON-Bericht werden getrennt
 für Linux x86_64, Windows x86_64, macOS ARM64 und macOS x86_64 aufbewahrt. Ein nativer Build ohne
 diesen WebView-Nachweis erfüllt das Desktop-Plattformgate nicht.
+Der macOS-Fensterhelfer wird unmittelbar nach dem Checkout mit dem Swift-Compiler des jeweiligen
+Runners typgeprüft, bevor die teuren Workspace- und Desktop-Builds beginnen. Der Smoke legt vor
+dem Prozessstart einen content-freien Statusbericht an und ersetzt ihn bei Erfolg oder Fehler.
+Darum bleibt nach einem fehlgeschlagenen Smoke ein uploadbares Diagnoseartefakt erhalten, ohne
+Anwendungs-stdout, stderr, Quellinhalt oder Credentials in dieses Artefakt zu übernehmen.
 
 Plattformspezifische Installer werden auf der Zielplattform erzeugt und signiert, sobald Distributionsidentitäten verfügbar sind.
 

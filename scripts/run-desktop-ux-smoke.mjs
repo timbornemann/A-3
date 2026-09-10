@@ -143,6 +143,19 @@ async function stopDesktop(child) {
 }
 
 await mkdir(artifactDirectory, { recursive: true });
+await writeFile(
+  reportPath,
+  `${JSON.stringify(
+    {
+      binary: path.relative(workspaceRoot, binaryPath).replaceAll('\\', '/'),
+      platform: process.platform,
+      status: 'started',
+    },
+    null,
+    2,
+  )}\n`,
+  'utf8',
+);
 const child = spawn(binaryPath, [], {
   cwd: workspaceRoot,
   // Xvfb cannot capture WebKitGTK's separate accelerated compositing surface.
@@ -179,11 +192,28 @@ try {
     platform: process.platform,
     platformResult,
     screenshotBytes: screenshot.size,
+    status: 'passed',
   };
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
   process.stdout.write(`${JSON.stringify(report)}\n`);
 } catch (error) {
   const detail = error instanceof Error ? error.message : String(error);
+  // The workflow deliberately uploads evidence even after a failed smoke. Keep
+  // that artifact content-free and deterministic instead of leaving an empty
+  // directory that creates a second, misleading upload failure.
+  await writeFile(
+    reportPath,
+    `${JSON.stringify(
+      {
+        binary: path.relative(workspaceRoot, binaryPath).replaceAll('\\', '/'),
+        platform: process.platform,
+        status: 'failed',
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
   throw new Error(
     `Native A^3 UX smoke failed: ${detail}\nretained stdout:\n${stdout}\nretained stderr:\n${stderr}`,
     { cause: error },

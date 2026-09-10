@@ -73,15 +73,29 @@ test('native UX smoke stays in every platform job without a shell-enabled Node r
     path.join(repositoryRoot, 'scripts', 'run-desktop-ux-smoke.mjs'),
     'utf8',
   );
+  const macOsWindowHelper = readFileSync(
+    path.join(repositoryRoot, 'scripts', 'find-a3-window.swift'),
+    'utf8',
+  );
+  const platformJob = workflow.slice(workflow.indexOf('\n  platform:'));
 
   for (const platform of ['linux-x86_64', 'windows-x86_64', 'macos-arm64', 'macos-x86_64']) {
     assert.match(workflow, new RegExp(`artifact: ${platform}`, 'u'));
   }
   assert.match(workflow, /node scripts\/run-desktop-ux-smoke\.mjs/u);
+  assert.match(
+    platformJob,
+    /if: runner\.os == 'macOS'[\s\S]*swiftc -typecheck scripts\/find-a3-window\.swift/u,
+  );
   assert.match(workflow, /desktop-ux-smoke-\$\{\{ matrix\.artifact \}\}/u);
   assert.match(workflow, /!cancelled\(\) && env\.ACT != 'true'/u);
   assert.doesNotMatch(runner, /shell\s*:\s*true/u);
   assert.match(runner, /WEBKIT_DISABLE_COMPOSITING_MODE: '1'/u);
   assert.match(runner, /env: desktopEnvironment/u);
   assert.match(runner, /screenshot\.size < 4096/u);
+  assert.match(runner, /status: 'started'/u);
+  assert.match(runner, /status: 'failed'/u);
+  assert.doesNotMatch(macOsWindowHelper, /as\?\s+CFDictionary/u);
+  assert.match(macOsWindowHelper, /as\?\s+NSDictionary/u);
+  assert.match(macOsWindowHelper, /boundsDictionary as CFDictionary/u);
 });
