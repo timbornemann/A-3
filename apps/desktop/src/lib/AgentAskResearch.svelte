@@ -97,7 +97,14 @@
   const usedSources = $derived(sources.filter((source) => source.usedForAnswer));
   const additionalSources = $derived(sources.filter((source) => !source.usedForAnswer));
   const searchLimited = $derived(
-    detail?.steps.some((step) => step.completeness === 'limited') ?? false,
+    detail?.steps.some(
+      (step) =>
+        step.completeness === 'limited' &&
+        (step.phase === 'locating' || step.phase === 'reading') &&
+        step.query !== null &&
+        step.state !== 'failed' &&
+        step.state !== 'cancelled',
+    ) ?? false,
   );
   const loadIdentity = $derived(
     `${sessionId}:${userSequence}:${refreshKey}:${live}:${recentlyCompleted}:${mirror}`,

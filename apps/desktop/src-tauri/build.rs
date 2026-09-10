@@ -68,6 +68,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "query_project_settings",
             "query_health",
             "query_settings_v2",
+            "query_settings_recovery",
+            "recover_invalid_model_profiles",
             "query_ui_preferences",
             "rebuild_project_index",
             "resume_deep_map",

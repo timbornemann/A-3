@@ -900,6 +900,22 @@ impl DesktopSettings {
         if enabled && connection_verified_at.is_none() {
             return Err(DesktopSettingsUpdateError::ConnectionUnverified);
         }
+        if endpoint.is_some() {
+            Self::from_stored_parts(endpoint.clone(), credential, Some(health), None, None, None)?;
+        } else if credential != ProviderCredentialMetadata::not_required()
+            || health != ProviderHealthObservation::initial(ModelEndpointScope::LocalLoopback)
+        {
+            return Err(DesktopSettingsUpdateError::InvalidCredentialState);
+        }
+        if enabled
+            && endpoint.as_ref().is_some_and(|value| {
+                value.access() == ModelEndpointAccess::RemoteBlocked
+                    || (value.credential_requirement() == ProviderCredentialRequirement::ApiKey
+                        && credential.lifecycle() != ProviderCredentialLifecycle::Configured)
+            })
+        {
+            return Err(DesktopSettingsUpdateError::CredentialUnavailable);
+        }
         self.providers[index] = ProviderSettings {
             kind,
             endpoint,
@@ -926,6 +942,55 @@ impl DesktopSettings {
             .embedding_profile
             .take()
             .filter(|profile| profile.profile().provider_id().as_str() != provider_id);
+    }
+
+    /// Restores a role against its own provider slot, without inventing a new probe
+    /// or changing provider health, credentials, or another role.
+    pub fn with_stored_llm_profile(
+        mut self,
+        role: LlmModelRole,
+        profile: LlmRoleProfile,
+    ) -> Result<Self, DesktopSettingsUpdateError> {
+        self.require_stored_profile_provider(profile.profile().provider_id().as_str())?;
+        match role {
+            LlmModelRole::Coding => self.coding_profile = Some(profile),
+            LlmModelRole::Mapping => self.mapping_profile = Some(profile),
+        }
+        Ok(self)
+    }
+
+    /// Restores a dimension-verified embedding role against its own provider slot.
+    pub fn with_stored_embedding_profile(
+        mut self,
+        profile: VerifiedEmbeddingProfile,
+    ) -> Result<Self, DesktopSettingsUpdateError> {
+        self.require_stored_profile_provider(profile.profile().provider_id().as_str())?;
+        self.embedding_profile = Some(profile);
+        Ok(self)
+    }
+
+    fn require_stored_profile_provider(&self, id: &str) -> Result<(), DesktopSettingsUpdateError> {
+        let kind = ModelProviderKind::from_provider_id(id)
+            .ok_or(DesktopSettingsUpdateError::ProviderMismatch)?;
+        let slot = self.provider(kind);
+        let endpoint = slot
+            .endpoint()
+            .ok_or(DesktopSettingsUpdateError::EndpointUnavailable)?;
+        if endpoint.provider_id().as_str() != id {
+            return Err(DesktopSettingsUpdateError::ProviderMismatch);
+        }
+        if !slot.enabled() || slot.connection_verified_at().is_none() {
+            return Err(DesktopSettingsUpdateError::ConnectionUnverified);
+        }
+        if endpoint.access() == ModelEndpointAccess::RemoteBlocked {
+            return Err(DesktopSettingsUpdateError::RemoteBlocked);
+        }
+        if endpoint.credential_requirement() == ProviderCredentialRequirement::ApiKey
+            && slot.credential().lifecycle() != ProviderCredentialLifecycle::Configured
+        {
+            return Err(DesktopSettingsUpdateError::CredentialUnavailable);
+        }
+        Ok(())
     }
 
     /// Returns the configured provider origin, if any.
@@ -1606,6 +1671,63 @@ pub trait DesktopSettingsStore: fmt::Debug + Send + Sync {
         expected: DesktopSettingsStoreVersion,
         settings: &'a DesktopSettings,
     ) -> DesktopSettingsStoreFuture<'a, StoredDesktopSettings>;
+
+    /// Inspects only current invalid role profiles, without activating a partial snapshot.
+    fn inspect_profile_recovery(&self) -> DesktopSettingsStoreFuture<'_, DesktopSettingsRecovery> {
+        Box::pin(async { Err(DesktopSettingsStoreFailure::Unavailable) })
+    }
+
+    /// Appends a repaired current snapshot after CAS; only invalid profiles may be omitted.
+    fn recover_invalid_profiles(
+        &self,
+        _expected: DesktopSettingsStoreVersion,
+    ) -> DesktopSettingsStoreFuture<'_, StoredDesktopSettings> {
+        Box::pin(async { Err(DesktopSettingsStoreFailure::Unavailable) })
+    }
+}
+
+/// One of the three independently recoverable model-role records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DesktopSettingsProfileRole {
+    /// Coding and repository research model.
+    Coding,
+    /// Deep Map model.
+    Mapping,
+    /// Semantic embedding model.
+    Embedding,
+}
+
+/// Content-free current revision and bounded, canonical list of invalid profiles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopSettingsRecovery {
+    version: DesktopSettingsStoreVersion,
+    roles: Vec<DesktopSettingsProfileRole>,
+}
+
+impl DesktopSettingsRecovery {
+    /// Canonicalizes at most three role identities; no model or credential content is retained.
+    #[must_use]
+    pub fn new(version: DesktopSettingsStoreVersion, roles: &[DesktopSettingsProfileRole]) -> Self {
+        let roles = [
+            DesktopSettingsProfileRole::Coding,
+            DesktopSettingsProfileRole::Mapping,
+            DesktopSettingsProfileRole::Embedding,
+        ]
+        .into_iter()
+        .filter(|role| roles.contains(role))
+        .collect();
+        Self { version, roles }
+    }
+    /// Returns the exact revision required by a later explicit recovery.
+    #[must_use]
+    pub const fn version(&self) -> DesktopSettingsStoreVersion {
+        self.version
+    }
+    /// Returns only invalid roles, in canonical order; empty means no repair is needed.
+    #[must_use]
+    pub fn roles(&self) -> &[DesktopSettingsProfileRole] {
+        &self.roles
+    }
 }
 
 /// Stable failure classification for global settings storage.

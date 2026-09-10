@@ -79,6 +79,8 @@
     "allow-query-project-settings",
     "allow-query-health",
     "allow-query-settings-v2",
+    "allow-query-settings-recovery",
+    "allow-recover-invalid-model-profiles",
     "allow-query-ui-preferences",
     "allow-rebuild-project-index",
     "allow-remove-project",

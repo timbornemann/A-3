@@ -257,6 +257,25 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   und lehnt ungültige Daten an der Adaptergrenze ab. Snapshot- und IndexRun-Persistenz wird nicht als
   neuer WebView-Command oder Datenbankzugriff exponiert.
 
+### Gezielte Modellprofil-Wiederherstellung
+
+`query_settings_recovery` akzeptiert nur die Protokollversion und liefert höchstens
+die drei ungültigen Rollen plus aktuelle Settingsrevision. Normale Settings-Reads
+bleiben strikt; eine Teilkonfiguration wird nicht an den Agenten ausgegeben.
+`recover_invalid_model_profiles` akzeptiert ausschließlich Version und die zuvor
+sichtbare Revision. Eine zweistufige UI-Bestätigung autorisiert die erneute native
+Diagnose und einen atomaren append-only Snapshot ohne die ungültigen Rollen.
+Provider, Credentialgenerationen, gültige Profile und deren Probezeiten bleiben
+unverändert; Historie und Projektwissen werden nicht gelöscht. Revisionskonflikte,
+Providerankerfehler und unlesbare Tabellen bleiben geschlossen. Gesunde Settings
+erzeugen keinen Recovery-Write. Die Modell-Operationssperre schließt konkurrierende
+Probes aus. Ein alter Mapping-Executor wird vor dem Commit deaktiviert; der nächste
+normale Statusabruf löst gültiges Mapping erneut über die regulären Grenzen auf.
+
+Die Recovery liest oder verändert keine Schlüssel und startet keine Provideranfrage.
+WebView-Eingaben können weder Rollen auswählen noch SQL, Pfade, Modelle oder
+Capabilitybehauptungen liefern. Details: [ADR-0106](adrs/0106-gezielte-modellprofil-wiederherstellung.md).
+
 ## Prozess-Policy
 
 Standard ist direkte argv-Ausführung:

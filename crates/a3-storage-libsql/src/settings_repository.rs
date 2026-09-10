@@ -1,9 +1,9 @@
 use crate::catalog::is_corruption;
 use crate::{CatalogDatabase, CatalogOpenError};
 use a3_application::{
-    ConfiguredModelEndpoint, DesktopSettings, DesktopSettingsStoreFailure,
-    DesktopSettingsStoreVersion, LlmModelRole, LlmRoleProfile, ModelEndpointAccess,
-    ModelEndpointScope, ModelProviderKind, ProviderCredentialGeneration,
+    ConfiguredModelEndpoint, DesktopSettings, DesktopSettingsProfileRole, DesktopSettingsRecovery,
+    DesktopSettingsStoreFailure, DesktopSettingsStoreVersion, LlmModelRole, LlmRoleProfile,
+    ModelEndpointAccess, ModelEndpointScope, ModelProviderKind, ProviderCredentialGeneration,
     ProviderCredentialLifecycle, ProviderCredentialMetadata, ProviderCredentialRequirement,
     ProviderHealthObservation, ProviderHealthStatus, SettingsTimestamp, StoredDesktopSettings,
     VerifiedEmbeddingProfile,
@@ -52,6 +52,19 @@ pub(crate) async fn append(
 async fn load_from_connection(
     connection: &Connection,
 ) -> Result<StoredDesktopSettings, SettingsRepositoryError> {
+    let (stored, invalid) = load_with_invalid_profiles(connection).await?;
+    if !invalid.is_empty() {
+        return Err(SettingsRepositoryError::InvalidStoredData);
+    }
+    Ok(stored)
+}
+
+async fn load_with_invalid_profiles(
+    connection: &Connection,
+) -> Result<(StoredDesktopSettings, Vec<DesktopSettingsProfileRole>), SettingsRepositoryError> {
+    // Recheck inside recovery's transaction too; a schema change between the
+    // initial diagnosis and confirmation must never be treated as a role repair.
+    let schema_version = supported_schema_version(connection).await?;
     let mut rows = connection
         .query(
             "SELECT revision, endpoint_provider_id, endpoint_origin, endpoint_scope,
@@ -63,7 +76,7 @@ async fn load_from_connection(
         .await
         .map_err(SettingsRepositoryError::Read)?;
     let Some(row) = rows.next().await.map_err(SettingsRepositoryError::Read)? else {
-        return Ok(StoredDesktopSettings::initial());
+        return Ok((StoredDesktopSettings::initial(), Vec::new()));
     };
     let version = read_version(&row, 0)?;
     let provider_id = read_optional_string(&row, 1)?;
@@ -87,13 +100,10 @@ async fn load_from_connection(
     let endpoint = decode_endpoint(provider_id, origin, scope, access, &credential_requirement)?;
     let credential = decode_credential(&credential_state, credential_generation)?;
     let health = decode_health(endpoint.as_ref(), health_status, health_checked_at)?;
-    let (coding, mapping) = load_llm_profiles(connection, version).await?;
-    let embedding = load_embedding_profile(connection, version).await?;
-    let mut settings = DesktopSettings::from_stored_parts(
-        endpoint, credential, health, coding, mapping, embedding,
-    )
-    .map_err(|_| SettingsRepositoryError::InvalidStoredData)?;
-    let mut provider_count = 0usize;
+    let mut settings =
+        DesktopSettings::from_stored_parts(endpoint.clone(), credential, health, None, None, None)
+            .map_err(|_| SettingsRepositoryError::InvalidStoredData)?;
+    let mut provider_kinds = Vec::with_capacity(3);
     let mut table_rows = connection
         .query(
             "SELECT 1 FROM sqlite_master
@@ -107,6 +117,9 @@ async fn load_from_connection(
         .await
         .map_err(SettingsRepositoryError::Read)?
         .is_some();
+    if schema_version >= 8 && !provider_table_exists {
+        return Err(SettingsRepositoryError::InvalidStoredData);
+    }
     if provider_table_exists {
         let mut provider_rows = connection
             .query(
@@ -114,7 +127,7 @@ async fn load_from_connection(
                  endpoint_access, credential_requirement, credential_state, credential_generation,
                  enabled, configuration_revision, connection_verified_at_unix_millis,
                  health_status, health_checked_at_unix_millis
-                 FROM desktop_provider_settings WHERE revision = ?1 ORDER BY provider_kind",
+                 FROM desktop_provider_settings WHERE revision = ?1 ORDER BY provider_kind LIMIT 4",
                 [u64_to_i64(version.get())?],
             )
             .await
@@ -124,8 +137,11 @@ async fn load_from_connection(
             .await
             .map_err(SettingsRepositoryError::Read)?
         {
-            provider_count = provider_count.saturating_add(1);
             let kind = decode_provider_kind(&read_string(&row, 0)?)?;
+            if provider_kinds.contains(&kind) || provider_kinds.len() == 3 {
+                return Err(SettingsRepositoryError::InvalidStoredData);
+            }
+            provider_kinds.push(kind);
             let endpoint = decode_endpoint(
                 read_optional_string(&row, 1)?,
                 read_optional_string(&row, 2)?,
@@ -156,8 +172,21 @@ async fn load_from_connection(
                 .map_err(|_| SettingsRepositoryError::InvalidStoredData)?;
         }
     }
+    let provider_count = provider_kinds.len();
     if provider_count != 0 && provider_count != 3 {
         return Err(SettingsRepositoryError::InvalidStoredData);
+    }
+    let mut invalid = Vec::new();
+    if provider_count == 3 {
+        (settings, invalid) = load_provider_profiles(connection, version, settings).await?;
+    } else {
+        // Genuine pre-V8 snapshots still obey the single-provider invariant.
+        let (coding, mapping) = load_llm_profiles(connection, version).await?;
+        let embedding = load_embedding_profile(connection, version).await?;
+        settings = DesktopSettings::from_stored_parts(
+            endpoint, credential, health, coding, mapping, embedding,
+        )
+        .map_err(|_| SettingsRepositoryError::InvalidStoredData)?;
     }
     if provider_count == 0
         && let Some(endpoint) = settings.endpoint().cloned()
@@ -193,7 +222,119 @@ async fn load_from_connection(
             )
             .map_err(|_| SettingsRepositoryError::InvalidStoredData)?;
     }
-    Ok(StoredDesktopSettings::new(version, settings))
+    Ok((StoredDesktopSettings::new(version, settings), invalid))
+}
+
+pub(crate) async fn inspect_profile_recovery(
+    catalog: &CatalogDatabase,
+) -> Result<DesktopSettingsRecovery, SettingsRepositoryError> {
+    catalog
+        .verify()
+        .await
+        .map_err(SettingsRepositoryError::Open)?;
+    let connection = catalog
+        .connection_for_operation()
+        .await
+        .map_err(SettingsRepositoryError::Open)?;
+    let (stored, invalid) = load_with_invalid_profiles(&connection).await?;
+    Ok(DesktopSettingsRecovery::new(stored.version(), &invalid))
+}
+
+pub(crate) async fn recover_invalid_profiles(
+    catalog: &CatalogDatabase,
+    expected: DesktopSettingsStoreVersion,
+) -> Result<StoredDesktopSettings, SettingsRepositoryError> {
+    catalog
+        .verify()
+        .await
+        .map_err(SettingsRepositoryError::Open)?;
+    let connection = catalog
+        .connection_for_operation()
+        .await
+        .map_err(SettingsRepositoryError::Open)?;
+    recover_from_connection(&connection, expected).await
+}
+
+async fn recover_from_connection(
+    connection: &Connection,
+    expected: DesktopSettingsStoreVersion,
+) -> Result<StoredDesktopSettings, SettingsRepositoryError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(SettingsRepositoryError::Begin)?;
+    let result = async {
+        if load_latest_version(&transaction).await? != expected {
+            return Err(SettingsRepositoryError::VersionConflict);
+        }
+        let (candidate, invalid) = load_with_invalid_profiles(&transaction).await?;
+        if invalid.is_empty() {
+            return Err(SettingsRepositoryError::InvalidStoredData);
+        }
+        validate_persistable(candidate.settings())?;
+        append_in_transaction(&transaction, expected, candidate.settings()).await
+    }
+    .await;
+    close(transaction, result).await
+}
+
+async fn load_provider_profiles(
+    connection: &Connection,
+    version: DesktopSettingsStoreVersion,
+    mut settings: DesktopSettings,
+) -> Result<(DesktopSettings, Vec<DesktopSettingsProfileRole>), SettingsRepositoryError> {
+    let mut rows = connection
+        .query(
+            "SELECT role, provider_id, model_id, context_tokens, output_tokens,
+         parallelism, temperature_milli, top_p_milli, schema_grounding,
+         structured_output, tool_call_mode, probed_at_unix_millis
+         FROM desktop_llm_profiles WHERE revision = ?1 ORDER BY role LIMIT 3",
+            [u64_to_i64(version.get())?],
+        )
+        .await
+        .map_err(SettingsRepositoryError::Read)?;
+    let mut seen = Vec::new();
+    let mut invalid = Vec::new();
+    while let Some(row) = rows.next().await.map_err(SettingsRepositoryError::Read)? {
+        let role = decode_role(&read_string(&row, 0)?)?;
+        if seen.contains(&role) {
+            return Err(SettingsRepositoryError::InvalidStoredData);
+        }
+        seen.push(role);
+        let selected = decode_llm_profile(&row).and_then(|profile| {
+            settings
+                .clone()
+                .with_stored_llm_profile(role, profile)
+                .map_err(|_| SettingsRepositoryError::InvalidStoredData)
+        });
+        match selected {
+            Ok(updated) => settings = updated,
+            Err(SettingsRepositoryError::InvalidStoredData) => invalid.push(match role {
+                LlmModelRole::Coding => DesktopSettingsProfileRole::Coding,
+                LlmModelRole::Mapping => DesktopSettingsProfileRole::Mapping,
+            }),
+            Err(error) => return Err(error),
+        }
+    }
+    let embedding = load_embedding_profile(connection, version)
+        .await
+        .and_then(|profile| match profile {
+            Some(profile) => settings
+                .clone()
+                .with_stored_embedding_profile(profile)
+                .map(Some)
+                .map_err(|_| SettingsRepositoryError::InvalidStoredData),
+            None => Ok(None),
+        });
+    match embedding {
+        Ok(Some(updated)) => settings = updated,
+        Ok(None) => {}
+        Err(SettingsRepositoryError::InvalidStoredData) => {
+            invalid.push(DesktopSettingsProfileRole::Embedding)
+        }
+        Err(error) => return Err(error),
+    }
+    Ok((settings, invalid))
 }
 
 /// Reads an existing catalog without creation, migration, configuration writes or credentials.
@@ -206,6 +347,10 @@ pub(crate) async fn read_only_snapshot(
         .await
         .map_err(SettingsRepositoryError::Read)?;
     let connection = database.connect().map_err(SettingsRepositoryError::Read)?;
+    load_from_connection(&connection).await
+}
+
+async fn supported_schema_version(connection: &Connection) -> Result<u32, SettingsRepositoryError> {
     let mut rows = connection
         .query("PRAGMA user_version", ())
         .await
@@ -224,7 +369,7 @@ pub(crate) async fn read_only_snapshot(
             },
         ));
     }
-    load_from_connection(&connection).await
+    Ok(version)
 }
 
 async fn append_in_transaction(
@@ -410,7 +555,7 @@ async fn insert_embedding_profile(
 }
 
 async fn load_latest_version(
-    transaction: &Transaction,
+    transaction: &Connection,
 ) -> Result<DesktopSettingsStoreVersion, SettingsRepositoryError> {
     let mut rows = transaction
         .query(
@@ -616,6 +761,28 @@ fn decode_health(
 }
 
 fn validate_persistable(settings: &DesktopSettings) -> Result<(), SettingsRepositoryError> {
+    let mut restored = DesktopSettings::from_stored_parts(
+        settings.endpoint().cloned(),
+        settings.credential(),
+        settings.provider_health(),
+        None,
+        None,
+        None,
+    )
+    .map_err(|_| SettingsRepositoryError::InvalidStoredData)?;
+    for slot in settings.providers() {
+        restored = restored
+            .with_stored_provider_state(
+                slot.kind(),
+                slot.endpoint().cloned(),
+                slot.enabled(),
+                slot.configuration_revision(),
+                slot.credential(),
+                slot.health(),
+                slot.connection_verified_at(),
+            )
+            .map_err(|_| SettingsRepositoryError::InvalidStoredData)?;
+    }
     for role in [LlmModelRole::Coding, LlmModelRole::Mapping] {
         if let Some(profile) = settings.llm_profile(role)
             && (profile.profile().source() != ModelProfileSource::Probe
@@ -628,9 +795,26 @@ fn validate_persistable(settings: &DesktopSettings) -> Result<(), SettingsReposi
         {
             return Err(SettingsRepositoryError::InvalidStoredData);
         }
+        if let Some(profile) = settings.llm_profile(role) {
+            restored = restored
+                .with_stored_llm_profile(role, profile.clone())
+                .map_err(|_| SettingsRepositoryError::InvalidStoredData)?;
+        }
+    }
+    if let Some(profile) = settings.embedding_profile() {
+        restored = restored
+            .with_stored_embedding_profile(profile.clone())
+            .map_err(|_| SettingsRepositoryError::InvalidStoredData)?;
+    }
+    if restored != *settings {
+        return Err(SettingsRepositoryError::InvalidStoredData);
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "settings_repository_tests.rs"]
+mod tests;
 
 fn encode_scope(scope: ModelEndpointScope) -> &'static str {
     match scope {
@@ -964,3 +1148,5 @@ impl fmt::Display for SettingsRepositoryError {
         })
     }
 }
+
+impl std::error::Error for SettingsRepositoryError {}

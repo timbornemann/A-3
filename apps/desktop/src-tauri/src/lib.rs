@@ -1981,6 +1981,36 @@ impl CompositionRoot {
             .await
     }
 
+    /// Returns a content-free recovery diagnosis without provider access.
+    pub async fn query_settings_recovery(
+        &self,
+    ) -> Result<a3_protocol::SettingsRecoveryResponseV1, CommandErrorV1> {
+        self.model_settings
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
+            .query_recovery()
+            .await
+    }
+
+    /// Commits a narrow profile recovery without accessing provider credentials.
+    pub async fn recover_invalid_model_profiles(
+        &self,
+        expected: a3_application::DesktopSettingsStoreVersion,
+    ) -> Result<a3_protocol::SettingsRecoveryResponseV1, CommandErrorV1> {
+        // A cached executor must not retain a deactivated binding. The next normal
+        // status read resolves the current valid mapping through its normal gate.
+        if let Some(manager) = &self.deep_map_manager {
+            manager
+                .configure_executor(None)
+                .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?;
+        }
+        self.model_settings
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
+            .recover_profiles(expected)
+            .await
+    }
+
     /// Configures one provider slot under Settings V2.
     pub async fn configure_model_provider_v2(
         &self,
@@ -4899,6 +4929,7 @@ fn map_agent_session_failure(error: AgentSessionManagerFailure) -> CommandErrorV
             ErrorCodeV1::AgentSessionRevisionConflict
         }
         AgentSessionManagerFailure::Busy => ErrorCodeV1::AgentSessionBusy,
+        AgentSessionManagerFailure::ModelPreparation(_) => ErrorCodeV1::ModelSettingsUnavailable,
         AgentSessionManagerFailure::NotFound | AgentSessionManagerFailure::Unavailable => {
             ErrorCodeV1::AgentSessionUnavailable
         }
@@ -6066,6 +6097,8 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_repository_tree,
             commands::query_health,
             commands::query_settings_v2,
+            commands::query_settings_recovery,
+            commands::recover_invalid_model_profiles,
             commands::query_ui_preferences,
             commands::rebuild_project_index,
             commands::resume_deep_map,

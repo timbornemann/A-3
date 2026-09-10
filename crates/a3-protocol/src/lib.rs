@@ -40,6 +40,8 @@ mod research_work;
 pub use research_work::*;
 mod repository_tree;
 mod settings;
+mod settings_recovery;
+pub use settings_recovery::*;
 mod task_lens;
 mod version;
 

@@ -324,6 +324,27 @@ impl std::fmt::Debug for LibsqlKnowledgeStore {
 }
 
 impl DesktopSettingsStore for LibsqlKnowledgeStore {
+    fn inspect_profile_recovery(
+        &self,
+    ) -> DesktopSettingsStoreFuture<'_, a3_application::DesktopSettingsRecovery> {
+        Box::pin(async move {
+            settings_repository::inspect_profile_recovery(&self.catalog)
+                .await
+                .map_err(|e| e.classify())
+        })
+    }
+
+    fn recover_invalid_profiles(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+    ) -> DesktopSettingsStoreFuture<'_, StoredDesktopSettings> {
+        Box::pin(async move {
+            settings_repository::recover_invalid_profiles(&self.catalog, expected)
+                .await
+                .map_err(|e| e.classify())
+        })
+    }
+
     fn load<'a>(&'a self) -> DesktopSettingsStoreFuture<'a, StoredDesktopSettings> {
         Box::pin(async move {
             settings_repository::load(&self.catalog)

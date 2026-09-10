@@ -85,6 +85,48 @@ impl ModelSettingsManager {
         Ok(self.map_settings_v2(&stored, self.probe_is_active()).await)
     }
 
+    /// Diagnoses invalid role bindings without reading credentials or contacting a provider.
+    pub async fn query_recovery(
+        &self,
+    ) -> Result<a3_protocol::SettingsRecoveryResponseV1, CommandErrorV1> {
+        let diagnosis = self
+            .store
+            .inspect_profile_recovery()
+            .await
+            .map_err(map_store_error)?;
+        let roles: Vec<_> = diagnosis
+            .roles()
+            .iter()
+            .map(|role| match role {
+                a3_application::DesktopSettingsProfileRole::Coding => ModelRoleV1::Coding,
+                a3_application::DesktopSettingsProfileRole::Mapping => ModelRoleV1::Mapping,
+                a3_application::DesktopSettingsProfileRole::Embedding => ModelRoleV1::Embedding,
+            })
+            .collect();
+        Ok(a3_protocol::SettingsRecoveryResponseV1::new(
+            diagnosis.version().get().to_string(),
+            &roles,
+        ))
+    }
+
+    /// Deactivates invalid bindings with the same operation lock as model probes.
+    /// Returns only a receipt: no credential reads and no provider access.
+    pub async fn recover_profiles(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+    ) -> Result<a3_protocol::SettingsRecoveryResponseV1, CommandErrorV1> {
+        let _operation = self.acquire_operation()?;
+        let stored = self
+            .store
+            .recover_invalid_profiles(expected)
+            .await
+            .map_err(map_store_error)?;
+        Ok(a3_protocol::SettingsRecoveryResponseV1::new(
+            stored.version().get().to_string(),
+            &[],
+        ))
+    }
+
     /// Configures one provider slot without contacting its endpoint.
     pub async fn configure_provider_v2(
         &self,
@@ -1734,6 +1776,117 @@ fn lock_recovering_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
+    #[derive(Debug)]
+    struct RecoveryStore;
+
+    impl DesktopSettingsStore for RecoveryStore {
+        fn load(&self) -> DesktopSettingsStoreFuture<'_, StoredDesktopSettings> {
+            Box::pin(async { Err(DesktopSettingsStoreFailure::InvalidStoredData) })
+        }
+        fn append<'a>(
+            &'a self,
+            _: DesktopSettingsStoreVersion,
+            _: &'a DesktopSettings,
+        ) -> DesktopSettingsStoreFuture<'a, StoredDesktopSettings> {
+            Box::pin(async { Err(DesktopSettingsStoreFailure::Unavailable) })
+        }
+        fn inspect_profile_recovery(
+            &self,
+        ) -> DesktopSettingsStoreFuture<'_, a3_application::DesktopSettingsRecovery> {
+            Box::pin(async {
+                Ok(a3_application::DesktopSettingsRecovery::new(
+                    DesktopSettingsStoreVersion::initial(),
+                    &[a3_application::DesktopSettingsProfileRole::Coding],
+                ))
+            })
+        }
+        fn recover_invalid_profiles(
+            &self,
+            expected: DesktopSettingsStoreVersion,
+        ) -> DesktopSettingsStoreFuture<'_, StoredDesktopSettings> {
+            Box::pin(async move {
+                if expected != DesktopSettingsStoreVersion::initial() {
+                    return Err(DesktopSettingsStoreFailure::VersionConflict);
+                }
+                Ok(StoredDesktopSettings::new(
+                    DesktopSettingsStoreVersion::new(1)
+                        .map_err(|_| DesktopSettingsStoreFailure::ResourceLimit)?,
+                    DesktopSettings::unconfigured(),
+                ))
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct ForbiddenCredentials(std::sync::atomic::AtomicUsize);
+    impl ProviderCredentialStore for ForbiddenCredentials {
+        fn load<'a>(
+            &'a self,
+            _: &'a ModelProviderId,
+        ) -> ProviderCredentialStoreFuture<'a, Option<ProviderCredential>> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Box::pin(async { Err(a3_application::ProviderCredentialStoreFailure::Unavailable) })
+        }
+        fn store<'a>(
+            &'a self,
+            _: &'a ModelProviderId,
+            _: &'a ProviderCredential,
+        ) -> ProviderCredentialStoreFuture<'a, ()> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Box::pin(async { Err(a3_application::ProviderCredentialStoreFailure::Unavailable) })
+        }
+        fn delete<'a>(&'a self, _: &'a ModelProviderId) -> ProviderCredentialStoreFuture<'a, ()> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Box::pin(async { Err(a3_application::ProviderCredentialStoreFailure::Unavailable) })
+        }
+    }
+
+    #[test]
+    fn recovery_is_reachable_on_invalid_settings_and_uses_the_probe_lock_without_keys()
+    -> Result<(), Box<dyn std::error::Error>> {
+        futures::executor::block_on(async {
+            let credentials =
+                Arc::new(ForbiddenCredentials(std::sync::atomic::AtomicUsize::new(0)));
+            let manager = ModelSettingsManager::new(Arc::new(RecoveryStore), credentials.clone());
+            assert_eq!(
+                manager.query_v2().await.map_err(|e| e.code()),
+                Err(ErrorCodeV1::LocalStorageInvalidData)
+            );
+            let diagnosis = manager
+                .query_recovery()
+                .await
+                .map_err(|e| format!("{:?}", e.code()))?;
+            assert_eq!(
+                serde_json::to_value(diagnosis)?["invalidProfiles"],
+                serde_json::json!(["coding"])
+            );
+            let operation = manager
+                .acquire_operation()
+                .map_err(|e| format!("{:?}", e.code()))?;
+            assert_eq!(
+                manager
+                    .recover_profiles(DesktopSettingsStoreVersion::initial())
+                    .await
+                    .map_err(|e| e.code()),
+                Err(ErrorCodeV1::ModelProbeAlreadyActive)
+            );
+            drop(operation);
+            assert_eq!(
+                manager
+                    .recover_profiles(DesktopSettingsStoreVersion::new(2)?)
+                    .await
+                    .map_err(|e| e.code()),
+                Err(ErrorCodeV1::InvalidSettingsRequest)
+            );
+            let receipt = manager
+                .recover_profiles(DesktopSettingsStoreVersion::initial())
+                .await
+                .map_err(|e| format!("{:?}", e.code()))?;
+            assert_eq!(serde_json::to_value(receipt)?["settingsRevision"], "1");
+            assert_eq!(credentials.0.load(std::sync::atomic::Ordering::Relaxed), 0);
+            Ok(())
+        })
+    }
     use super::{ModelSettingsManager, settings_version_from_v1};
     use a3_application::{
         DesktopSettings, DesktopSettingsStore, DesktopSettingsStoreFailure,

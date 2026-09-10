@@ -319,6 +319,30 @@ oder Netzwerk-Plugin-Berechtigung. Nach einem erfolgreichen Open startet der Rus
 einen besitzenden, begrenzten Repository-Watcher und aktualisiert den lokalen Index im Hintergrund.
 Diese Pfade erweitern die WebView-Capabilities nicht.
 
+## Modell-Einstellungen wiederherstellen
+
+Agent/Coding, Mapping und Embedding dürfen unterschiedliche Anbieter verwenden.
+Ein Rollenwechsel auf Ollama verändert beispielsweise ein vorhandenes OpenAI-Mapping
+nicht. Gespeicherte Rollen werden gegen ihren eigenen Anbieter geprüft, nicht gegen
+den früheren Einzelanbieter. Eine gültige gemischte Konfiguration benötigt keine
+Rücksetzung und keine erneute Modellprüfung.
+
+Falls Einstellungen nicht geladen werden können, bleibt **Modellkonfiguration prüfen**
+auf der Einstellungsseite erreichbar. Die lokale Diagnose verändert nichts und fragt
+keinen Anbieter an. Bei ungültigen Rollen zeigt sie die betroffenen Zuordnungen und
+bietet nach einer zweiten, ausdrücklichen Bestätigung deren Deaktivierung an.
+Gültige Modelle, Anbieter, API-Schlüssel, Projektindex und Projektwissen bleiben
+erhalten. Der vorherige Snapshot bleibt in der Historie. Betroffene Modelle müssen
+anschließend neu ausgewählt und verifiziert werden. Bei gleichzeitig geänderten
+Einstellungen ist zuerst eine neue Diagnose erforderlich.
+
+Physische Katalogschäden oder ungültige Anbieter-/Credentialanker werden nicht mit
+einem pauschalen Datenbankreset übergangen. In diesem Fall A^3 beenden, den privaten
+App-Datenordner sichern und eine unterstützte Katalog-Wiederherstellung durchführen.
+Die Modellprofil-Recovery ist kein allgemeines Datenbank-Reparaturwerkzeug.
+Siehe [Plan 12](docs/plans/12-SETTINGS_RECOVERY.md) und
+[ADR-0106](docs/adrs/0106-gezielte-modellprofil-wiederherstellung.md).
+
 ## Lokale Qualitätsgates
 
 Die Desktopoberfläche folgt dem [A^3 Corporate Design](docs/corporate-design-a3.md):

@@ -389,7 +389,13 @@ impl CommandErrorV1 {
     /// Creates a safe global Settings or model-probe failure.
     #[must_use]
     pub fn settings(code: ErrorCodeV1) -> Self {
-        Self::project_open(code)
+        match code {
+            ErrorCodeV1::LocalStorageInvalidData => Self::new(
+                code,
+                "The saved model settings could not be validated. Open Settings to diagnose and recover invalid model profiles. Project data has not been reset.",
+            ),
+            _ => Self::project_open(code),
+        }
     }
 
     /// Creates a safe active-project ignore or command Settings failure.

@@ -55,6 +55,25 @@ afterEach(() => {
 });
 
 describe('AgentAskResearch', () => {
+  it('does not describe a preparation failure as a limited search', async () => {
+    render(AgentAskResearch, {
+      detailLoader: async () =>
+        detailResponse([
+          step('Projektstand wird gebunden', '100', 'preparing', 'completed'),
+          {
+            ...step('Recherche fehlgeschlagen', '101', 'completed', 'failed'),
+            completeness: 'limited',
+          },
+        ]),
+      sourcesLoader: emptySources,
+      refreshKey: '1',
+      sessionId: id('1'),
+      userSequence: '1',
+    });
+    await fireEvent.click(await screen.findByText('Recherche & Quellen'));
+    expect(await screen.findByText('Quellen')).toBeTruthy();
+    expect(screen.queryByText(/Mindestens eine Suche/)).toBeNull();
+  });
   it('retains required questions outside the sliding timeline and labels interpretations', async () => {
     const response = detailResponse([step('Aktuelle Recherche', '100')]);
     const detail: AgentAskResearchDetailV1 = {

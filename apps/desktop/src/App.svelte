@@ -453,7 +453,7 @@
       case 'noProject':
         return { tone: 'neutral', value: 'Kein Projekt geöffnet' };
       case 'unavailable':
-        return { tone: 'warning', value: 'Kein verifiziertes Mapping-Modell' };
+        return { tone: 'warning', value: 'Mapping nicht verfügbar · Einstellungen prüfen' };
     }
   }
 

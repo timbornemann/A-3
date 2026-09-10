@@ -83,6 +83,121 @@ where
     );
     assert!(changed.settings().embedding_profile().is_none());
 
+    // Reproduce the desktop sequence: a legacy OpenAI endpoint, both roles on
+    // OpenAI, then only Coding moved to Ollama. Provider slots, not the legacy
+    // singleton, own role validity in V8.
+    use a3_application::{ModelEndpointAccess, ModelProviderKind, ProviderCredentialRequirement};
+    let openai = ConfiguredModelEndpoint::from_validated_adapter_with_security(
+        ModelProviderId::try_from_string("openai".to_owned())?,
+        "https://api.openai.com".to_owned(),
+        ModelEndpointScope::Remote,
+        ModelEndpointAccess::ExplicitUserInitiatedRemote,
+        ProviderCredentialRequirement::ApiKey,
+    )?;
+    let settings = changed.settings().clone().with_endpoint(Some(openai));
+    let (settings, generation) = settings.begin_credential_store()?;
+    let at = SettingsTimestamp::from_unix_millis(20_000)?;
+    let settings = settings
+        .complete_credential_store(generation)?
+        .with_llm_probe(
+            LlmModelRole::Coding,
+            llm_profile_for("openai", ModelStructuredOutputCapability::Verified)?,
+            at,
+        )?
+        .with_llm_probe(
+            LlmModelRole::Mapping,
+            llm_profile_for("openai", ModelStructuredOutputCapability::Verified)?,
+            at,
+        )?
+        .with_provider_connection_verified(ModelProviderKind::Ollama, at)?
+        .with_provider_enabled(ModelProviderKind::Ollama, true)?;
+    let before = reopened.append(changed.version(), &settings).await?;
+    assert_eq!(reopened.load().await?, before);
+    let mixed = settings.with_provider_llm_probe(
+        ModelProviderKind::Ollama,
+        LlmModelRole::Coding,
+        llm_profile(ModelStructuredOutputCapability::Verified)?,
+        at,
+    )?;
+    let mixed = reopened.append(before.version(), &mixed).await?;
+    assert_eq!(
+        reopened.load().await?,
+        mixed,
+        "mixed roles must survive the next read"
+    );
+    let third = factory.open(&app_data_root).await?;
+    assert_eq!(
+        third.load().await?,
+        mixed,
+        "mixed roles must survive reopening"
+    );
+    assert_eq!(
+        mixed.settings().llm_profile(LlmModelRole::Mapping),
+        before.settings().llm_profile(LlmModelRole::Mapping)
+    );
+    assert_eq!(
+        mixed.settings().provider(ModelProviderKind::OpenAi),
+        before.settings().provider(ModelProviderKind::OpenAi)
+    );
+
+    // All three roles may use independent slots; changing Coding repeatedly must
+    // preserve the exact Mapping profile, including probe time and credentials.
+    let gemini = ConfiguredModelEndpoint::from_validated_adapter_with_security(
+        ModelProviderId::try_from_string("gemini".to_owned())?,
+        "https://generativelanguage.googleapis.com".to_owned(),
+        ModelEndpointScope::Remote,
+        ModelEndpointAccess::ExplicitUserInitiatedRemote,
+        ProviderCredentialRequirement::ApiKey,
+    )?;
+    let settings = mixed
+        .settings()
+        .clone()
+        .with_provider_endpoint(ModelProviderKind::Gemini, Some(gemini));
+    let (settings, generation) =
+        settings.begin_provider_credential_store(ModelProviderKind::Gemini)?;
+    let settings = settings
+        .complete_provider_credential_store(ModelProviderKind::Gemini, generation)?
+        .with_provider_connection_verified(ModelProviderKind::Gemini, at)?
+        .with_provider_enabled(ModelProviderKind::Gemini, true)?
+        .with_provider_embedding_probe(ModelProviderKind::Ollama, embedding_profile()?, at)?;
+    let mut current = third.append(mixed.version(), &settings).await?;
+    for kind in [
+        ModelProviderKind::Gemini,
+        ModelProviderKind::OpenAi,
+        ModelProviderKind::Ollama,
+    ] {
+        let changed = current.settings().clone().with_provider_llm_probe(
+            kind,
+            LlmModelRole::Coding,
+            llm_profile_for(
+                kind.provider_id(),
+                ModelStructuredOutputCapability::Verified,
+            )?,
+            at,
+        )?;
+        current = third.append(current.version(), &changed).await?;
+        assert_eq!(third.load().await?, current);
+        assert_eq!(
+            current.settings().llm_profile(LlmModelRole::Mapping),
+            before.settings().llm_profile(LlmModelRole::Mapping)
+        );
+        assert_eq!(
+            current
+                .settings()
+                .provider(ModelProviderKind::OpenAi)
+                .credential(),
+            before
+                .settings()
+                .provider(ModelProviderKind::OpenAi)
+                .credential()
+        );
+        assert!(current.settings().embedding_profile().is_some());
+    }
+    let fourth = factory.open(&app_data_root).await?;
+    assert_eq!(fourth.load().await?, current);
+    crate::release_contract_store(fourth);
+    crate::release_contract_store(third);
+
     crate::release_contract_store(reopened);
     crate::release_contract_store(store);
     crate::complete_contract_phase()
@@ -93,8 +208,15 @@ fn provider_id() -> ContractResult<ModelProviderId> {
 }
 
 fn llm_profile(capability: ModelStructuredOutputCapability) -> ContractResult<ModelProfile> {
+    llm_profile_for("ollama", capability)
+}
+
+fn llm_profile_for(
+    provider: &str,
+    capability: ModelStructuredOutputCapability,
+) -> ContractResult<ModelProfile> {
     Ok(ModelProfile::from_probe(
-        provider_id()?,
+        ModelProviderId::try_from_string(provider.to_owned())?,
         ModelId::try_from_string("coder-local".to_owned())?,
         ModelProfileSettings::new(
             ModelContextLimit::new(32_768)?,

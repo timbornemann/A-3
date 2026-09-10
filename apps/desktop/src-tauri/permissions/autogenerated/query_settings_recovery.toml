@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-query-settings-recovery"
+description = "Enables the query_settings_recovery command without any pre-configured scope."
+commands.allow = ["query_settings_recovery"]
+
+[[permission]]
+identifier = "deny-query-settings-recovery"
+description = "Denies the query_settings_recovery command without any pre-configured scope."
+commands.deny = ["query_settings_recovery"]

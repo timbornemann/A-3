@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { parseCommandErrorV1 } from './command-error';
   import ProjectSettingsPanel from './ProjectSettingsPanel.svelte';
+  import SettingsRecovery from './SettingsRecovery.svelte';
   import ThemeControls from './ThemeControls.svelte';
   import ModelProviderCard from './ModelProviderCard.svelte';
   import ModelSelectionDialog, { type ModelOption } from './ModelSelectionDialog.svelte';
@@ -932,6 +933,12 @@
 
   function recoveryMessage(error: unknown): string {
     const parsed = parseCommandErrorV1(error);
+    if (parsed?.code === 'localStorageInvalidData') {
+      return 'Die gespeicherten Modell-Einstellungen konnten nicht sicher geladen werden. Prüfe die Modellkonfiguration unten. Das bedeutet nicht, dass dein Projektindex beschädigt ist.';
+    }
+    if (parsed?.code === 'localStorageCorrupt') {
+      return 'Der lokale Katalog kann nicht sicher gelesen werden. Deine Daten werden nicht automatisch zurückgesetzt.';
+    }
     if (parsed?.code === 'modelEndpointInvalid') {
       return 'Der Endpoint ist ungültig, enthält Credentials oder ist für diese lokale Aktion nicht freigegeben.';
     }
@@ -1011,6 +1018,7 @@
         <button type="button" onclick={legacyLoaderProvided ? loadSettings : loadSettingsV2}
           >Erneut laden</button
         >
+        <SettingsRecovery onrecovered={legacyLoaderProvided ? loadSettings : loadSettingsV2} />
       </div>
     {:else}
       {#if settingsView === 'general'}

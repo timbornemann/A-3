@@ -119,7 +119,7 @@ impl AgentConversationRuntime {
         let stored = GetDesktopSettings::new(Arc::clone(&self.settings))
             .execute()
             .await
-            .map_err(|_| AgentConversationFailure::Unavailable)?;
+            .map_err(|_| AgentConversationFailure::SettingsUnavailable)?;
         let settings = stored.settings();
         let (endpoint, profile) =
             executable_coding(settings).ok_or(AgentConversationFailure::ModelNotConfigured)?;
@@ -573,6 +573,7 @@ impl ConversationStreamFailure {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AgentConversationFailure {
+    SettingsUnavailable,
     Stream(ConversationStreamFailure),
     Cancelled,
     InvalidInput,
@@ -589,6 +590,7 @@ pub(crate) enum AgentConversationFailure {
 impl fmt::Display for AgentConversationFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::SettingsUnavailable => "model settings could not be loaded",
             Self::Stream(reason) => reason.code(),
             Self::Cancelled => "conversation model request was cancelled",
             Self::InvalidInput => "conversation input is invalid",

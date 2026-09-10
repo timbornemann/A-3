@@ -27,6 +27,22 @@ function response(overrides: Partial<SettingsResponseV1['settings']> = {}): Sett
   };
 }
 
+it('keeps local model recovery reachable when settings fail to load', async () => {
+  render(SettingsPanel, {
+    settingsLoaderV2: async () => {
+      throw {
+        protocolVersion: 1,
+        code: 'localStorageInvalidData',
+        message: 'Local A^3 storage contains invalid project data.',
+      };
+    },
+  });
+  expect(await screen.findByRole('button', { name: 'Modellkonfiguration prüfen' })).toBeTruthy();
+  expect(screen.getByText(/bedeutet nicht, dass dein Projektindex beschädigt ist/)).toBeTruthy();
+  expect(screen.queryByText(/contains invalid project data/)).toBeNull();
+  expect(screen.getByRole('button', { name: 'Erneut laden' })).toBeTruthy();
+});
+
 const localEndpoint = {
   access: 'local' as const,
   origin: 'http://127.0.0.1:11434',

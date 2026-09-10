@@ -535,7 +535,7 @@ impl AgentAskResearcher {
                     state,
                     action,
                     None,
-                    AskResearchCompleteness::Limited,
+                    AskResearchCompleteness::NotApplicable,
                 ) {
                     let _ignored = self.trace.append_event(project, &event).await;
                 }
@@ -565,7 +565,7 @@ impl AgentAskResearcher {
                     .as_deref(),
             )
             .await
-            .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
+            .map_err(AgentSessionManagerFailure::ModelPreparation)?;
         let mut state = AskResearchWorkingSet::new(evidence_budget);
         state.design_basis = runtime.design_basis();
         if query.len().saturating_add(256) > evidence_budget {
@@ -7714,6 +7714,9 @@ fn random_id() -> Result<[u8; 32], AgentSessionManagerFailure> {
 
 const fn safe_failure_message(error: AgentConversationFailure) -> &'static str {
     match error {
+        AgentConversationFailure::SettingsUnavailable => {
+            "A^3 konnte die Modell-Einstellungen nicht laden. Öffne Einstellungen und prüfe dort die Modellkonfiguration. Eine Index-Aktualisierung behebt diesen Einstellungsfehler nicht."
+        }
         AgentConversationFailure::Stream(reason) => reason.code(),
         AgentConversationFailure::Cancelled => "Die Modellanfrage wurde abgebrochen.",
         AgentConversationFailure::ModelNotConfigured => {
@@ -7743,6 +7746,7 @@ const fn safe_failure_message(error: AgentConversationFailure) -> &'static str {
 
 const fn safe_manager_failure_message(error: AgentSessionManagerFailure) -> &'static str {
     match error {
+        AgentSessionManagerFailure::ModelPreparation(error) => safe_failure_message(error),
         AgentSessionManagerFailure::InvalidInput | AgentSessionManagerFailure::InvalidOutput => {
             "A^3 konnte die vorbereiteten Informationen nicht sicher verarbeiten. Prüfe den Projektindex und versuche es erneut."
         }
@@ -7832,6 +7836,7 @@ pub(crate) enum PresentationMutation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AgentSessionManagerFailure {
+    ModelPreparation(AgentConversationFailure),
     InvalidInput,
     InvalidOutput,
     NotFound,
@@ -7867,6 +7872,7 @@ impl From<AskResearchStoreFailure> for AgentSessionManagerFailure {
 impl fmt::Display for AgentSessionManagerFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::ModelPreparation(_) => "Agent model preparation failed",
             Self::InvalidInput => "Agent session input is invalid",
             Self::InvalidOutput => "Agent session output is invalid",
             Self::NotFound => "Agent session was not found",
@@ -7901,6 +7907,25 @@ impl Drop for AgentSessionManager {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn model_settings_preparation_failures_keep_their_actionable_cause() {
+        let message = super::safe_manager_failure_message(
+            super::AgentSessionManagerFailure::ModelPreparation(
+                super::AgentConversationFailure::SettingsUnavailable,
+            ),
+        );
+        assert!(message.contains("Modell-Einstellungen"));
+        assert!(!message.contains("Aktualisiere den Projektindex"));
+        assert!(!super::is_transient_conversation_failure(
+            super::AgentConversationFailure::SettingsUnavailable
+        ));
+        let message = super::safe_manager_failure_message(
+            super::AgentSessionManagerFailure::ModelPreparation(
+                super::AgentConversationFailure::ModelNotConfigured,
+            ),
+        );
+        assert!(message.contains("verifiziere zuerst"));
+    }
     use super::{
         AgentConversationFailure, AskResearchWorkingSet, ConversationTaskLensControl,
         ConversationTerminal, PlanConversationResponse, QueueDispatchTrigger, ResearchStopReason,

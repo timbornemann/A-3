@@ -925,6 +925,31 @@ pub async fn query_settings_v2(
 }
 
 #[tauri::command]
+/// Diagnoses invalid model profiles without activating partial settings.
+pub async fn query_settings_recovery(
+    request: QuerySettingsRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<a3_protocol::SettingsRecoveryResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    root.query_settings_recovery().await
+}
+
+#[tauri::command]
+/// Explicitly deactivates only natively diagnosed invalid profiles, with revision CAS.
+pub async fn recover_invalid_model_profiles(
+    request: a3_protocol::RecoverModelProfilesRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<a3_protocol::SettingsRecoveryResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let expected = settings_version_from_v1(request.expected_settings_revision())?;
+    root.recover_invalid_model_profiles(expected).await
+}
+
+#[tauri::command]
 /// Configures one provider slot under the V2 contract.
 pub async fn configure_model_provider_v2(
     request: ConfigureModelProviderRequestV2,
