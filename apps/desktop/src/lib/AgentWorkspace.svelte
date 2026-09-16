@@ -339,14 +339,6 @@
     return selectedSession?.modeOptions?.find((option) => option.mode === mode)?.selectable ?? true;
   }
 
-  function modeRequiresPlanReview(mode: AgentSessionModeV1): boolean {
-    if (mode !== 'agent') return false;
-    return (
-      selectedSession?.modeOptions?.find((option) => option.mode === mode)?.requiresPlanReview ??
-      selectedSummary?.mode !== 'agent'
-    );
-  }
-
   $effect(() => {
     if (activeProject && !observedProject) {
       observedProject = true;
@@ -1941,17 +1933,14 @@
               disabled={!modeIsSelectable('agent')}
               class:executing={selectedSummary?.mode === 'agent' &&
                 selectedSummary.state === 'running'}
-              class:requires-review={targetMode === 'agent' && modeRequiresPlanReview('agent')}
               aria-pressed={targetMode === 'agent'}
               onclick={() => (targetMode = 'agent')}
               ><strong>Umsetzen</strong><span
                 >{selectedSummary?.mode === 'agent' && selectedSummary.state === 'running'
                   ? 'Wird ausgeführt'
-                  : targetMode === 'agent' && modeRequiresPlanReview('agent')
-                    ? 'Nach Planfreigabe'
-                    : targetMode === 'agent'
-                      ? 'Als Nächstes'
-                      : 'Sicher umsetzen'}</span
+                  : targetMode === 'agent'
+                    ? 'Als Nächstes'
+                    : 'Sicher umsetzen'}</span
               ></button
             >
           </div>
@@ -2757,9 +2746,6 @@
     content: '';
     background: var(--color-status-pending);
     box-shadow: 0 0 0 3px var(--color-status-pending-ring);
-  }
-  .mode-switch button.requires-review span {
-    color: var(--color-warning);
   }
   .mode-switch span {
     font-size: var(--font-size-xs);

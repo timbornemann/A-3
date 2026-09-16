@@ -92,7 +92,9 @@ Cancellation. Ein produktiver Agentenversuch
 besitzt entsprechend ausschließlich die monotone Turn-Skala. Untergeordnete Kontext-, Index-,
 Patch- und Prozessoperationen dürfen diese Scheduler-Skala weder ersetzen noch auf einen kleineren
 Wert zurücksetzen. Nach Annahme einer Nachricht wird jede laufende Session dauerhaft in
-`Completed`, `AwaitingUser`, `AwaitingPlanReview`, `Failed` oder `Cancelled` überführt. Das gilt
+`Completed`, `AwaitingUser`, `AwaitingPlanReview`, `Running`, `Failed` oder `Cancelled` überführt.
+Plan-Conversationjobs enden in `AwaitingPlanReview` oder einem Nutzerhalt; ein belegter Agent-Plan
+bleibt in `Running`, sobald Goal, Ledger und Run materialisiert sind. Das gilt
 auch bei einem Workerfehler, einer vollen Queue und einem Abbruch ohne noch sichtbaren Job-Snapshot;
 ein konkurrierender Abschluss wird über die Session-Revision idempotent aufgelöst.
 

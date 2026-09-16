@@ -552,7 +552,7 @@ describe('AgentWorkspace', () => {
     response.result.session.modeOptions = [
       { mode: 'ask', requiresPlanReview: false, selectable: true },
       { mode: 'plan', requiresPlanReview: false, selectable: true },
-      { mode: 'agent', requiresPlanReview: true, selectable: true },
+      { mode: 'agent', requiresPlanReview: false, selectable: true },
     ];
     response.result.session.queuedMessages = [
       {
@@ -599,13 +599,13 @@ describe('AgentWorkspace', () => {
     );
   });
 
-  it('honors the Core-owned selectable modes and plan-review marker', async () => {
+  it('honors the Core-owned selectable modes without an Agent plan-review halt', async () => {
     const response = askSession('completed');
     if (response.result.status !== 'available') throw new Error('fixture must be available');
     response.result.session.modeOptions = [
       { mode: 'ask', requiresPlanReview: false, selectable: true },
       { mode: 'plan', requiresPlanReview: false, selectable: false },
-      { mode: 'agent', requiresPlanReview: true, selectable: true },
+      { mode: 'agent', requiresPlanReview: false, selectable: true },
     ];
     const sessionSummary = response.result.session.summary;
     render(AgentWorkspace, {
@@ -622,7 +622,12 @@ describe('AgentWorkspace', () => {
     const agent = screen.getByRole('button', { name: /Agent\s*Änderungen ausführen/u });
     await waitFor(() => expect((plan as HTMLButtonElement).disabled).toBe(true));
     await fireEvent.click(agent);
-    expect(agent.textContent).toContain('Nach Planfreigabe');
+    expect(agent.getAttribute('aria-pressed')).toBe('true');
+    expect(agent.textContent).not.toContain('Nach Planfreigabe');
+    expect(agent.textContent).toContain('Als Nächstes');
+    const ask = screen.getByRole('button', { name: /Ask\s*Nur lesen und antworten/u });
+    await fireEvent.click(ask);
+    expect(agent.textContent).toContain('Sicher umsetzen');
   });
 
   it('keeps the header menu keyboard reachable and returns focus on Escape', async () => {

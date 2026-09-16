@@ -126,6 +126,13 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0100](0100-quellenlokale-recherche-im-vergleich.md) | Quellenlokale Recherche im kontrollierten Vergleich |
 | [0101](0101-grosszuegigere-originalzitate-in-source-review.md) | Großzügigere Originalzitate in SourceReview |
 | [0102](0102-originalgebundene-operationshinweise.md) | Originalgebundene Operationshinweise |
+| [0103](0103-explizite-befehlsnamen-im-plan.md) | Explizite Befehlsnamen im Plan |
+| [0104](0104-befehlspruefung-ohne-kontextdopplung.md) | Befehlsprüfung ohne Kontextdopplung |
+| [0105](0105-originalgebundene-entwurfsbasis-im-vergleich.md) | Originalgebundene Entwurfsbasis im Vergleich |
+| [0106](0106-gezielte-modellprofil-wiederherstellung.md) | Gezielte Modellprofil-Wiederherstellung |
+| [0107](0107-lan-ollama-und-openai-kompatibler-provider.md) | LAN-Ollama und OpenAI-kompatibler Provider |
+| [0108](0108-fast-index-laufinspektor.md) | Fast-Index-Laufinspektor |
+| [0109](0109-autonomer-agent-einstieg.md) | Autonomer Agent-Einstieg ohne Nutzer-Planfreigabe |
 
 ## Neue ADRs
 

@@ -736,6 +736,8 @@ pub struct AgentSessionModeOptionV1 {
     /// Whether the mode can be selected for the next message.
     pub selectable: bool,
     /// Whether this choice must stop at a fresh plan review.
+    ///
+    /// After ADR-0109 this is always `false`. The field remains on the V33 wire.
     pub requires_plan_review: bool,
 }
 
@@ -788,7 +790,7 @@ pub enum AgentMessageSubmissionOutcomeV1 {
     Started,
     /// The message was durably queued.
     Queued,
-    /// Agent intent is being prepared as a fresh Plan requiring review.
+    /// Legacy outcome: Agent intent was remapped to Plan review. Current Core never emits this.
     RequiresPlanReview,
 }
 
@@ -1094,8 +1096,9 @@ impl UiPreferencesResponseV1 {
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentResearchDepthSelectionV1, AgentSessionModeV1, AgentSessionsResultV1,
-        ControlAgentSessionRequestV2, SubmitAgentMessageRequestV1, SubmitAgentMessageRequestV4,
+        AgentMessageSubmissionOutcomeV1, AgentResearchDepthSelectionV1, AgentSessionModeV1,
+        AgentSessionsResultV1, ControlAgentSessionRequestV2, SubmitAgentMessageRequestV1,
+        SubmitAgentMessageRequestV4,
     };
     use crate::ProtocolVersion;
 
@@ -1180,6 +1183,16 @@ mod tests {
             "taskId": "b".repeat(64)
         });
         assert!(serde_json::from_value::<ControlAgentSessionRequestV2>(invalid).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn v4_submit_still_decodes_the_legacy_requires_plan_review_outcome()
+    -> Result<(), serde_json::Error> {
+        let outcome = serde_json::from_value::<AgentMessageSubmissionOutcomeV1>(
+            serde_json::json!("requiresPlanReview"),
+        )?;
+        assert_eq!(outcome, AgentMessageSubmissionOutcomeV1::RequiresPlanReview);
         Ok(())
     }
 }

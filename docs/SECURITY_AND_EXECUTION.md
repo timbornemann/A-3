@@ -684,9 +684,11 @@ Quellcode, Embeddings, Projektkarten, Prompts und Logs werden nie ohne ausdrück
 Die ADR-0041-Nachrichtenwarteschlange ist keine zusätzliche Autorität. Vor der Persistenz prüft
 der Rust-Core Zielmodus, Slash-Command-Profil, Rechercheauswahl und UTF-8-Grenzen; vor dem Start
 prüft er Sessionrevision, Capability und aktuelle Projektanker erneut. Ein vorgemerkter
-Agent-Auftrag umgeht weder eine neue Planfreigabe nach Ask/Plan noch Policy, Approval, Reindex oder
-Verification. Queue-Requests akzeptieren nur eine opake sessiongebundene Referenz und die exakte
-Queue-Revision. Modus-Chips und deaktivierte UI-Schritte sind ausschließlich Darstellung.
+Agent-Auftrag umgeht weder Recherche, `AgentWorkPlan`, Policy, Approval, Reindex noch
+Verification. Nach Ask oder Plan erzeugt er einen neuen Arbeitsplan und materialisiert ihn nach
+ADR-0109 ohne Nutzer-Planfreigabe. Queue-Requests akzeptieren nur eine opake sessiongebundene
+Referenz und die exakte Queue-Revision. Modus-Chips und deaktivierte UI-Schritte sind
+ausschließlich Darstellung.
 
 ADR-0066 erlaubt für Gemini und OpenAI zusätzlich credentialfreie HTTPS-Origins ohne Pfad, Query,
 Fragment oder Userinfo. Der jeweilige Adapter validiert den nativen Wire-Vertrag; erst danach

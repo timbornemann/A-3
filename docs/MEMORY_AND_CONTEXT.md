@@ -779,16 +779,19 @@ Ein `sufficient`-Plan muss bereits an der Decision-Grenze die fünf Planabschnit
 die Kompilierung durch `AgentWorkPlan` bestehen. Ein Formfehler nutzt denselben Einzelrepair
 wie JSON-/Quellenfehler, statt als erfundene Nutzerfrage veröffentlicht zu werden. Auch eine
 danach noch fehlende Zielattribution erhält keinen zweiten Repair desselben Dokuments.
-Echte explizite `QUESTION:`-Antworten bleiben ohne erzwungene Quellen gültig. Ein gültiger Plan
-wird als neue Revision in `AwaitingPlanReview` gespeichert; daraus entsteht keine Ausführung.
-Auch unvollständige Antworten ohne nächste mögliche Aktion zählen zu den zwei Nullrunden.
+Echte explizite `QUESTION:`-Antworten bleiben ohne erzwungene Quellen gültig. Ein gültiger Plan im Plan-Modus wird als neue Revision in `AwaitingPlanReview` gespeichert; daraus
+entsteht keine Ausführung. Derselbe belegte Plan im Agent-Modus materialisiert Goal, Ledger und
+Run ohne Nutzerfreigabe. Auch unvollständige Antworten ohne nächste mögliche Aktion zählen zu den
+zwei Nullrunden.
 Es gibt weder ein Budgetreset noch ein automatisches Hochstufen von `incomplete` zu `sufficient`.
 
 Eine nach ADR-0041 vorgemerkte Nachricht übernimmt keine fachlichen Task-, Run-, Evidence- oder
 Plananker des vorherigen Work Items. Der Zielmodus wird erst beim FIFO-Start atomar zum
-Sessionmodus. Nach Ask oder Plan werden frühere Agent-Anker nur im Verlauf dargestellt; ein neuer
-Agent-Auftrag erhält erst nach aktueller Recherche und ausdrücklicher Planfreigabe einen neuen
-`ResearchHandoff`, Goal Contract und Task Ledger.
+Sessionmodus. Nach Ask oder Plan werden frühere Agent-Anker nur im Verlauf dargestellt. Ein neuer
+Agent-Auftrag erhält nach aktueller Recherche und Core-validiertem `AgentWorkPlan` einen neuen
+`ResearchHandoff`, Goal Contract und Task Ledger; eine Nutzer-Planfreigabe ist dafür nicht
+erforderlich. Plan-Aufträge bleiben in `AwaitingPlanReview`, bis `ImplementPlan` die exakte
+sichtbare Revision übergibt.
 
 Ein nach ADR-0039 validierter Slash-Aufruf wird getrennt als `CommandExecutionProfile` in die
 Kontextkompilierung eingebunden. Der Core erzeugt daraus feste Constraints für Ziel, Linse,

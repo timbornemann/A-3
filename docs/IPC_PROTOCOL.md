@@ -478,11 +478,13 @@ sichtbarer Usersequenz ausschließlich die persistierten Command-Chips und Diagr
 ADR-0041 ergänzt `query_agent_session_v3` um die drei Core-abgeleiteten nächsten Modusoptionen,
 eine monotone Queue-Revision, den Pausenzustand und höchstens 16 einzeilige FIFO-Zusammenfassungen.
 `submit_agent_message_v4` verlangt für jede Nachricht `targetMode` und liefert geschlossen
-`started`, `queued` oder `requiresPlanReview`. Ein Agent-Ziel ohne ungebrochene Agent-Kontinuität
-wird im Core als read-only Planvorbereitung ausgeführt und kann erst nach Freigabe der exakten
-Planrevision mutieren. `control_agent_session_v2` startet ausschließlich die angegebene
-Planrevision und unterscheidet `started`, `queued`, `planChanged`, `indexChanged` und
-`unavailable`; der aktuelle Plan- und Indexanker wird vor der ersten Mutation geprüft.
+`started` oder `queued`. Das Legacy-Outcome `requiresPlanReview` bleibt dekodierbar, wird vom
+aktuellen Core aber nicht erzeugt. Ein Agent-Ziel bleibt Agent: nach begrenzter Recherche und
+gültigem `AgentWorkPlan` materialisiert derselbe Conversation-Job Goal, Ledger und Run.
+`modeOptions.requiresPlanReview` ist dauerhaft `false`. `control_agent_session_v2` startet
+ausschließlich die angegebene Planrevision aus Plan + `AwaitingPlanReview` und unterscheidet
+`started`, `queued`, `planChanged`, `indexChanged` und `unavailable`; der aktuelle Plan- und
+Indexanker wird vor der ersten Mutation geprüft.
 `control_agent_session_queue` darf ausschließlich einen noch wartenden
 Eintrag über seine Sessionbindung entfernen oder eine pausierte Queue ausdrücklich fortsetzen.
 Die WebView übergibt keine Worktree-, Task-, Run-, Evidence-, Snapshot-, Provider-, Pfad- oder

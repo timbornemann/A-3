@@ -142,14 +142,15 @@ Stand: 2026-08-03
 16. Die Auswahl eines Conversation-Modus gilt nur für das nächste unabhängige Work Item und DARF
     keinen laufenden Besitzer umschalten. Dauerhafte Folgenachrichten MÜSSEN begrenzt, FIFO-geordnet
     und vor Persistenz sowie Start Core-validiert sein. Ein Wechsel aus Agent zu Ask oder Plan
-    verwirft die Ausführbarkeit des früheren Plans; spätere Mutation benötigt eine neue exakte
-    Planfreigabe.
-17. Ein bestätigter Conversation-Plan MUSS vor der Task-Materialisierung in einen begrenzten,
-    Core-validierten Arbeitsplan mit einzeln verifizierbaren Schritten übersetzt werden. Neue
-    Evidence darf ausschließlich über eine append-only Ledger-Revision weitere Schritte
-    einfügen oder offene Schritte ersetzen; abgeschlossene Schritte werden weder umgeschrieben
-    noch stillschweigend entwertet. Automatische Replans bleiben endlich und genau eine Mutation
-    darf weiterhin den Worktree besitzen.
+    verwirft die Ausführbarkeit des früheren Plans. Plan-Mutation benötigt eine neue exakte
+    Planfreigabe. Der Zielmodus Agent erzeugt einen neuen Core-validierten Arbeitsplan und
+    materialisiert ihn ohne Nutzer-Planfreigabe.
+17. Ein Core-validierter Conversation-Plan MUSS vor der Task-Materialisierung in einen begrenzten,
+    einzeln verifizierbaren Arbeitsplan übersetzt werden, ob er aus Planfreigabe oder autonomem
+    Agent-Einstieg stammt. Neue Evidence darf ausschließlich über eine append-only Ledger-Revision
+    weitere Schritte einfügen oder offene Schritte ersetzen; abgeschlossene Schritte werden weder
+    umgeschrieben noch stillschweigend entwertet. Automatische Replans bleiben endlich und genau
+    eine Mutation darf weiterhin den Worktree besitzen.
 18. Eine Conversation-Antwort DARF bei einer ausdrücklich als unvollständig ausgewiesenen
     Evidence-Lage nicht abgeschlossen werden, solange das feste Rechercheprofil einen weiteren
     Schritt zulässt. Eindeutig genannte aktuelle Indexdateien bilden eine Core-geprüfte

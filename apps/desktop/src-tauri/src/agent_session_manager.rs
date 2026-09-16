@@ -72,7 +72,6 @@ enum MessageResearchSelection {
 pub(crate) enum AgentMessageSubmission {
     Started {
         detail: AgentSessionDetail,
-        requires_plan_review: bool,
     },
     Queued {
         detail: AgentSessionDetail,
@@ -4020,10 +4019,9 @@ impl AgentSessionManager {
         message: String,
     ) -> Result<AgentMessageSubmission, AgentSessionManagerFailure> {
         if session_id.is_none() {
-            // A fresh Agent request has no reviewed plan lineage yet. Start its read-only
-            // preparation in Plan and expose the explicit review stop before any task can exist.
-            let (effective_mode, requires_plan_review) =
-                resolve_next_message_mode(None, target_mode);
+            // ADR-0109: the selected envelope is the effective envelope. Agent researches and
+            // materializes without a user plan-review halt; Plan still stops for review.
+            let effective_mode = resolve_next_message_mode(None, target_mode);
             let detail = self
                 .submit_for_target_mode(
                     project,
@@ -4035,10 +4033,7 @@ impl AgentSessionManager {
                     message,
                 )
                 .await?;
-            return Ok(AgentMessageSubmission::Started {
-                detail,
-                requires_plan_review,
-            });
+            return Ok(AgentMessageSubmission::Started { detail });
         }
         let session_id = session_id.ok_or(AgentSessionManagerFailure::InvalidInput)?;
         let expected = expected_revision.ok_or(AgentSessionManagerFailure::InvalidInput)?;
@@ -4062,7 +4057,7 @@ impl AgentSessionManager {
                     | AgentSessionState::Cancelled
             );
         if !should_queue {
-            let (effective_mode, requires_plan_review) =
+            let effective_mode =
                 resolve_next_message_mode(Some(current.session().mode()), target_mode);
             let detail = self
                 .submit_for_target_mode(
@@ -4075,13 +4070,9 @@ impl AgentSessionManager {
                     message,
                 )
                 .await?;
-            return Ok(AgentMessageSubmission::Started {
-                detail,
-                requires_plan_review,
-            });
+            return Ok(AgentMessageSubmission::Started { detail });
         }
-        let (effective_mode, _) =
-            resolve_next_message_mode(Some(current.session().mode()), target_mode);
+        let effective_mode = resolve_next_message_mode(Some(current.session().mode()), target_mode);
         let selection = if command_depth {
             MessageResearchSelection::Command
         } else {
@@ -4241,7 +4232,7 @@ impl AgentSessionManager {
             AgentQueuedResearchSelection::Thorough => (Some(AgentResearchDepth::Thorough), false),
             AgentQueuedResearchSelection::Command => (None, true),
         };
-        let (effective_mode, _) =
+        let effective_mode =
             resolve_next_message_mode(Some(detail.session().mode()), message.target_mode());
         let submission = self
             .submit_for_target_mode(
@@ -4624,7 +4615,7 @@ impl AgentSessionManager {
                     return Err(AgentSessionManagerFailure::Conflict);
                 }
                 let selected_mode = target_mode.unwrap_or(current.session().mode());
-                let (effective_mode, _) =
+                let effective_mode =
                     resolve_next_message_mode(Some(current.session().mode()), selected_mode);
                 let inherited_command = if selection == MessageResearchSelection::Command
                     || effective_mode != current.session().mode()
@@ -5106,11 +5097,7 @@ impl AgentSessionManager {
             .load_session(project, session_id, None, SESSION_PAGE_LIMIT)
             .await?
             .ok_or(AgentSessionManagerFailure::NotFound)?;
-        if detail.session().revision() != expected
-            || detail.session().mode() != AgentSessionMode::Plan
-            || detail.session().state() != AgentSessionState::AwaitingPlanReview
-            || detail.session().current_plan_revision() != Some(plan_revision)
-        {
+        if !implement_plan_accepts(detail.session(), expected, plan_revision) {
             return Err(AgentSessionManagerFailure::Conflict);
         }
         let objective = detail
@@ -6185,7 +6172,7 @@ async fn complete_scheduled_session_inner(
                                     .cloned()
                                     .ok_or(AgentSessionManagerFailure::Unavailable)?;
                                 (
-                                    AgentSessionState::Running,
+                                    cited_plan_halt(AgentSessionMode::Agent),
                                     AgentSessionEntryKind::Plan,
                                     Some(plan_revision),
                                     plan,
@@ -6488,17 +6475,13 @@ const fn presentation_can_be_hidden(state: AgentSessionState) -> bool {
     )
 }
 
+/// ADR-0109: the selected capability envelope is the effective envelope. Agent is not rewritten
+/// to Plan; user plan review remains a Plan-mode halt.
 const fn resolve_next_message_mode(
-    current_mode: Option<AgentSessionMode>,
+    _current_mode: Option<AgentSessionMode>,
     selected_mode: AgentSessionMode,
-) -> (AgentSessionMode, bool) {
-    if matches!(selected_mode, AgentSessionMode::Agent)
-        && !matches!(current_mode, Some(AgentSessionMode::Agent))
-    {
-        (AgentSessionMode::Plan, true)
-    } else {
-        (selected_mode, false)
-    }
+) -> AgentSessionMode {
+    selected_mode
 }
 
 const fn agent_run_blocks_plan_start(state: AgentRunActivityState) -> bool {
@@ -7584,6 +7567,27 @@ enum PlanConversationResponse {
     Plan(String),
 }
 
+/// `ImplementPlan` is the Plan-mode handoff only. Agent-compiled plans never re-enter review.
+fn implement_plan_accepts(
+    session: &AgentSession,
+    expected: AgentSessionRevision,
+    plan_revision: u32,
+) -> bool {
+    session.revision() == expected
+        && session.mode() == AgentSessionMode::Plan
+        && session.state() == AgentSessionState::AwaitingPlanReview
+        && session.current_plan_revision() == Some(plan_revision)
+}
+
+/// Plan mode waits for an explicit handoff. Agent mode is execution-ready after a cited plan.
+const fn cited_plan_halt(mode: AgentSessionMode) -> AgentSessionState {
+    match mode {
+        AgentSessionMode::Ask => AgentSessionState::Completed,
+        AgentSessionMode::Plan => AgentSessionState::AwaitingPlanReview,
+        AgentSessionMode::Agent => AgentSessionState::Running,
+    }
+}
+
 /// Shared by conversation publication and the real research/storage contract test. No plan
 /// approval, task materialization or execution can be produced by this read-only transition.
 fn plan_session_outcome(
@@ -7598,7 +7602,7 @@ fn plan_session_outcome(
 ) {
     match classify_plan_response(content) {
         PlanConversationResponse::Plan(plan) if has_citations => (
-            AgentSessionState::AwaitingPlanReview, AgentSessionEntryKind::Plan,
+            cited_plan_halt(AgentSessionMode::Plan), AgentSessionEntryKind::Plan,
             Some(session.current_plan_revision().unwrap_or(0).saturating_add(1)), plan,
         ),
         PlanConversationResponse::Plan(_) => (
@@ -7930,9 +7934,10 @@ mod tests {
         AgentConversationFailure, AskResearchWorkingSet, ConversationTaskLensControl,
         ConversationTerminal, PlanConversationResponse, QueueDispatchTrigger, ResearchStopReason,
         ResolvedQueryTarget, agent_run_blocks_plan_start, answer_requires_deeper_research,
-        awaiting_continuation, classify_plan_response, command_clarification_question,
-        command_message, index_path_matches_request, is_transient_conversation_failure,
-        model_safe_path, parse_working_change_paths, presentation_can_be_hidden,
+        awaiting_continuation, cited_plan_halt, classify_plan_response,
+        command_clarification_question, command_message, implement_plan_accepts,
+        index_path_matches_request, is_transient_conversation_failure, model_safe_path,
+        parse_working_change_paths, plan_session_outcome, presentation_can_be_hidden,
         query_path_candidates, queue_dispatch_allows_state, read_bounded_process_output,
         reserve_research_repair_decision, resolve_next_message_mode, response_requires_citations,
         restore_command_profile, safe_failure_message, settle_unfinished_conversation,
@@ -7984,27 +7989,113 @@ mod tests {
     }
 
     #[test]
-    fn agent_mode_requires_a_fresh_plan_unless_agent_continuity_is_unbroken() {
+    fn selected_agent_mode_stays_agent_and_never_requests_plan_review() {
+        for current in [
+            None,
+            Some(AgentSessionMode::Ask),
+            Some(AgentSessionMode::Plan),
+            Some(AgentSessionMode::Agent),
+        ] {
+            assert_eq!(
+                resolve_next_message_mode(current, AgentSessionMode::Agent),
+                AgentSessionMode::Agent
+            );
+        }
         assert_eq!(
-            resolve_next_message_mode(None, AgentSessionMode::Agent),
-            (AgentSessionMode::Plan, true)
+            resolve_next_message_mode(Some(AgentSessionMode::Agent), AgentSessionMode::Ask),
+            AgentSessionMode::Ask
         );
         assert_eq!(
-            resolve_next_message_mode(Some(AgentSessionMode::Ask), AgentSessionMode::Agent),
-            (AgentSessionMode::Plan, true)
+            resolve_next_message_mode(Some(AgentSessionMode::Ask), AgentSessionMode::Plan),
+            AgentSessionMode::Plan
         );
         assert_eq!(
             resolve_next_message_mode(Some(AgentSessionMode::Plan), AgentSessionMode::Agent),
-            (AgentSessionMode::Plan, true)
+            AgentSessionMode::Agent
         );
         assert_eq!(
-            resolve_next_message_mode(Some(AgentSessionMode::Agent), AgentSessionMode::Agent),
-            (AgentSessionMode::Agent, false)
+            cited_plan_halt(AgentSessionMode::Plan),
+            AgentSessionState::AwaitingPlanReview
         );
         assert_eq!(
-            resolve_next_message_mode(Some(AgentSessionMode::Agent), AgentSessionMode::Ask),
-            (AgentSessionMode::Ask, false)
+            cited_plan_halt(AgentSessionMode::Agent),
+            AgentSessionState::Running
         );
+        assert_ne!(
+            cited_plan_halt(AgentSessionMode::Agent),
+            AgentSessionState::AwaitingPlanReview
+        );
+    }
+
+    #[test]
+    fn plan_mode_still_persists_a_cited_plan_for_explicit_handoff()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let session_id = AgentSessionId::from_bytes([21; 32]);
+        let timestamp = AgentSessionTimestamp::from_unix_millis(1)?;
+        let session = AgentSession::from_parts(
+            session_id,
+            AgentSessionRevision::INITIAL,
+            AgentSessionTitle::try_from_string("Plan".to_owned())?,
+            AgentSessionMode::Plan,
+            AgentSessionState::Running,
+            timestamp,
+            timestamp,
+            Some(AgentSessionSequence::FIRST),
+            None,
+            None,
+            false,
+        );
+        let plan = "PLAN:\n## Summary\nReady\n## Implementation Changes\nChange the parser\n## Interfaces\nNone\n## Test Plan\nRun tests\n## Assumptions\nCurrent index";
+        let (state, kind, revision, content) = plan_session_outcome(&session, plan, true);
+        assert_eq!(state, AgentSessionState::AwaitingPlanReview);
+        assert_eq!(kind, AgentSessionEntryKind::Plan);
+        assert_eq!(revision, Some(1));
+        assert!(content.contains("Implementation Changes"));
+        Ok(())
+    }
+
+    #[test]
+    fn implement_plan_rejects_an_autonomous_agent_start() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let session_id = AgentSessionId::from_bytes([22; 32]);
+        let timestamp = AgentSessionTimestamp::from_unix_millis(1)?;
+        let agent = AgentSession::from_parts(
+            session_id,
+            AgentSessionRevision::new(2)?,
+            AgentSessionTitle::try_from_string("Task".to_owned())?,
+            AgentSessionMode::Agent,
+            AgentSessionState::Running,
+            timestamp,
+            timestamp,
+            Some(AgentSessionSequence::FIRST),
+            None,
+            Some(1),
+            false,
+        );
+        assert!(!implement_plan_accepts(
+            &agent,
+            AgentSessionRevision::new(2)?,
+            1
+        ));
+        let reviewed = AgentSession::from_parts(
+            session_id,
+            AgentSessionRevision::new(2)?,
+            AgentSessionTitle::try_from_string("Plan".to_owned())?,
+            AgentSessionMode::Plan,
+            AgentSessionState::AwaitingPlanReview,
+            timestamp,
+            timestamp,
+            Some(AgentSessionSequence::FIRST),
+            None,
+            Some(1),
+            false,
+        );
+        assert!(implement_plan_accepts(
+            &reviewed,
+            AgentSessionRevision::new(2)?,
+            1
+        ));
+        Ok(())
     }
 
     #[test]

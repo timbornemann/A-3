@@ -1653,18 +1653,9 @@ impl CompositionRoot {
             .await
             .map_err(map_agent_session_failure)?;
         let (detail, outcome, known_queue) = match submission {
-            AgentMessageSubmission::Started {
-                detail,
-                requires_plan_review,
-            } => (
-                detail,
-                if requires_plan_review {
-                    AgentMessageSubmissionOutcomeV1::RequiresPlanReview
-                } else {
-                    AgentMessageSubmissionOutcomeV1::Started
-                },
-                None,
-            ),
+            AgentMessageSubmission::Started { detail } => {
+                (detail, AgentMessageSubmissionOutcomeV1::Started, None)
+            }
             AgentMessageSubmission::Queued { detail, queue } => {
                 (detail, AgentMessageSubmissionOutcomeV1::Queued, Some(queue))
             }
@@ -4888,7 +4879,6 @@ fn map_agent_session_v3(
     worktree_id: WorktreeId,
     session_id: AgentSessionId,
 ) -> AgentSessionV3 {
-    let current_mode = projection.session.summary().mode();
     AgentSessionV3 {
         projection,
         mode_options: [
@@ -4900,8 +4890,7 @@ fn map_agent_session_v3(
         .map(|mode| AgentSessionModeOptionV1 {
             mode,
             selectable: true,
-            requires_plan_review: mode == AgentSessionModeV1::Agent
-                && current_mode != AgentSessionModeV1::Agent,
+            requires_plan_review: false,
         })
         .collect(),
         queue_revision: queue.revision().get().to_string(),

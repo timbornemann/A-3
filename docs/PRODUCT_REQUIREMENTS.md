@@ -43,8 +43,9 @@ A^3 ermöglicht einem Entwickler, einen lokalen Coding-Agenten mit begrenztem Mo
 - **FR-033** Ein Schritt DARF nur nach erfolgreicher Verification als Completed gelten.
 - **FR-034** Veraltete Evidence MUSS abhängige Claims und abgeschlossene Schritte invalidieren.
 - **FR-035** Ein Run MUSS nach Appneustart sicher fortsetzbar, neu planbar oder abbrechbar sein.
-- **FR-036** Ein bestätigter Agent-Plan MUSS als begrenzte Folge einzeln verifizierbarer
-  Implementierungs- und Testschritte materialisiert werden. Neue Evidence MUSS offene Arbeit über
+- **FR-036** Ein Core-validierter Agent-Plan MUSS als begrenzte Folge einzeln verifizierbarer
+  Implementierungs- und Testschritte materialisiert werden, unabhängig davon, ob er aus einer
+  Planfreigabe oder einem autonomen Agent-Einstieg stammt. Neue Evidence MUSS offene Arbeit über
   eine historische Planrevision anpassen können, ohne abgeschlossene Schritte umzuschreiben.
 
 ### Modell und Kontext
@@ -94,7 +95,8 @@ A^3 ermöglicht einem Entwickler, einen lokalen Coding-Agenten mit begrenztem Mo
   FIFO-geordnet sichtbar bleiben; Fehler, Abbruch und Neustart DÜRFEN sie nicht still starten oder
   verlieren.
 - **FR-078** Nach einem Rückwechsel zu Ask oder Plan MUSS ein späterer Agent-Auftrag einen neuen
-  aktuellen Plan und eine ausdrückliche Planfreigabe verlangen.
+  aktuellen Arbeitsplan erzeugen. Eine ausdrückliche Planfreigabe gilt nur für den Plan-Modus;
+  der Zielmodus Agent materialisiert den Core-validierten Arbeitsplan ohne Nutzerklick.
 - **FR-079** Die operative Agentenlauf-Seitenleiste DARF erst nach Task-Materialisierung erscheinen;
   Recherche und Quellen erscheinen ausschließlich beim zugehörigen Chat-Turn.
 
@@ -131,8 +133,9 @@ Eine Anforderung gilt nur als erfüllt, wenn ein automatisierter Test, ein repro
   projektlokalem Verlauf, zentralem Composer und kontextuellem Fortschritts-/Änderungs-/Review-
   Inspector.
 - Neue Sessions starten standardmäßig im Modus `Agent`; `Ask` sammelt und berichtet ausschließlich
-  Informationen, `Plan` erarbeitet mit Rückfragen einen reviewbaren Plan, und `Agent` arbeitet
-  nach dessen Freigabe über den sicheren Harness.
+  Informationen, `Plan` erarbeitet mit Rückfragen einen reviewbaren Plan und übergibt ihn nur über
+  eine ausdrückliche Planfreigabe, und `Agent` recherchiert, kompiliert einen Core-validierten
+  Arbeitsplan und arbeitet ihn über den sicheren Harness ohne Nutzer-Planfreigabe ab.
 - Nutzer sehen laufenden Status, aktuelle Tätigkeit, notwendige Freigaben, verifizierte Änderungen
   und den Abschlussreview und können danach im selben Kontext nachfragen oder eine neue Session
   beginnen.

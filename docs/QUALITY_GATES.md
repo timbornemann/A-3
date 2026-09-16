@@ -475,15 +475,18 @@ offengelegt werden, nicht als isolierter Prosaeffekt erscheinen.
   Der aktuelle Arbeitsschritt bleibt nach Layoutabschluss am unteren Viewportrand sichtbar;
   Quellen-Fußbereiche dürfen ihn bei 720×520 und 680×760 nicht verdrängen. Manuelle Aufwärtsgesten,
   bewusstes Wiederanknüpfen, Abschluss und Folgeturn werden zusätzlich im Browser geprüft.
-- Der ADR-0041-Contract prüft vorwärts und rückwärts wählbare nächste Modi, die Planpflicht nach
-  unterbrochener Agent-Kontinuität sowie eine dauerhaft wiederherstellbare FIFO mit Session- und
-  Worktreegrenzen. Migrationstests decken Neuinstallation und V32→V33 samt Rollback ab;
-  Storageverträge prüfen Revisionen, Reihenfolge, Claim-Retry, Entfernen und Pause/Fortsetzen.
-  Desktoptests müssen belegen, dass terminale Agent-Run-Zustände einen neuen Planstart nicht
-  blockieren, ein veralteter Plan verständlich zu einem Nutzerhaltepunkt führt und Fehler oder
-  Abbruch eine vorhandene Queue pausieren. Component-Tests prüfen Stufenleiste, Queue-Leiste,
-  Core-selektierbare Modi, die ausschließlich taskgebundene Agentenlauf-Seitenleiste und einen
-  überlagerungsfreien, per Escape schließbaren Header-Aktionsbereich.
+- Der ADR-0041-Contract prüft vorwärts und rückwärts wählbare nächste Modi sowie eine dauerhaft
+  wiederherstellbare FIFO mit Session- und Worktreegrenzen. ADR-0109 ersetzt die Planpflicht nach
+  unterbrochener Agent-Kontinuität: Agent-Ziele bleiben Agent und materialisieren ohne
+  `AwaitingPlanReview`; Plan-Ziele enden weiter im Review, und `ImplementPlan` nach einem
+  autonomen Agent-Start ist Conflict. Migrationstests decken Neuinstallation und V32→V33 samt
+  Rollback ab; Storageverträge prüfen Revisionen, Reihenfolge, Claim-Retry, Entfernen und
+  Pause/Fortsetzen. Desktoptests müssen belegen, dass terminale Agent-Run-Zustände einen neuen
+  Planstart nicht blockieren, ein veralteter Plan verständlich zu einem Nutzerhaltepunkt führt und
+  Fehler oder Abbruch eine vorhandene Queue pausieren. Component-Tests prüfen Stufenleiste,
+  Queue-Leiste, Core-selektierbare Modi ohne Agent-Chip „Nach Planfreigabe“, die ausschließlich
+  taskgebundene Agentenlauf-Seitenleiste und einen überlagerungsfreien, per Escape schließbaren
+  Header-Aktionsbereich.
 - Der erste U5-Agent-Workspace-Contract prüft die vollständige Goal-Neuanlage mit ausschließlich
   Core-generierten Task- und Kriterien-IDs sowie immutable Revisionen gegen einen sichtbar
   gebundenen Vorgänger. Application-Tests lehnen WebView-IDs bei Revision eins, erfundene

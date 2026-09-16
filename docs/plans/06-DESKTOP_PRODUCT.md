@@ -1165,6 +1165,7 @@ Grenzen stehen in der [Plan-Recherche-Fixture](../../fixtures/research-plan-v1/R
 - [x] evidence-gebundene Diagramme mit sicherem lokalen Rendern und nativem SVG-/PNG-Export
 - [x] Mermaid-sichere Flowchart-Labels mit V32-Kompatibilität und evidence-gebundener Neuerzeugung
 - [x] sichtbare nächste Moduswahl mit erneuter Planfreigabe nach unterbrochener Agent-Kontinuität
+- [x] autonomer Agent-Einstieg ohne Nutzer-Planfreigabe nach ADR-0109
 - [x] begrenzte dauerhafte FIFO für Folgenachrichten mit Pause und expliziter Wiederaufnahme
 - [x] taskgebundene Agentenlauf-Seitenleiste ohne doppelte Rechercheprojektion
 - [x] exakte Planfreigabe materialisiert Goal, Ledger und Run
@@ -1186,8 +1187,9 @@ Akzeptanz:
   Ergebnis angegebenen Quellen; neue Live-Schritte
   erscheinen nacheinander in einer verbundenen Timeline mit genau einem sichtbaren aktiven Schritt;
 - Plan hält Rückfragen und jede vollständige Planrevision im Verlauf und startet erst nach Review;
-- Agent bindet jede Ausführung an Goal, Ledger, Run, Snapshot und aktuelle Evidence und zeigt
-  Activity, Inspection, Approval und Verification in derselben Session;
+- Agent recherchiert, kompiliert einen Core-validierten Arbeitsplan und bindet jede Ausführung an
+  Goal, Ledger, Run, Snapshot und aktuelle Evidence ohne Nutzer-Planfreigabe; Activity, Inspection,
+  Approval und Verification bleiben in derselben Session;
 - Follow-ups behalten den projektlokalen Zusammenhang, während eine neue Session ohne fachlichen
   Altzustand beginnt;
 - Verlauf und Inspector sind tastaturbedienbar, begrenzt, persistent anpassbar und bei schmalen
@@ -1450,7 +1452,8 @@ den laufenden Modus vom Ziel der nächsten Nachricht. Weitere validierte Nachric
 Knowledge V33 begrenzt und FIFO-geordnet vorgemerkt, nach Erfolg automatisch verarbeitet und an
 menschlichen Haltepunkten beziehungsweise nach Fehler oder Abbruch angehalten. Nach Neustart ist
 eine ausdrückliche Fortsetzung nötig. Ein Rückwechsel aus Agent entfernt die Ausführbarkeit des
-früheren Plans; der nächste Agent-Auftrag endet zunächst an einer neuen Planfreigabe. Recherche
+früheren Plans; der nächste Agent-Auftrag erzeugt nach ADR-0109 einen neuen Arbeitsplan und
+materialisiert ihn ohne Nutzer-Planfreigabe. Recherche
 bleibt ausschließlich im Chat. Fortschritt, Änderungen und Review erscheinen in der rechten
 Seitenleiste erst mit einer materialisierten Task und der Header ordnet Menü, Laufsteuerung und
 Seitenleistenschalter ohne Überlagerung an. Terminale Agent-Runs belegen den Planstart nicht mehr;
@@ -1484,6 +1487,14 @@ Tests prüfen zusätzlich Palette, Tastaturnavigation, fail-closed Katalog-Retry
 lokales Lazy Rendering, Sanitizer, Render-Retry und path-freien Export. Formatcheck, ESLint,
 Svelte-Typecheck mit 0 Fehlern/0 Warnungen, Produktionsbuild und Linkprüfung sind grün. Der Build
 hält Mermaid außerhalb des initialen Chunks; der Agent-Workspace bleibt ein separater Lazy-Chunk.
+
+Autonomer Agent-Einstieg vom 2026-09-16 nach ADR-0109: Der Zielmodus Agent bleibt Agent. Dieselbe
+begrenzte Recherche kompiliert einen `AgentWorkPlan` und materialisiert Goal, Ledger und Run ohne
+`AwaitingPlanReview`. Plan bleibt der einzige Review-Pfad; „Plan umsetzen“ übergibt nur die exakte
+sichtbare Revision. Ask oder Plan invalidieren den früheren ausführbaren Agent-Plan, erzwingen aber
+keine Nutzerfreigabe für den nächsten Agent-Auftrag. Policy, Approval, Verification und `QUESTION:`
+bleiben Haltepunkte. Ein unterbrochener `ImplementPlan`-Start kehrt weiter zur geprüften
+Planrevision zurück.
 
 ## Gate M8
 

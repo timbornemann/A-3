@@ -12,7 +12,7 @@ pub enum AgentSessionMode {
     Ask,
     /// Collaborative read-only planning with explicit review.
     Plan,
-    /// Deterministic tool execution under central policy.
+    /// Research, Core-owned work-plan compilation, then deterministic tool execution.
     Agent,
 }
 
