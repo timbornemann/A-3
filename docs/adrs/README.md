@@ -133,6 +133,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0107](0107-lan-ollama-und-openai-kompatibler-provider.md) | LAN-Ollama und OpenAI-kompatibler Provider |
 | [0108](0108-fast-index-laufinspektor.md) | Fast-Index-Laufinspektor |
 | [0109](0109-autonomer-agent-einstieg.md) | Autonomer Agent-Einstieg ohne Nutzer-Planfreigabe |
+| [0110](0110-leeres-projekt-anlegen.md) | Leeres lokales Git-Projekt über nativen Dialog anlegen |
 
 ## Neue ADRs
 

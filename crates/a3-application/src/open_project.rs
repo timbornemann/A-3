@@ -108,51 +108,59 @@ impl OpenProject {
             .inspector
             .inspect_project(&selected_root)
             .map_err(OpenProjectError::Inspection)?;
-        let preparation = self
-            .store
-            .prepare_project_open(&project)
+        complete_project_catalog(
+            project,
+            self.reconciliation_confirmer.as_ref(),
+            self.store.as_ref(),
+        )
+        .await
+    }
+}
+
+/// Registers one inspected worktree through the same catalog path used by open and create.
+pub(crate) async fn complete_project_catalog(
+    project: ProjectIdentity,
+    reconciliation_confirmer: &dyn ProjectReconciliationConfirmer,
+    store: &dyn KnowledgeStore,
+) -> Result<OpenProjectOutcome, OpenProjectError> {
+    let preparation = store
+        .prepare_project_open(&project)
+        .await
+        .map_err(OpenProjectError::Storage)?;
+    let project_id = match preparation {
+        ProjectOpenPreparation::Ready => store
+            .record_opened_project(&project)
             .await
-            .map_err(OpenProjectError::Storage)?;
-        let project_id = match preparation {
-            ProjectOpenPreparation::Ready => self
-                .store
-                .record_opened_project(&project)
-                .await
-                .map_err(OpenProjectError::Storage)?,
-            ProjectOpenPreparation::ResumeConfirmed(proposal) => self
-                .store
-                .reconcile_project(&project, &proposal)
-                .await
-                .map_err(OpenProjectError::Storage)?,
-            ProjectOpenPreparation::ConfirmationRequired(proposal) => {
-                let new_root_display =
-                    ProjectPathDisplay::from_path(project.worktree().root().as_path());
-                match self
-                    .reconciliation_confirmer
-                    .choose_reconciliation(&proposal, &new_root_display)
-                    .map_err(OpenProjectError::ReconciliationConfirmation)?
-                {
-                    ProjectReconciliationChoice::Reconcile => self
-                        .store
-                        .reconcile_project(&project, &proposal)
-                        .await
-                        .map_err(OpenProjectError::Storage)?,
-                    ProjectReconciliationChoice::OpenSeparately => self
-                        .store
-                        .record_opened_project(&project)
-                        .await
-                        .map_err(OpenProjectError::Storage)?,
-                    ProjectReconciliationChoice::Cancel => {
-                        return Ok(OpenProjectOutcome::Cancelled);
-                    }
+            .map_err(OpenProjectError::Storage)?,
+        ProjectOpenPreparation::ResumeConfirmed(proposal) => store
+            .reconcile_project(&project, &proposal)
+            .await
+            .map_err(OpenProjectError::Storage)?,
+        ProjectOpenPreparation::ConfirmationRequired(proposal) => {
+            let new_root_display =
+                ProjectPathDisplay::from_path(project.worktree().root().as_path());
+            match reconciliation_confirmer
+                .choose_reconciliation(&proposal, &new_root_display)
+                .map_err(OpenProjectError::ReconciliationConfirmation)?
+            {
+                ProjectReconciliationChoice::Reconcile => store
+                    .reconcile_project(&project, &proposal)
+                    .await
+                    .map_err(OpenProjectError::Storage)?,
+                ProjectReconciliationChoice::OpenSeparately => store
+                    .record_opened_project(&project)
+                    .await
+                    .map_err(OpenProjectError::Storage)?,
+                ProjectReconciliationChoice::Cancel => {
+                    return Ok(OpenProjectOutcome::Cancelled);
                 }
             }
-        };
-        Ok(OpenProjectOutcome::Opened {
-            project: Box::new(project),
-            project_id,
-        })
-    }
+        }
+    };
+    Ok(OpenProjectOutcome::Opened {
+        project: Box::new(project),
+        project_id,
+    })
 }
 
 /// Successful result of one project-open request.

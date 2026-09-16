@@ -15,6 +15,7 @@ A^3 ermöglicht einem Entwickler, einen lokalen Coding-Agenten mit begrenztem Mo
 - **FR-002** A^3 MUSS Repositories ohne Remote, zusätzliche Git-Worktrees und einen Unborn-Branch unterstützen.
 - **FR-003** A^3 MUSS zuletzt verwendete Projekte verwalten, ohne Runtime-Dateien in das Repository zu schreiben.
 - **FR-004** Das Entfernen eines Projekts aus A^3 DARF den Quellcode nicht löschen.
+- **FR-005** A^3 MUSS ein leeres lokales Git-Repository über einen nativen Ordnerdialog in einem existierenden leeren Verzeichnis anlegen können, ohne Pfad aus der WebView, ohne Initial-Commit und ohne Remote.
 
 ### Index
 

@@ -17,6 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "control_agent_session_v2",
             "control_agent_session_queue",
             "create_agent_goal",
+            "create_project",
             "discover_provider_models_v2",
             "open_project",
             "pause_deep_map",

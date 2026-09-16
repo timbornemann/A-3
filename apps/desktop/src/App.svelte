@@ -84,7 +84,7 @@
     ModuleRuntimeMapQueryV1,
     ModuleRuntimeMapResponseV1,
   } from './lib/module-runtime';
-  import { openProject, type GitHeadV1, type OpenProjectResponseV1 } from './lib/project';
+  import { createProject, openProject, type GitHeadV1, type OpenProjectResponseV1 } from './lib/project';
   import {
     activateCatalogProject,
     queryProjectCatalog,
@@ -198,6 +198,7 @@
     /** @deprecated Legacy U10 test seam; no longer consumed by the map UI. */
     moduleTreeLoader?: (query: ModuleTreeQueryV1) => Promise<ModuleTreeResponseV1>;
     projectOpener?: () => Promise<OpenProjectResponseV1>;
+    projectCreator?: () => Promise<OpenProjectResponseV1>;
     projectCatalogActivator?: (worktreeId: string) => Promise<ProjectActivationResponseV1>;
     projectCatalogLoader?: (query: ProjectCatalogQueryV1) => Promise<ProjectCatalogResponseV1>;
     projectCatalogRemover?: (worktreeId: string) => Promise<RemoveProjectResponseV1>;
@@ -288,6 +289,7 @@
     indexActivityLoader = queryIndexActivity,
     indexOverviewLoader = queryIndexOverview,
     projectOpener = openProject,
+    projectCreator = createProject,
     projectCatalogActivator = activateCatalogProject,
     projectCatalogLoader = queryProjectCatalog,
     projectCatalogRemover = removeCatalogProject,
@@ -727,10 +729,20 @@
   }
 
   async function chooseProject(): Promise<void> {
+    await selectProject(projectOpener);
+  }
+
+  async function createEmptyProject(): Promise<void> {
+    await selectProject(projectCreator);
+  }
+
+  async function selectProject(
+    opener: () => Promise<OpenProjectResponseV1>,
+  ): Promise<void> {
     projectDialogOpen = false;
     projectView = { kind: 'opening' };
     try {
-      const response = await projectOpener();
+      const response = await opener();
       if (response.result.status === 'opened') {
         projectView = { kind: 'opened' };
         removalView = { kind: 'idle' };
@@ -1121,17 +1133,26 @@
             </div>
 
             <p class="project-copy">
-              Öffne einen Projektordner. A^3 hilft dir, den Code zu verstehen, Änderungen zu planen
-              und Aufgaben umzusetzen.
+              Öffne ein bestehendes Git-Projekt oder lege ein leeres lokales Repository an. A^3
+              hilft dir, den Code zu verstehen, Änderungen zu planen und Aufgaben umzusetzen.
             </p>
-            <button
-              class="primary-action"
-              type="button"
-              disabled={projectView.kind === 'opening'}
-              onclick={chooseProject}
-            >
-              {projectView.kind === 'opening' ? 'Ordnerdialog geöffnet …' : 'Projekt hinzufügen'}
-            </button>
+            <div class="project-launcher-actions" aria-label="Projektaktionen">
+              <button
+                class="primary-action"
+                type="button"
+                disabled={projectView.kind === 'opening'}
+                onclick={createEmptyProject}
+              >
+                {projectView.kind === 'opening' ? 'Ordnerdialog geöffnet …' : 'Neues Projekt'}
+              </button>
+              <button
+                type="button"
+                disabled={projectView.kind === 'opening'}
+                onclick={chooseProject}
+              >
+                Projekt hinzufügen
+              </button>
+            </div>
           {/if}
 
           {#if projectView.kind === 'cancelled'}
@@ -1675,12 +1696,25 @@
                   <p>Zuletzt verwendete Projekte</p>
                 </div>
                 {#if projectStatusView.kind === 'active'}
-                  <button
-                    class="primary-action"
-                    type="button"
-                    disabled={projectView.kind === 'opening'}
-                    onclick={chooseProject}>Projekt hinzufügen</button
-                  >
+                  <div class="project-launcher-actions" aria-label="Weiteres Projekt">
+                    <button
+                      class="primary-action"
+                      type="button"
+                      disabled={projectView.kind === 'opening'}
+                      onclick={createEmptyProject}
+                    >
+                      {projectView.kind === 'opening' ? 'Ordnerdialog geöffnet …' : 'Neues Projekt'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={projectView.kind === 'opening'}
+                      onclick={chooseProject}
+                    >
+                      {projectView.kind === 'opening'
+                        ? 'Ordnerdialog geöffnet …'
+                        : 'Projekt hinzufügen'}
+                    </button>
+                  </div>
                 {/if}
               </div>
 

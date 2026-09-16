@@ -2,6 +2,7 @@
 
 mod agent_source_reader;
 mod ask_source_searcher;
+mod empty_worktree;
 mod identity;
 mod path_policy;
 mod platform_path;
@@ -16,6 +17,7 @@ mod workspace_patch;
 
 pub use agent_source_reader::WorkspaceAgentSourceReader;
 pub use ask_source_searcher::WorkspaceAskSourceSearcher;
+pub use empty_worktree::{EmptyWorktreeInitError, WorkspaceEmptyWorktreeInitializer};
 pub use path_policy::{CanonicalWorkspacePath, PathEntryKind, PathPolicy, PathPolicyError};
 pub use process_environment::{ProcessHostEnvironment, ProcessHostEnvironmentError};
 pub use process_runner::WorkspaceProcessRunner;

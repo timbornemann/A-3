@@ -43,13 +43,15 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
 - Repository-Erkennung liest nur repository-lokale Git-Konfiguration in isoliertem Modus. Globale
   Konfiguration, Includes, Credential Helper, Umgebungsüberschreibungen und Netzwerkzugriffe bleiben
   außerhalb dieses Pfads.
-- Die WebView darf keinen Projektpfad an `open_project` übergeben. Nur der privilegierte Rust-Adapter
-  öffnet den nativen Einzelauswahldialog und reicht dessen Ergebnis an den Use Case weiter.
+- Die WebView darf keinen Projektpfad an `open_project` oder `create_project` übergeben. Nur der
+  privilegierte Rust-Adapter öffnet den nativen Einzelauswahldialog und reicht dessen Ergebnis an
+  den Use Case weiter. `create_project` darf Git nur in einem existierenden leeren Nicht-Git-Ordner
+  initialisieren und verwendet dafür isoliertes in-process `gix`, niemals die Shell.
 - Eine Worktree-Reconciliation darf nur nach einer zweiten privilegierten nativen Auswahl erfolgen.
   Der Dialog zeigt ausschließlich begrenzte, kontrollzeichenfreie Pfadanzeigen und bietet
   „reconciliieren“, „separat öffnen“ und „abbrechen“. Die WebView kann weder einen Kandidaten noch die
   Entscheidung liefern und erhält keine zusätzliche Command- oder Dialog-Capability.
-- Die Main-Capability erlaubt `open_project`, `list_recent_projects`, `query_project_catalog`,
+- Die Main-Capability erlaubt `open_project`, `create_project`, `list_recent_projects`, `query_project_catalog`,
   `activate_catalog_project`, `restore_last_project`, `remove_catalog_project`,
   `query_project_status`, `query_index_activity`, `query_index_overview`,
   `rebuild_project_index`, `remove_project` und

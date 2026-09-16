@@ -53,6 +53,7 @@ mod ask_research_action_codec;
 mod command_discovery;
 mod context_compiler;
 mod context_original_source;
+mod create_project;
 mod deep_map_action_codec;
 mod deep_map_activity;
 mod deep_map_dashboard;
@@ -235,6 +236,9 @@ pub use context_compiler::{
     ContextToolResultPreviewError, ContextToolResultStatus,
 };
 pub use context_original_source::ContextOriginalSource;
+pub use create_project::{
+    CreateProject, CreateProjectError, EmptyWorktreeInitializationFailure, EmptyWorktreeInitializer,
+};
 pub use deep_map_action_codec::{
     DecodeExplorerAction, ExplorerActionDecodeError, ExplorerActionJsonSchema,
 };

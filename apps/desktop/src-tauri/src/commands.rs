@@ -115,6 +115,15 @@ pub async fn open_project(
 }
 
 #[tauri::command]
+/// Opens one native directory picker and initializes an empty Git worktree in the selection.
+pub async fn create_project(
+    request: OpenProjectRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<OpenProjectResponseV1, CommandErrorV1> {
+    execute_create_project(request, root.inner()).await
+}
+
+#[tauri::command]
 /// Returns a bounded most-recent-first list without exposing authoritative paths.
 pub async fn list_recent_projects(
     request: ListRecentProjectsRequestV1,
@@ -1346,6 +1355,17 @@ async fn execute_open_project(
     root.open_project().await
 }
 
+async fn execute_create_project(
+    request: OpenProjectRequestV1,
+    root: &CompositionRoot,
+) -> Result<OpenProjectResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+
+    root.create_project().await
+}
+
 async fn execute_list_recent_projects(
     request: ListRecentProjectsRequestV1,
     root: &CompositionRoot,
@@ -2492,19 +2512,20 @@ mod tests {
     use super::{
         execute_activate_catalog_project, execute_compile_task_lens,
         execute_control_agent_approval, execute_control_agent_task_run, execute_control_deep_map,
-        execute_create_agent_goal, execute_list_recent_projects, execute_open_project,
-        execute_query_agent_activity, execute_query_agent_approval, execute_query_agent_goal,
-        execute_query_agent_inspection, execute_query_agent_inspection_log,
-        execute_query_agent_task_recovery, execute_query_deep_map, execute_query_health,
-        execute_query_index_activity, execute_query_index_overview,
-        execute_query_module_card_detail, execute_query_module_card_evidence,
-        execute_query_module_card_freshness, execute_query_module_dependency_graph,
-        execute_query_module_runtime_flow, execute_query_module_runtime_map,
-        execute_query_module_tree, execute_query_project_catalog, execute_query_project_map_search,
-        execute_query_project_settings, execute_query_project_status,
-        execute_query_repository_tree, execute_query_task_lens_task, execute_query_task_lens_tasks,
-        execute_rebuild_project_index, execute_remove_catalog_project, execute_remove_project,
-        execute_restore_last_project, execute_revise_agent_goal, execute_start_deep_map,
+        execute_create_agent_goal, execute_create_project, execute_list_recent_projects,
+        execute_open_project, execute_query_agent_activity, execute_query_agent_approval,
+        execute_query_agent_goal, execute_query_agent_inspection,
+        execute_query_agent_inspection_log, execute_query_agent_task_recovery,
+        execute_query_deep_map, execute_query_health, execute_query_index_activity,
+        execute_query_index_overview, execute_query_module_card_detail,
+        execute_query_module_card_evidence, execute_query_module_card_freshness,
+        execute_query_module_dependency_graph, execute_query_module_runtime_flow,
+        execute_query_module_runtime_map, execute_query_module_tree, execute_query_project_catalog,
+        execute_query_project_map_search, execute_query_project_settings,
+        execute_query_project_status, execute_query_repository_tree, execute_query_task_lens_task,
+        execute_query_task_lens_tasks, execute_rebuild_project_index,
+        execute_remove_catalog_project, execute_remove_project, execute_restore_last_project,
+        execute_revise_agent_goal, execute_start_deep_map,
     };
     use crate::CompositionRoot;
     use a3_application::{
@@ -2716,6 +2737,23 @@ mod tests {
         let root = root()?;
 
         let result = block_on(execute_open_project(
+            OpenProjectRequestV1::new(ProtocolVersion::new(999)),
+            &root,
+        ));
+
+        assert_eq!(
+            result.map_err(|error| error.code()),
+            Err(ErrorCodeV1::UnsupportedProtocolVersion)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn create_project_command_rejects_unsupported_version_before_opening_picker()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+
+        let result = block_on(execute_create_project(
             OpenProjectRequestV1::new(ProtocolVersion::new(999)),
             &root,
         ));

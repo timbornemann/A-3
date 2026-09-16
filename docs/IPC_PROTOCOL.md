@@ -26,7 +26,7 @@ WebView-Rand verwenden `camelCase`. Eingaben lehnen unbekannte Felder ab.
 ## Gemeinsamer V1-Request
 
 Die pfadlosen Status- und Control-Commands erhalten genau ein Argument `request`. Das gilt neben
-`query_health`, `open_project`, `list_recent_projects` und `restore_last_project` auch für Projekt-,
+`query_health`, `open_project`, `create_project`, `list_recent_projects` und `restore_last_project` auch für Projekt-,
 Index- und Deep-Map-Status sowie für `pause_deep_map`, `resume_deep_map` und `cancel_deep_map`. Ihr
 gemeinsamer V1-Request enthält ausschließlich:
 
@@ -35,8 +35,9 @@ gemeinsamer V1-Request enthält ausschließlich:
 | `protocolVersion` | `u16` über `ProtocolVersion` | für V1 exakt `1` |
 
 Zusätzliche Felder, ein fehlender Request oder ein nicht numerischer Versionswert werden vor
-Ausführung des jeweiligen Use Cases abgelehnt. Insbesondere akzeptiert `open_project` keinen Pfad und
-`list_recent_projects` weder einen Pfad noch ein WebView-gesteuertes Limit.
+Ausführung des jeweiligen Use Cases abgelehnt. Insbesondere akzeptieren `open_project` und
+`create_project` keinen Pfad und `list_recent_projects` weder einen Pfad noch ein WebView-gesteuertes
+Limit.
 
 ## Deep Map Start V2, Status V3 und Journal-Reads V1
 
@@ -622,8 +623,19 @@ gewährt weder Scheduler-, Provider-, Datei-, Shell-, SQL- noch Journalzugriff.
 `open_project` öffnet genau einen nativen Ordnerdialog im privilegierten Prozess. Erkennt der Kern
 danach genau einen evidenzbasierten Umzugskandidaten, darf er zusätzlich einen nativen
 Bestätigungsdialog mit „reconciliieren“, „separat öffnen“ und „abbrechen“ anzeigen. Beide Abbruchpfade
-liefern `result.kind` `cancelled`. Nach erfolgreicher normaler Registrierung oder bestätigter
-Reconciliation lautet es `opened` und enthält `project`:
+liefern `result.kind` `cancelled`.
+
+`create_project` verwendet denselben pfadlosen V1-Request und dieselbe `OpenProjectResponseV1`.
+Es öffnet einen eigenen nativen Ordnerdialog und initialisiert Git nur in einem existierenden,
+leeren Nicht-Git-Verzeichnis mit Unborn-HEAD `refs/heads/main`. Bereits vorhandene Git-Worktrees,
+nicht leere Ordner und Unterordner anderer Worktrees werden mit `alreadyGitRepository`,
+`directoryNotEmpty` beziehungsweise `projectRootRequired` abgelehnt. Init-Fehler nach den
+Sicherheitsprüfungen sind `projectInitializationFailed`. Nach erfolgreichem Init folgen Inspektion,
+Katalog und Aktivierung dem `open_project`-Weg. Abbruch des Dialogs bleibt `cancelled` ohne
+Dateisystemänderung.
+
+Nach erfolgreicher normaler Registrierung oder bestätigter Reconciliation lautet es `opened` und
+enthält `project`:
 
 | Feld | Typ | Invariante |
 | --- | --- | --- |

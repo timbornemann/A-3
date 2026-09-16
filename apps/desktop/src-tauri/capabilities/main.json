@@ -19,6 +19,7 @@
     "allow-control-agent-session-queue",
     "allow-control-agent-task-run",
     "allow-create-agent-goal",
+    "allow-create-project",
     "allow-discover-provider-models-v2",
     "allow-open-project",
     "allow-pause-deep-map",

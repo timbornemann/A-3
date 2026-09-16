@@ -109,6 +109,7 @@ mod tests {
                 a3_desktop::commands::confirm_project_command_allowlist,
                 a3_desktop::commands::list_recent_projects,
                 a3_desktop::commands::open_project,
+                a3_desktop::commands::create_project,
                 a3_desktop::commands::pause_deep_map,
                 a3_desktop::commands::query_deep_map,
                 a3_desktop::commands::discover_provider_models_v2,
@@ -363,6 +364,31 @@ mod tests {
             OpenProjectResultV1::Cancelled
         ));
 
+        let create_project_response = get_ipc_response(
+            &webview,
+            InvokeRequest {
+                cmd: "create_project".into(),
+                callback: CallbackFn(20),
+                error: CallbackFn(21),
+                url: local_app_url.clone(),
+                body: InvokeBody::Json(json!({
+                    "request": { "protocolVersion": 1 }
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_owned(),
+            },
+        )
+        .map_err(|error| io::Error::other(error.to_string()))?
+        .deserialize::<OpenProjectResponseV1>()?;
+        assert_eq!(
+            create_project_response.protocol_version(),
+            ProtocolVersion::V1
+        );
+        assert!(matches!(
+            create_project_response.result(),
+            OpenProjectResultV1::Cancelled
+        ));
+
         let recent_response = get_ipc_response(
             &webview,
             InvokeRequest {
@@ -445,6 +471,25 @@ mod tests {
         );
         assert!(untrusted_project_path.is_err());
 
+        let untrusted_create_project_path = get_ipc_response(
+            &webview,
+            InvokeRequest {
+                cmd: "create_project".into(),
+                callback: CallbackFn(22),
+                error: CallbackFn(23),
+                url: local_app_url.clone(),
+                body: InvokeBody::Json(json!({
+                    "request": {
+                        "protocolVersion": 1,
+                        "selectedPath": "C:\\untrusted"
+                    }
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_owned(),
+            },
+        );
+        assert!(untrusted_create_project_path.is_err());
+
         let invalid_payload = get_ipc_response(
             &webview,
             InvokeRequest {
@@ -516,6 +561,7 @@ mod tests {
                 "allow-control-agent-session-queue",
                 "allow-control-agent-task-run",
                 "allow-create-agent-goal",
+                "allow-create-project",
                 "allow-discover-provider-models-v2",
                 "allow-open-project",
                 "allow-pause-deep-map",

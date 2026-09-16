@@ -16,6 +16,9 @@ describe('command error recovery', () => {
   it.each([
     ['projectSelectionUnavailable', 'Laufwerk und Zugriffsrechte'],
     ['notGitRepository', 'Stammordner'],
+    ['alreadyGitRepository', 'Projekt hinzufügen'],
+    ['directoryNotEmpty', 'leeren Ordner'],
+    ['projectInitializationFailed', 'anderen leeren Ordner'],
     ['projectRootRequired', 'keinen Unterordner'],
     ['invalidRepositoryMetadata', 'repariere das Repository'],
     ['localStorageUpgradeRequired', 'neueren A^3-Version'],

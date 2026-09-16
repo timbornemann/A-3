@@ -113,15 +113,18 @@ offengelegt werden, nicht als isolierter Prosaeffekt erscheinen.
   Kartenlinks. Browserfixture, Vorher-/Nachher-Messungen und verbleibende
   Freigabenachweise stehen in [Plan 08](plans/08-FAST_INDEX_FLOW_ANALYSIS.md).
 - U2-Projects-Contracts prüfen strikt versionierte Commands für Status, Rebuild, den 25er-
-  Projektkatalog, Aktivierung, Startwiederherstellung und Entfernen. Katalogreads übertragen nur
-  sichere Anzeigen und opake Cursor; Aktivieren und Entfernen akzeptieren ausschließlich eine
-  kanonische zuvor gelistete `worktreeId`, niemals Pfade. Storage-Tests müssen mehr als 25 Einträge,
-  FTS-Suche, Vor-/Zurück-Paging, Bestandsmigration und Linked-Worktree-Trennung beweisen.
-  Lifecycle-Tests verlangen: nur der jüngste Eintrag wird wiederhergestellt, kein Fallback bei
-  fehlendem Root oder Identitätskonflikt und ein fehlgeschlagener Wechsel erhält aktives Projekt
-  sowie Aktivierungsreihenfolge. Removal-Adaptertests erhalten private `knowledge.db`, stabile
-  `ProjectId` und Repositoryinhalte. Component-Tests decken Startreihenfolge, Suche, Navigation,
-  Hinzufügen, Wechsel und Bestätigung ab; Fehler-Components dürfen nur bekannte
+  Projektkatalog, Aktivierung, Startwiederherstellung, Entfernen und das Anlegen eines leeren
+  Git-Worktrees. `create_project` akzeptiert keinen Pfad, initialisiert nur existierende leere
+  Nicht-Git-Ordner mit Unborn `main` und teilt danach den Katalogweg von `open_project`.
+  Katalogreads übertragen nur sichere Anzeigen und opake Cursor; Aktivieren und Entfernen
+  akzeptieren ausschließlich eine kanonische zuvor gelistete `worktreeId`, niemals Pfade.
+  Storage-Tests müssen mehr als 25 Einträge, FTS-Suche, Vor-/Zurück-Paging, Bestandsmigration
+  und Linked-Worktree-Trennung beweisen. Lifecycle-Tests verlangen: nur der jüngste Eintrag wird
+  wiederhergestellt, kein Fallback bei fehlendem Root oder Identitätskonflikt und ein
+  fehlgeschlagener Wechsel erhält aktives Projekt sowie Aktivierungsreihenfolge.
+  Removal-Adaptertests erhalten private `knowledge.db`, stabile `ProjectId` und
+  Repositoryinhalte. Component-Tests decken Startreihenfolge, Suche, Navigation, Hinzufügen,
+  Neuanlage, Wechsel und Bestätigung ab; Fehler-Components dürfen nur bekannte
   `CommandErrorV1`-Codes auf feste Recovery-Schritte abbilden und niemals rohe Adapterdetails
   darstellen.
 - Der U3-Fast-Index-Fortschrittscontract prüft die exakte monotone Reihenfolge Discover, Hash,

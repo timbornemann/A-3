@@ -42,6 +42,16 @@ export async function openProject(
   return parseOpenProjectResponseV1(payload);
 }
 
+export async function createProject(
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<OpenProjectResponseV1> {
+  const request: OpenProjectRequestV1 = {
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+  };
+  const payload = await invokeCommand('create_project', { request });
+  return parseOpenProjectResponseV1(payload);
+}
+
 export function parseOpenProjectResponseV1(payload: unknown): OpenProjectResponseV1 {
   if (!isRecord(payload) || !hasExactKeys(payload, ['protocolVersion', 'result'])) {
     throw new Error('Project response does not match the V1 schema.');

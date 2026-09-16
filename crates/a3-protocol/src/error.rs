@@ -13,6 +13,12 @@ pub enum ErrorCodeV1 {
     ProjectSelectionUnavailable,
     /// The selected directory is not a Git repository root.
     NotGitRepository,
+    /// The selected directory is already a Git repository and must be opened instead.
+    AlreadyGitRepository,
+    /// Empty-project creation requires a directory without any existing entries.
+    DirectoryNotEmpty,
+    /// Isolated Git initialization could not create the empty worktree.
+    ProjectInitializationFailed,
     /// The selection was nested inside a different Git worktree root.
     ProjectRootRequired,
     /// The selected Git repository shape is intentionally unsupported.
@@ -192,6 +198,15 @@ impl CommandErrorV1 {
                 "The selected directory is no longer available."
             }
             ErrorCodeV1::NotGitRepository => "Select the root directory of a local Git repository.",
+            ErrorCodeV1::AlreadyGitRepository => {
+                "This directory is already a Git repository. Open it instead of creating a new project."
+            }
+            ErrorCodeV1::DirectoryNotEmpty => {
+                "Select an empty folder. A^3 initializes Git only in empty directories."
+            }
+            ErrorCodeV1::ProjectInitializationFailed => {
+                "The empty Git worktree could not be created. Choose another empty folder."
+            }
             ErrorCodeV1::ProjectRootRequired => {
                 "Select the Git worktree root rather than one of its subdirectories."
             }
@@ -479,5 +494,19 @@ mod tests {
             error.message(),
             "Select the root directory of a local Git repository."
         );
+    }
+
+    #[test]
+    fn empty_project_create_errors_are_stable_and_pathless() {
+        let already_git = CommandErrorV1::project_open(ErrorCodeV1::AlreadyGitRepository);
+        assert_eq!(already_git.code(), ErrorCodeV1::AlreadyGitRepository);
+        assert!(!already_git.message().contains('\\'));
+        assert!(!already_git.message().contains('/'));
+
+        let not_empty = CommandErrorV1::project_open(ErrorCodeV1::DirectoryNotEmpty);
+        assert_eq!(not_empty.code(), ErrorCodeV1::DirectoryNotEmpty);
+
+        let failed = CommandErrorV1::project_open(ErrorCodeV1::ProjectInitializationFailed);
+        assert_eq!(failed.code(), ErrorCodeV1::ProjectInitializationFailed);
     }
 }

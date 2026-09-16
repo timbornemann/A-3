@@ -68,7 +68,7 @@ Erzeugt und verbindet Ports, Adapter, Datenbankverbindungen, Job Scheduler und W
 
 Enthält Use Cases und Orchestrierung:
 
-- Projekt öffnen und schließen
+- Projekt öffnen, anlegen und schließen
 - Indexlauf steuern
 - Projektkarte erstellen
 - Aufgabe und Goal Contract verwalten
@@ -159,6 +159,14 @@ Streaming- und Rustls-Unterstützung, weil die Standardbibliothek keinen asynchr
 HTTP-Body-Stream bereitstellt. Redirects und Umgebungsproxies sind für diese Clients deaktiviert.
 
 ## Hauptlaufzeiten
+
+### Projekt anlegen
+
+1. UI fordert über den versionierten `create_project`-Command eine native Ordnerauswahl an und sendet keinen Pfad.
+2. Der privilegierte Desktop-Adapter öffnet einen eigenen nativen Ordnerdialog; Abbruch ändert das Dateisystem nicht.
+3. Rust kanonisiert den ausgewählten Ordner. Ist er bereits ein Git-Worktree, ein Unterordner eines anderen Worktrees oder nicht leer, schlägt der Command fail-closed fehl.
+4. Isoliertes in-process `gix` erzeugt ein Worktree-Repository mit Unborn-HEAD `refs/heads/main`, ohne Commit, Remote oder Scaffold.
+5. Danach folgen Inspektion, Katalog und Aktivierung dem Öffnen-Pfad.
 
 ### Projekt öffnen
 

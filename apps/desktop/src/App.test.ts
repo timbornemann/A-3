@@ -1684,9 +1684,57 @@ describe('A^3 desktop shell', () => {
     });
 
     expect(await screen.findByRole('heading', { name: 'Deine Projekte' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Neues Projekt' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Projekt hinzufügen' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Deine Projektbibliothek' })).toBeTruthy();
     expect(screen.getByRole('search')).toBeTruthy();
+  });
+
+  it('creates an empty project after explicit interaction', async () => {
+    const projectCreator = vi.fn(async () => openedProject);
+    const projectOpener = vi.fn(async () => openedProject);
+    const projectStatusLoader = vi
+      .fn<() => Promise<ProjectStatusResponseV1>>()
+      .mockResolvedValueOnce(noProjectStatus)
+      .mockResolvedValueOnce(activeProjectStatus);
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        projectCreator,
+        projectOpener,
+        projectStatusLoader,
+      },
+    });
+
+    expect(projectCreator).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Neues Projekt' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'worktree' })).toBeTruthy();
+    });
+    expect(projectCreator).toHaveBeenCalledTimes(1);
+    expect(projectOpener).not.toHaveBeenCalled();
+  });
+
+  it('shows concrete recovery when creating over an existing Git repository', async () => {
+    const projectCreator = vi.fn<() => Promise<OpenProjectResponseV1>>().mockRejectedValue({
+      code: 'alreadyGitRepository',
+      message: 'C:\\secret\\repository is already git',
+      protocolVersion: 1,
+    });
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        projectCreator,
+        projectStatusLoader: async () => noProjectStatus,
+      },
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Neues Projekt' }));
+    const alert = await screen.findByRole('alert');
+
+    expect(alert.textContent).toContain('Projekt hinzufügen');
+    expect(alert.textContent).not.toContain('secret');
   });
 
   it('restores the last project before reading active status', async () => {

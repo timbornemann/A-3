@@ -6,8 +6,11 @@ export type ErrorCodeV1 =
   | 'unsupportedProtocolVersion'
   | 'projectSelectionFailed'
   | 'projectSelectionUnavailable'
-  | 'notGitRepository'
-  | 'projectRootRequired'
+    | 'notGitRepository'
+    | 'alreadyGitRepository'
+    | 'directoryNotEmpty'
+    | 'projectInitializationFailed'
+    | 'projectRootRequired'
   | 'unsupportedRepository'
   | 'invalidRepositoryMetadata'
   | 'localStorageUnavailable'
@@ -75,6 +78,9 @@ const ERROR_CODES = new Set<ErrorCodeV1>([
   'projectSelectionFailed',
   'projectSelectionUnavailable',
   'notGitRepository',
+  'alreadyGitRepository',
+  'directoryNotEmpty',
+  'projectInitializationFailed',
   'projectRootRequired',
   'unsupportedRepository',
   'invalidRepositoryMetadata',
@@ -164,6 +170,12 @@ export function projectOpenRecoveryMessage(error: unknown): string {
     projectSelectionUnavailable:
       'Der gewählte Ordner ist nicht mehr verfügbar. Prüfe Laufwerk und Zugriffsrechte und wähle ihn erneut.',
     notGitRepository: 'Wähle den Stammordner eines lokalen Git-Repositories.',
+    alreadyGitRepository:
+      'Dieses Verzeichnis ist bereits ein Git-Repository. Nutze „Projekt hinzufügen“.',
+    directoryNotEmpty:
+      'Wähle einen leeren Ordner. A^3 legt Git nur in leeren Verzeichnissen an.',
+    projectInitializationFailed:
+      'Das leere Git-Projekt konnte nicht angelegt werden. Wähle einen anderen leeren Ordner.',
     projectRootRequired: 'Wähle den Root des Git-Worktrees und keinen Unterordner.',
     unsupportedRepository:
       'Dieses Repository-Layout wird nicht unterstützt. Wähle einen normalen lokalen Git-Worktree.',

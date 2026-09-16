@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CURRENT_PROTOCOL_VERSION } from './health';
-import { openProject, parseOpenProjectResponseV1, type OpenProjectResponseV1 } from './project';
+import { createProject, openProject, parseOpenProjectResponseV1, type OpenProjectResponseV1 } from './project';
 
 const openedResponse: OpenProjectResponseV1 = {
   protocolVersion: CURRENT_PROTOCOL_VERSION,
@@ -21,6 +21,15 @@ describe('project IPC client', () => {
 
     await expect(openProject(invokeCommand)).resolves.toEqual(openedResponse);
     expect(invokeCommand).toHaveBeenCalledWith('open_project', {
+      request: { protocolVersion: CURRENT_PROTOCOL_VERSION },
+    });
+  });
+
+  it('sends no WebView-supplied path when creating an empty project', async () => {
+    const invokeCommand = vi.fn(async () => openedResponse);
+
+    await expect(createProject(invokeCommand)).resolves.toEqual(openedResponse);
+    expect(invokeCommand).toHaveBeenCalledWith('create_project', {
       request: { protocolVersion: CURRENT_PROTOCOL_VERSION },
     });
   });

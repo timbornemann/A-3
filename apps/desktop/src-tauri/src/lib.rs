@@ -46,9 +46,10 @@ use a3_application::{
     AgentTaskRecovery, AgentTaskRecoveryLoadResult, AgentWorkspaceLayout, AskResearchStore,
     CompileWorkspaceTaskLens, CompileWorkspaceTaskLensFailure, CompileWorkspaceTaskLensResult,
     ControlAgentApproval, ControlAgentTaskRun, CreateAgentGoal, CreateAgentGoalFailure,
-    DeepMapExecutionFailure, DeepMapExecutor, DeepMapJournalEvent, DeepMapPhase,
-    DeepMapPublicationState, DeepMapPublicationStateStore, DeepMapRunCursor,
-    DeepMapRunJournalStore, DeepMapRunSummary, DeepMapSafeAction, DeepMapTargetKind,
+    CreateProject, CreateProjectError, DeepMapExecutionFailure, DeepMapExecutor,
+    DeepMapJournalEvent, DeepMapPhase, DeepMapPublicationState, DeepMapPublicationStateStore,
+    DeepMapRunCursor, DeepMapRunJournalStore, DeepMapRunSummary, DeepMapSafeAction,
+    DeepMapTargetKind, EmptyWorktreeInitializationFailure, EmptyWorktreeInitializer,
     GetAgentActivity, GetAgentActivityFailure, GetAgentApprovalCenter, GetAgentGoal, GetHealth,
     GetModuleCardDetail, GetModuleCardEvidence, GetModuleCardFreshness, GetModuleDependencyGraph,
     GetModuleRuntimeMap, GetModuleTreePage, GetProjectIndexStatus, GetProjectIndexStatusError,
@@ -218,7 +219,9 @@ use a3_protocol::{
 use a3_storage_libsql::{
     CatalogOpenError, LibsqlKnowledgeStore, StorageLayout, StorageLayoutError,
 };
-use a3_workspace::{RepositoryInspector, WorkspaceAgentSourceReader};
+use a3_workspace::{
+    RepositoryInspector, WorkspaceAgentSourceReader, WorkspaceEmptyWorktreeInitializer,
+};
 use agent_approval_mapping::map_agent_approval_to_v1;
 use agent_approval_metadata::SystemAgentApprovalMetadata;
 use agent_goal_metadata::SystemAgentGoalMetadata;
@@ -270,6 +273,7 @@ pub struct CompositionRoot {
     model_settings: Option<ModelSettingsManager>,
     project_settings: Option<ProjectSettingsManager>,
     open_project: OpenProject,
+    create_project: CreateProject,
     activate_catalog_project: ActivateCatalogProject,
     project_catalog_store: Arc<dyn KnowledgeStore>,
     recent_projects: ListRecentProjects,
@@ -2267,6 +2271,32 @@ impl CompositionRoot {
             .execute()
             .await
             .map_err(map_open_project_error_to_v1)?;
+        if let OpenProjectOutcome::Opened {
+            project,
+            project_id,
+        } = &outcome
+        {
+            self.activate_project_runtime(
+                project.as_ref().clone(),
+                *project_id,
+                CommandErrorV1::project_open,
+            )
+            .await?;
+        }
+        Ok(map_open_project_to_v1(outcome))
+    }
+
+    /// Executes one user-controlled empty-project creation and maps it to IPC V1.
+    pub async fn create_project(&self) -> Result<OpenProjectResponseV1, CommandErrorV1> {
+        let _operation = self.acquire_project_operation(CommandErrorV1::project_open)?;
+        let _agent_operation = self
+            .try_acquire_agent_task_operation()
+            .ok_or_else(|| CommandErrorV1::project_open(ErrorCodeV1::ProjectOperationBusy))?;
+        let outcome = self
+            .create_project
+            .execute()
+            .await
+            .map_err(map_create_project_error_to_v1)?;
         if let OpenProjectOutcome::Opened {
             project,
             project_id,
@@ -5493,6 +5523,7 @@ impl CompositionBase {
         store: Arc<dyn KnowledgeStore>,
     ) -> Result<CompositionRoot, CompositionRootError> {
         self.finish_internal(
+            Arc::clone(&project_directory_picker),
             project_directory_picker,
             project_reconciliation_confirmer,
             store,
@@ -5503,12 +5534,14 @@ impl CompositionBase {
     fn finish_with_indexing(
         self,
         project_directory_picker: Arc<dyn ProjectDirectoryPicker>,
+        create_project_directory_picker: Arc<dyn ProjectDirectoryPicker>,
         project_reconciliation_confirmer: Arc<dyn ProjectReconciliationConfirmer>,
         store: Arc<dyn KnowledgeStore>,
         ports: IndexingCompositionPorts,
     ) -> Result<CompositionRoot, CompositionRootError> {
         self.finish_internal(
             project_directory_picker,
+            create_project_directory_picker,
             project_reconciliation_confirmer,
             store,
             OptionalCompositionPorts {
@@ -5555,6 +5588,7 @@ impl CompositionBase {
     fn finish_internal(
         self,
         project_directory_picker: Arc<dyn ProjectDirectoryPicker>,
+        create_project_directory_picker: Arc<dyn ProjectDirectoryPicker>,
         project_reconciliation_confirmer: Arc<dyn ProjectReconciliationConfirmer>,
         store: Arc<dyn KnowledgeStore>,
         ports: OptionalCompositionPorts,
@@ -5920,6 +5954,8 @@ impl CompositionBase {
             }
             _ => None,
         };
+        let empty_worktree_initializer: Arc<dyn EmptyWorktreeInitializer> =
+            Arc::new(WorkspaceEmptyWorktreeInitializer::new());
         Ok(CompositionRoot {
             health_query: self.health_query,
             model_settings,
@@ -5927,6 +5963,13 @@ impl CompositionBase {
             open_project: OpenProject::new(
                 project_directory_picker,
                 Arc::clone(&project_inspector),
+                Arc::clone(&project_reconciliation_confirmer),
+                Arc::clone(&store),
+            ),
+            create_project: CreateProject::new(
+                create_project_directory_picker,
+                Arc::clone(&project_inspector),
+                empty_worktree_initializer,
                 project_reconciliation_confirmer,
                 Arc::clone(&store),
             ),
@@ -6052,11 +6095,14 @@ pub fn run() -> Result<(), DesktopRunError> {
                 Arc::clone(&deep_map_publication_state),
             );
             let deep_map_executor = tauri::async_runtime::block_on(deep_map_runtime.resolve());
+            let native_handle = app.handle().clone();
             app.manage(base.finish_with_indexing(
-                Arc::new(NativeProjectDirectoryPicker::new(app.handle().clone())),
-                Arc::new(NativeProjectReconciliationConfirmer::new(
-                    app.handle().clone(),
+                Arc::new(NativeProjectDirectoryPicker::new(native_handle.clone())),
+                Arc::new(NativeProjectDirectoryPicker::with_title(
+                    native_handle.clone(),
+                    "A^3 new project folder",
                 )),
+                Arc::new(NativeProjectReconciliationConfirmer::new(native_handle)),
                 catalog_store,
                 IndexingCompositionPorts {
                     settings_store,
@@ -6113,6 +6159,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::control_agent_session_queue,
             commands::control_agent_task_run,
             commands::create_agent_goal,
+            commands::create_project,
             commands::discover_provider_models_v2,
             commands::list_recent_projects,
             commands::open_project,
@@ -10645,6 +10692,44 @@ fn map_open_project_error_to_v1(error: OpenProjectError) -> CommandErrorV1 {
         }
         OpenProjectError::ReconciliationConfirmation(_) => ErrorCodeV1::ProjectSelectionFailed,
         OpenProjectError::Storage(error) => map_storage_error_to_v1(error),
+    };
+    CommandErrorV1::project_open(code)
+}
+
+fn map_create_project_error_to_v1(error: CreateProjectError) -> CommandErrorV1 {
+    let code = match error {
+        CreateProjectError::DirectorySelection(_) => ErrorCodeV1::ProjectSelectionFailed,
+        CreateProjectError::AlreadyGitRepository
+        | CreateProjectError::Initialization(
+            EmptyWorktreeInitializationFailure::AlreadyRepository,
+        ) => ErrorCodeV1::AlreadyGitRepository,
+        CreateProjectError::Initialization(
+            EmptyWorktreeInitializationFailure::DirectoryNotEmpty,
+        ) => ErrorCodeV1::DirectoryNotEmpty,
+        CreateProjectError::Initialization(EmptyWorktreeInitializationFailure::Failed) => {
+            ErrorCodeV1::ProjectInitializationFailed
+        }
+        CreateProjectError::Initialization(
+            EmptyWorktreeInitializationFailure::SelectionUnavailable,
+        )
+        | CreateProjectError::Inspection(ProjectInspectionFailure::SelectionUnavailable) => {
+            ErrorCodeV1::ProjectSelectionUnavailable
+        }
+        CreateProjectError::Initialization(EmptyWorktreeInitializationFailure::NotWorktreeRoot)
+        | CreateProjectError::Inspection(ProjectInspectionFailure::NotWorktreeRoot) => {
+            ErrorCodeV1::ProjectRootRequired
+        }
+        CreateProjectError::Inspection(ProjectInspectionFailure::NotRepository) => {
+            ErrorCodeV1::ProjectInitializationFailed
+        }
+        CreateProjectError::Inspection(ProjectInspectionFailure::UnsupportedRepository) => {
+            ErrorCodeV1::UnsupportedRepository
+        }
+        CreateProjectError::Inspection(ProjectInspectionFailure::InvalidRepositoryMetadata) => {
+            ErrorCodeV1::InvalidRepositoryMetadata
+        }
+        CreateProjectError::ReconciliationConfirmation(_) => ErrorCodeV1::ProjectSelectionFailed,
+        CreateProjectError::Storage(error) => map_storage_error_to_v1(error),
     };
     CommandErrorV1::project_open(code)
 }
