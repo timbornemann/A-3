@@ -1462,6 +1462,7 @@ const fn verification_method(method: a3_domain::VerificationMethod) -> &'static 
         a3_domain::VerificationMethod::DiffInvariant => "diff_invariant",
         a3_domain::VerificationMethod::Diagnostic => "diagnostic",
         a3_domain::VerificationMethod::UserConfirm => "user_confirm",
+        a3_domain::VerificationMethod::DeferredCommand => "deferred_command",
     }
 }
 
@@ -1546,6 +1547,21 @@ fn render_verification_target(text: &mut String, spec: &a3_domain::VerificationS
             text,
             format_args!("verification_target=user_confirm scope={scope_id}"),
         ),
+        a3_domain::VerificationTarget::DeferredCommand(deferred) => {
+            push_line(
+                text,
+                format_args!(
+                    "verification_target=deferred_command scope={}",
+                    verification_scope(deferred.scope())
+                ),
+            );
+            for kind in deferred.preferred_kinds() {
+                push_line(
+                    text,
+                    format_args!("verification_preferred_command_kind={}", kind.as_str()),
+                );
+            }
+        }
     }
 }
 
@@ -1562,6 +1578,7 @@ const fn diff_invariant_mode(mode: a3_domain::DiffInvariantMode) -> &'static str
         a3_domain::DiffInvariantMode::NoChanges => "no_changes",
         a3_domain::DiffInvariantMode::OnlyPaths => "only_paths",
         a3_domain::DiffInvariantMode::ExactPaths => "exact_paths",
+        a3_domain::DiffInvariantMode::NonEmptyChanges => "non_empty_changes",
     }
 }
 

@@ -1423,6 +1423,7 @@ fn evaluate_diff(
         DiffInvariantMode::NoChanges => actual.is_empty(),
         DiffInvariantMode::OnlyPaths => actual.iter().all(|path| expected.contains(path)),
         DiffInvariantMode::ExactPaths => actual == expected,
+        DiffInvariantMode::NonEmptyChanges => !actual.is_empty(),
     };
     if passed {
         VerificationEvidenceEvaluation::Passed

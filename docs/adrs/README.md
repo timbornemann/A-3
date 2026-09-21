@@ -134,6 +134,9 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0108](0108-fast-index-laufinspektor.md) | Fast-Index-Laufinspektor |
 | [0109](0109-autonomer-agent-einstieg.md) | Autonomer Agent-Einstieg ohne Nutzer-Planfreigabe |
 | [0110](0110-leeres-projekt-anlegen.md) | Leeres lokales Git-Projekt über nativen Dialog anlegen |
+| [0111](0111-leerer-index-bestandsaufnahme.md) | Leerer veröffentlichter Index ist eine Core-Bestandsaufnahme |
+| [0112](0112-nachgelagerte-greenfield-verifikation.md) | Nachgelagerte evidenzgebundene Greenfield-Verifikation |
+| [0113](0113-sichere-unterverzeichnisse-fuer-patches.md) | Sichere Unterverzeichnisse für strukturierte Patches |
 
 ## Neue ADRs
 

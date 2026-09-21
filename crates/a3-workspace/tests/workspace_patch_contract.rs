@@ -228,6 +228,46 @@ fn add_never_overwrites_a_live_path_absent_from_the_snapshot() -> Result<(), Box
 }
 
 #[test]
+fn add_creates_missing_parent_directories_inside_the_selected_root() -> Result<(), Box<dyn Error>> {
+    let fixture = TempDirectory::new()?;
+    let root = fixture.path().join("selected");
+    fs::create_dir(&root)?;
+    let snapshot_id = SnapshotId::from_bytes([18; 32]);
+    let project = project(&root)?;
+    let published = published_index(snapshot_id, Vec::new())?;
+    let action = patch_action(
+        project.worktree().id(),
+        snapshot_id,
+        vec![PatchOperation::Add(PatchAdd::new(
+            path(b"tests/unit/test_server.py")?,
+            PatchFileContent::try_from_bytes(b"class ServerTest:\n    pass\n".to_vec())?,
+        ))],
+    )?;
+    let adapter = WorkspacePatchAdapter::new();
+    let control = Active::default();
+
+    let preview =
+        futures::executor::block_on(adapter.preview(&project, &published, &action, &control))?;
+    assert_eq!(preview.entries().len(), 1);
+    assert!(!root.join("tests").exists());
+
+    let changes = futures::executor::block_on(adapter.apply(
+        &project,
+        &published,
+        authorize(action)?,
+        &control,
+    ))?;
+
+    assert!(changes.complete());
+    assert_eq!(changes.changes().len(), 1);
+    assert_eq!(
+        fs::read(root.join("tests/unit/test_server.py"))?,
+        b"class ServerTest:\n    pass\n"
+    );
+    Ok(())
+}
+
+#[test]
 fn preview_conflicts_retain_exact_source_reason_without_mutation() -> Result<(), Box<dyn Error>> {
     for reason in [
         PatchConflictKind::SourceNotIndexed,
@@ -321,6 +361,44 @@ fn symlink_or_reparse_destination_cannot_escape_the_selected_root() -> Result<()
             &Active::default(),
         )),
         Err(PatchPreviewFailure::Denied)
+    );
+    assert!(!outside.join("outside.txt").exists());
+    Ok(())
+}
+
+#[test]
+fn link_inserted_after_nested_preview_blocks_apply_without_writing_outside()
+-> Result<(), Box<dyn Error>> {
+    let fixture = TempDirectory::new()?;
+    let root = fixture.path().join("selected");
+    let outside = fixture.path().join("outside");
+    fs::create_dir(&root)?;
+    fs::create_dir(&outside)?;
+    let snapshot_id = SnapshotId::from_bytes([19; 32]);
+    let project = project(&root)?;
+    let published = published_index(snapshot_id, Vec::new())?;
+    let action = patch_action(
+        project.worktree().id(),
+        snapshot_id,
+        vec![PatchOperation::Add(PatchAdd::new(
+            path(b"nested/outside.txt")?,
+            PatchFileContent::try_from_bytes(b"must not escape\n".to_vec())?,
+        ))],
+    )?;
+    let adapter = WorkspacePatchAdapter::new();
+    let control = Active::default();
+
+    futures::executor::block_on(adapter.preview(&project, &published, &action, &control))?;
+    create_directory_link(&outside, &root.join("nested"))?;
+
+    assert_eq!(
+        futures::executor::block_on(adapter.apply(
+            &project,
+            &published,
+            authorize(action)?,
+            &control,
+        )),
+        Err(PatchApplyFailure::Denied)
     );
     assert!(!outside.join("outside.txt").exists());
     Ok(())

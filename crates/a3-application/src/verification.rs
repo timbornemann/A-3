@@ -208,6 +208,12 @@ fn verification_order_key(spec: &VerificationSpec) -> (u8, u8, usize, Verificati
         ),
         VerificationTarget::Diagnostic { scope, .. } => (scope_rank(*scope), 2, 0, spec.id()),
         VerificationTarget::Command { scope, .. } => (scope_rank(*scope), 3, 0, spec.id()),
+        VerificationTarget::DeferredCommand(deferred) => (
+            scope_rank(deferred.scope()),
+            4,
+            deferred.preferred_kinds().len(),
+            spec.id(),
+        ),
         VerificationTarget::UserConfirm { .. } => (4, 4, 0, spec.id()),
         VerificationTarget::Legacy(method) => (5, legacy_method_rank(*method), 0, spec.id()),
     }
@@ -228,6 +234,7 @@ const fn legacy_method_rank(method: VerificationMethod) -> u8 {
         VerificationMethod::Diagnostic => 2,
         VerificationMethod::Command => 3,
         VerificationMethod::UserConfirm => 4,
+        VerificationMethod::DeferredCommand => 5,
     }
 }
 

@@ -149,9 +149,10 @@ pub use agent_action_codec::{
 pub use agent_actions::{
     AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, AgentLedgerActionOutcome,
     AgentLedgerActionOutcomeKind, ApplyAgentLedgerUpdate, ApplyAgentLedgerUpdateError,
-    ApplyAgentPlanRevision, ApplyAgentPlanRevisionError, ContinueVerifiedAgentPlan,
-    ContinueVerifiedAgentPlanError, ContinueVerifiedAgentPlanOutcome, PersistAgentLedgerMutation,
-    PersistAgentLedgerMutationError, RequestAgentFinish,
+    ApplyAgentPlanRevision, ApplyAgentPlanRevisionError, BindDeferredAgentVerification,
+    BindDeferredAgentVerificationError, ContinueVerifiedAgentPlan, ContinueVerifiedAgentPlanError,
+    ContinueVerifiedAgentPlanOutcome, PersistAgentLedgerMutation, PersistAgentLedgerMutationError,
+    RequestAgentFinish,
 };
 pub use agent_activity::{
     AgentActivity, AgentActivityLoadResult, AgentActivityRun, GetAgentActivity,
@@ -418,10 +419,11 @@ pub use module_tree::{
     ModuleTreeStore,
 };
 pub use mutating_agent_controller::{
-    ConservativeProcessVerificationEvidenceFactory, ExecuteMutatingAgentAction,
-    MutationCommandSelection, MutationContextSeed, MutationControllerFailure,
-    MutationControllerOutcome, MutationExecutionIds, ProcessVerificationEvidenceFactory,
-    ProcessVerificationEvidenceFailure, ProcessVerificationEvidenceRequest,
+    BuiltinProcessVerificationEvidenceFactory, ConservativeProcessVerificationEvidenceFactory,
+    ExecuteMutatingAgentAction, MutationCommandSelection, MutationContextSeed,
+    MutationControllerFailure, MutationControllerOutcome, MutationExecutionIds,
+    ProcessVerificationEvidenceFactory, ProcessVerificationEvidenceFailure,
+    ProcessVerificationEvidenceRequest,
 };
 pub use mutation_coordinator::{
     MutationFailureClass, MutationProgressDecision, WorktreeMutationBusy,

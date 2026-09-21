@@ -59,6 +59,23 @@ impl AgentWorkPlan {
     pub fn from_reviewed_markdown(markdown: &str) -> Result<Self, AgentWorkPlanError> {
         let changes = section_items(markdown, "Implementation Changes");
         let tests = section_items(markdown, "Test Plan");
+        Self::from_items(changes, tests)
+    }
+
+    /// Compiles already admitted Core research decisions without treating their text as
+    /// Markdown headings. Top-level list items remain independent executable steps; plain
+    /// prose remains one bounded step for backwards compatibility.
+    pub fn from_research_decisions(
+        implementation: &str,
+        tests: &str,
+    ) -> Result<Self, AgentWorkPlanError> {
+        Self::from_items(
+            plan_items(implementation.lines()),
+            plan_items(tests.lines()),
+        )
+    }
+
+    fn from_items(changes: Vec<String>, tests: Vec<String>) -> Result<Self, AgentWorkPlanError> {
         if changes.is_empty() {
             return Err(AgentWorkPlanError::MissingImplementationSteps);
         }
@@ -110,10 +127,10 @@ impl AgentWorkPlan {
 
 fn push_unique(steps: &mut Vec<AgentWorkPlanStep>, candidate: AgentWorkPlanStep) {
     let normalized = normalized_outcome(&candidate.outcome);
-    if !steps
-        .iter()
-        .any(|step| normalized_outcome(&step.outcome) == normalized)
-    {
+    if !steps.iter().any(|step| {
+        step.verification_intent == candidate.verification_intent
+            && normalized_outcome(&step.outcome) == normalized
+    }) {
         steps.push(candidate);
     }
 }
@@ -128,9 +145,7 @@ fn normalized_outcome(value: &str) -> String {
 
 fn section_items(markdown: &str, section: &str) -> Vec<String> {
     let mut inside = false;
-    let mut current = None::<String>;
-    let mut items = Vec::new();
-    let mut paragraph = Vec::new();
+    let mut lines = Vec::new();
 
     for line in markdown.lines() {
         let trimmed = line.trim();
@@ -147,6 +162,17 @@ fn section_items(markdown: &str, section: &str) -> Vec<String> {
         if !inside {
             continue;
         }
+        lines.push(line);
+    }
+    plan_items(lines)
+}
+
+fn plan_items<'a>(lines: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut current = None::<String>;
+    let mut items = Vec::new();
+    let mut paragraph = Vec::new();
+    for line in lines {
+        let trimmed = line.trim();
         if let Some(item) = top_level_item(line) {
             if let Some(previous) = current.take() {
                 push_item(&mut items, previous);
@@ -306,6 +332,43 @@ mod tests {
         assert_eq!(plan.steps().len(), 4);
         assert_eq!(plan.steps()[1].outcome(), "Adapter implementieren");
         assert_eq!(plan.steps()[2].outcome(), "Dokumentation aktualisieren");
+        Ok(())
+    }
+
+    #[test]
+    fn admitted_research_lists_keep_atomic_steps_without_heading_authority()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let plan = AgentWorkPlan::from_research_decisions(
+            "1. Servermodul anlegen\n2. Fehlerantworten ergänzen\n## Test Plan\nUnerlaubte Überschrift",
+            "- Start prüfen\n- GET und Fehlerfälle prüfen",
+        )?;
+        assert_eq!(plan.steps().len(), 4);
+        assert_eq!(plan.steps()[0].outcome(), "Servermodul anlegen");
+        assert_eq!(plan.steps()[1].outcome(), "Fehlerantworten ergänzen");
+        assert_eq!(plan.steps()[2].outcome(), "Start prüfen");
+        assert_eq!(
+            plan.steps()[3].verification_intent(),
+            AgentWorkPlanVerificationIntent::Test
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn same_outcome_remains_separate_when_change_and_test_intents_differ()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let plan = AgentWorkPlan::from_research_decisions(
+            "Serververtrag umsetzen",
+            "Serververtrag umsetzen",
+        )?;
+        assert_eq!(plan.steps().len(), 2);
+        assert_eq!(
+            plan.steps()[0].verification_intent(),
+            AgentWorkPlanVerificationIntent::Change
+        );
+        assert_eq!(
+            plan.steps()[1].verification_intent(),
+            AgentWorkPlanVerificationIntent::Test
+        );
         Ok(())
     }
 

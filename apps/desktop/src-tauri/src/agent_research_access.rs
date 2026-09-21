@@ -47,6 +47,7 @@ impl AgentAskResearcher {
             .as_ref()
             .ok_or(AgentSessionManagerFailure::InvalidOutput)?;
         let kind = match kind {
+            ResearchAccessKind::IndexInventory => "veröffentlichter Dateibestand",
             ResearchAccessKind::Inspect => "Originalseite",
             ResearchAccessKind::LiteralSearch => "Quelltextsuche",
             ResearchAccessKind::IndexSearch => "Indexauswahl",
@@ -220,7 +221,110 @@ pub(super) fn identity(
     Some((ContentHash::from_bytes(*hash.finalize().as_bytes()), kind))
 }
 
+fn empty_publication_inventory_key() -> ContentHash {
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"a3.research-empty-publication-inventory.v1\0");
+    ContentHash::from_bytes(*hash.finalize().as_bytes())
+}
+
+pub(super) fn is_empty_publication_inventory_result(
+    work: &a3_domain::ResearchWorkState,
+    question: a3_domain::ResearchQuestionId,
+    result: &a3_domain::ResearchResult,
+) -> bool {
+    let Some(scope) = result.boundary() else {
+        return false;
+    };
+    result.kind() == a3_domain::ResearchResultKind::BoundedUnknown
+        && result.sources().is_empty()
+        && work.accesses().iter().any(|access| {
+            access.question == question
+                && access.scope == scope
+                && access.key == empty_publication_inventory_key()
+                && access.kind == ResearchAccessKind::IndexInventory
+                && access.outcome == Some(ResearchAccessOutcome::NoMatch)
+        })
+}
+
 impl AskResearchWorkingSet {
+    /// Returns whether the current complete Core plan is grounded by the exact empty
+    /// publication inventory introduced by ADR-0111. A missing Task-Lens hit in a nonempty
+    /// graph, a foreign scope, or an ordinary bounded unknown cannot satisfy this predicate.
+    pub(super) fn has_empty_publication_inventory(
+        &self,
+        published: &a3_domain::PublishedIndex,
+    ) -> bool {
+        use a3_domain::ResearchQuestionId;
+        if !published.publication().graph().files().is_empty()
+            || !self.work_required_revisions.is_empty()
+        {
+            return false;
+        }
+        let Some(work) = &self.work else {
+            return false;
+        };
+        if !work.ready_to_finish() || !super::research_work::core_plan_contract(work) {
+            return false;
+        }
+        let scope = scope(published);
+        let Some(inventory) = work
+            .question(ResearchQuestionId::FIRST)
+            .and_then(|question| question.result())
+        else {
+            return false;
+        };
+        inventory.boundary() == Some(scope)
+            && is_empty_publication_inventory_result(work, ResearchQuestionId::FIRST, inventory)
+    }
+
+    /// ADR-0111: a published graph with zero files is a Core inventory, not an open gap.
+    /// A nonempty graph that merely selected zero Task-Lens hits must not use this path.
+    pub(super) fn close_empty_publication_inventory(
+        &mut self,
+        published: &a3_domain::PublishedIndex,
+    ) -> Result<bool, AgentSessionManagerFailure> {
+        use a3_domain::{ResearchResult, ResearchResultKind};
+        if !published.publication().graph().files().is_empty()
+            || !self.work_required_revisions.is_empty()
+        {
+            return Ok(false);
+        }
+        let Some(work) = &self.work else {
+            return Ok(false);
+        };
+        let Some(id) = work.next_question() else {
+            return Ok(false);
+        };
+        let question = work
+            .question(id)
+            .ok_or(AgentSessionManagerFailure::InvalidOutput)?;
+        if question.definition().kind != a3_domain::ResearchQuestionKind::Repository {
+            return Ok(false);
+        }
+        let scope = scope(published);
+        let mut next = work.clone();
+        let inventory_key = empty_publication_inventory_key();
+        if next
+            .begin_access(id, scope, inventory_key, ResearchAccessKind::IndexInventory)
+            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?
+        {
+            next.finish_access(id, scope, inventory_key, ResearchAccessOutcome::NoMatch)
+                .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+        }
+        let result = ResearchResult::new(
+            ResearchResultKind::BoundedUnknown,
+            "Der gebundene Indexstand enthält keine Dateien. Es gibt keine bestehenden Einstiegspunkte, APIs oder Integrationsgrenzen im Worktree. Das ist eine Core-Bestandsaufnahme des leeren Index, keine Laufzeitverifikation; später hinzugefügte oder nicht indizierte Dateien bleiben außerhalb dieses Ergebnisses.".to_owned(),
+            Vec::new(),
+            Some(scope),
+        )
+        .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+        next.exclude(id, scope)
+            .and_then(|_| next.resolve(id, result))
+            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+        self.work = Some(next);
+        Ok(true)
+    }
+
     /// Called only after the finite Core frontier is exhausted, never on budget/cancellation.
     /// Records a limitation of the performed investigation, not a claim of global absence.
     pub(super) fn close_investigated_boundary(
@@ -489,6 +593,16 @@ mod tests {
         assert_eq!(search_outcome(&result, 1), ResearchAccessOutcome::NoMatch);
         assert_eq!(search_outcome(&result, 2), ResearchAccessOutcome::Limited);
         assert_eq!(search_outcome(&result, 0), ResearchAccessOutcome::Limited);
+        let empty_index = a3_application::AskSourceTextSearchResult::new(
+            vec![],
+            0,
+            0,
+            AskResearchCompleteness::Complete,
+        )?;
+        assert_eq!(
+            search_outcome(&empty_index, 0),
+            ResearchAccessOutcome::NoMatch
+        );
         let incomplete = a3_application::AskSourceTextSearchResult::new(
             vec![],
             1,
@@ -504,5 +618,111 @@ mod tests {
         state.observe_access(ResearchAccessOutcome::NoMatch);
         assert_eq!(state.access_outcome, ResearchAccessOutcome::Unavailable);
         Ok(())
+    }
+
+    #[test]
+    fn empty_published_index_closes_repository_inventory_and_keeps_files_as_a_blocker()
+    -> Result<(), Box<dyn Error>> {
+        let mut state = AskResearchWorkingSet::new(4096);
+        state.initialize_plan_work("erstelle einen kleinen python server")?;
+        let empty = published_index(Vec::new())?;
+        assert!(state.close_empty_publication_inventory(&empty)?);
+        state.design_basis = a3_application::ResearchDesignBasis::Originals;
+        assert!(state.uses_original_design_basis());
+        assert!(
+            state.design_originals_delivered(),
+            "the typed inventory receipt closes the otherwise empty original basis"
+        );
+        assert!(
+            !state.has_empty_publication_inventory(&empty),
+            "inventory alone cannot ground an incomplete design"
+        );
+        {
+            let work = state.work.as_ref().ok_or("work")?;
+            let first = work.question(ResearchQuestionId::FIRST).ok_or("question")?;
+            assert_eq!(first.status(), ResearchQuestionStatus::Limited);
+            assert_eq!(
+                first.result().ok_or("result")?.kind(),
+                a3_domain::ResearchResultKind::BoundedUnknown
+            );
+            assert!(first.result().ok_or("result")?.sources().is_empty());
+            assert_eq!(work.next_question(), Some(ResearchQuestionId::new(2)?));
+        }
+        assert!(!state.close_empty_publication_inventory(&empty)?);
+        assert!(
+            !state
+                .work
+                .as_mut()
+                .ok_or("work")?
+                .revalidate_in_scope(&[], Some(scope(&empty)))?
+        );
+
+        let mut blocked = AskResearchWorkingSet::new(4096);
+        blocked.initialize_plan_work("erstelle einen kleinen python server")?;
+        let file = a3_domain::FileRevision::new(
+            a3_domain::RepositoryPath::try_from_bytes(b"hello.py".to_vec())?,
+            ContentHash::from_bytes([9; 32]),
+        );
+        assert!(!blocked.close_empty_publication_inventory(&published_index(vec![file.clone()])?)?);
+        assert!(!blocked.has_empty_publication_inventory(&published_index(vec![file.clone()])?));
+        assert_eq!(
+            blocked
+                .work
+                .as_ref()
+                .ok_or("work")?
+                .question(ResearchQuestionId::FIRST)
+                .ok_or("question")?
+                .status(),
+            ResearchQuestionStatus::Open
+        );
+
+        let mut selected_none = AskResearchWorkingSet::new(4096);
+        selected_none.initialize_plan_work("erstelle einen kleinen python server")?;
+        selected_none.work_required_revisions.push(file);
+        assert!(
+            !selected_none.close_empty_publication_inventory(&empty)?,
+            "a nonempty required set is not an empty publication"
+        );
+
+        Ok(())
+    }
+
+    fn published_index(
+        files: Vec<a3_domain::FileRevision>,
+    ) -> Result<a3_domain::PublishedIndex, Box<dyn Error>> {
+        let snapshot_id = a3_domain::SnapshotId::from_bytes([11; 32]);
+        let graph = a3_domain::LinkedGraph::new(
+            snapshot_id,
+            files.clone(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )?;
+        let ranking = a3_domain::RankProjection::new(
+            snapshot_id,
+            a3_domain::RankingPolicyVersion::v1(),
+            Vec::new(),
+        )?;
+        let policy = a3_domain::ModulePolicyVersion::v1();
+        let card = a3_domain::RepositoryCard::new(
+            snapshot_id,
+            policy,
+            Vec::new(),
+            Vec::new(),
+            a3_domain::ModuleSymbolSet::empty(),
+            u32::try_from(files.len())?,
+            0,
+        )?;
+        let modules =
+            a3_domain::ModuleProjection::new(snapshot_id, policy, Vec::new(), Vec::new(), card)?;
+        let publication = a3_domain::IndexPublication::new(graph, ranking, files, modules)?;
+        let run = a3_domain::IndexRunRecord::new(
+            a3_domain::IndexRunId::from_bytes([12; 32]),
+            snapshot_id,
+            a3_domain::RankingPolicyVersion::v1(),
+            a3_domain::IndexRunSequence::new(1)?,
+            a3_domain::IndexRunStatus::Published,
+        );
+        Ok(a3_domain::PublishedIndex::new(run, publication)?)
     }
 }

@@ -18,19 +18,21 @@ use crate::{
     WorktreeMutationBusy, WorktreeMutationCoordinator,
 };
 use a3_domain::{
-    AgentAction, AgentControllerState, AgentMutationDisposition, AgentMutationKind, AgentRun,
-    AgentRunAction, AgentRunTimestamp, AgentToolAttemptStatus, ApprovalGrant, ApprovalRequestId,
-    CommandEvidence, CommandEvidenceContext, DiscoveredCommandId, DiscoveredCommandKind,
-    EvidenceDependency, GoalContract, ModelProfile, MutationApplicationState,
-    MutationReconciliation, PatchAction, PatchChangeSet, PolicyDecision, PolicyDecisionId,
-    PolicyDecisionOutcome, PolicyEvaluationTiming, ProcessOutputRedaction, ProcessRunResult,
+    ActionClass, AgentAction, AgentControllerState, AgentMutationDisposition, AgentMutationKind,
+    AgentRun, AgentRunAction, AgentRunTimestamp, AgentToolAttemptStatus, ApprovalGrant,
+    ApprovalRequestId, CommandEvidence, CommandEvidenceContext, DiscoveredCommandId,
+    DiscoveredCommandKind, EvidenceDependency, GoalContract, ModelProfile,
+    MutationApplicationState, MutationReconciliation, PatchAction, PatchChangeSet, PolicyDecision,
+    PolicyDecisionId, PolicyDecisionOutcome, PolicyEvaluationTiming,
+    PreparedDiscoveredCommandApproval, ProcessOutputRedaction, ProcessRunResult,
     ProcessTermination, ProjectCommandCatalog, ProjectIdentity, PublishedIndex, RunEventCode,
     RunEventId, RunEventKind, RunEventOutcome, RunEventPayload, RunEventRedaction,
     RunEventRedactionSource, RunEventSubject, SnapshotId, StepVerificationId, TaskEvidenceId,
     TaskLedger, TaskLedgerTimestamp, TaskLensSeed, TaskStepBlockingReason, TaskStepFailureReason,
-    TaskStepId, TaskStepResultSummary, TaskStepStatus, ToolRunId, VerificationDependencies,
-    VerificationEvidence, VerificationMethod, VerificationRunId, VerificationSpec,
-    VerificationTarget, WorkspacePolicy,
+    TaskStepId, TaskStepResultSummary, TaskStepStatus, TestCaseEvidence, TestCaseName,
+    TestCaseOutcome, TestEvidence, ToolRunId, VerificationDependencies, VerificationEvidence,
+    VerificationMethod, VerificationRunId, VerificationSpec, VerificationTarget, WorkspacePolicy,
+    WorkspacePolicyRestriction, WorkspacePolicyRule,
 };
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -40,6 +42,7 @@ use std::time::Duration;
 const VERIFICATION_EVIDENCE_TIMEOUT: Duration = Duration::from_secs(30);
 const APPROVAL_WAIT_REASON: &str = "exact mutation approval is required";
 const MUTATION_FAILURE_REASON: &str = "repeated identical mutation action failed";
+const MAX_BUILTIN_TEST_CASES: u32 = 100_000;
 
 /// Caller-owned stable identities for every durable event and evidence record in one action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,10 +140,16 @@ impl MutationContextSeed {
 }
 
 /// Current E5 evidence and exact stored confirmation needed to resolve one `run` action.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct MutationCommandSelection<'a> {
     catalog: &'a ProjectCommandCatalog,
-    confirmation: &'a StoredProjectCommandAllowlist,
+    authorization: MutationCommandAuthorization<'a>,
+}
+
+#[derive(Debug)]
+enum MutationCommandAuthorization<'a> {
+    Confirmed(&'a StoredProjectCommandAllowlist),
+    ApprovalRequired(Box<PreparedDiscoveredCommandApproval>),
 }
 
 impl<'a> MutationCommandSelection<'a> {
@@ -152,8 +161,24 @@ impl<'a> MutationCommandSelection<'a> {
     ) -> Self {
         Self {
             catalog,
-            confirmation,
+            authorization: MutationCommandAuthorization::Confirmed(confirmation),
         }
+    }
+
+    /// Binds only a current catalog and forces exact one-time central-policy approval.
+    pub fn requiring_approval(
+        catalog: &'a ProjectCommandCatalog,
+        run: &AgentRun,
+        ledger: &TaskLedger,
+        step_id: TaskStepId,
+        command_id: DiscoveredCommandId,
+    ) -> Result<Self, a3_domain::DiscoveredCommandProcessError> {
+        Ok(Self {
+            catalog,
+            authorization: MutationCommandAuthorization::ApprovalRequired(Box::new(
+                catalog.prepare_for_approval(run, ledger, step_id, command_id)?,
+            )),
+        })
     }
 }
 
@@ -177,6 +202,13 @@ pub struct ProcessVerificationEvidenceRequest<'a> {
     verification_run_id: VerificationRunId,
     dependencies: &'a VerificationDependencies,
     result: &'a ProcessRunResult,
+    adapter: ProcessVerificationAdapter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcessVerificationAdapter {
+    Generic,
+    PythonUnittest,
 }
 
 impl ProcessVerificationEvidenceRequest<'_> {
@@ -276,11 +308,112 @@ impl ProcessVerificationEvidenceFactory for ConservativeProcessVerificationEvide
             }
             VerificationTarget::DiffInvariant(_)
             | VerificationTarget::UserConfirm { .. }
+            | VerificationTarget::DeferredCommand(_)
             | VerificationTarget::Legacy(_) => {
                 Err(ProcessVerificationEvidenceFailure::EvidenceKindMismatch)
             }
         }
     }
+}
+
+/// Production evidence factory for generic commands and the closed standard-library test adapter.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinProcessVerificationEvidenceFactory;
+
+impl ProcessVerificationEvidenceFactory for BuiltinProcessVerificationEvidenceFactory {
+    fn create(
+        &self,
+        request: ProcessVerificationEvidenceRequest<'_>,
+    ) -> Result<VerificationEvidence, ProcessVerificationEvidenceFailure> {
+        match request.spec.target() {
+            VerificationTarget::Command { command_id, .. } if *command_id == request.command_id => {
+                Ok(VerificationEvidence::Command(request.command_evidence()))
+            }
+            VerificationTarget::Command { .. } => {
+                Err(ProcessVerificationEvidenceFailure::CommandMismatch)
+            }
+            VerificationTarget::Test { command_id, .. } if *command_id != request.command_id => {
+                Err(ProcessVerificationEvidenceFailure::CommandMismatch)
+            }
+            VerificationTarget::Test { .. }
+                if request.adapter == ProcessVerificationAdapter::PythonUnittest =>
+            {
+                python_unittest_evidence(request)
+            }
+            VerificationTarget::Test { .. } | VerificationTarget::Diagnostic { .. } => {
+                Err(ProcessVerificationEvidenceFailure::SemanticAdapterUnavailable)
+            }
+            VerificationTarget::DiffInvariant(_)
+            | VerificationTarget::UserConfirm { .. }
+            | VerificationTarget::DeferredCommand(_)
+            | VerificationTarget::Legacy(_) => {
+                Err(ProcessVerificationEvidenceFailure::EvidenceKindMismatch)
+            }
+        }
+    }
+}
+
+fn python_unittest_evidence(
+    request: ProcessVerificationEvidenceRequest<'_>,
+) -> Result<VerificationEvidence, ProcessVerificationEvidenceFailure> {
+    if !matches!(request.result.termination(), ProcessTermination::Exited(exit) if exit.success())
+        || request.result.stdout().truncated()
+        || request.result.stderr().truncated()
+    {
+        return Err(ProcessVerificationEvidenceFailure::InvalidEvidence);
+    }
+    let stdout = request
+        .result
+        .stdout()
+        .content()
+        .as_text()
+        .ok_or(ProcessVerificationEvidenceFailure::InvalidEvidence)?;
+    let stderr = request
+        .result
+        .stderr()
+        .content()
+        .as_text()
+        .ok_or(ProcessVerificationEvidenceFailure::InvalidEvidence)?;
+    let mut count = None;
+    let mut successful = false;
+    for line in stdout.lines().chain(stderr.lines()) {
+        let line = line.trim();
+        if line == "OK" {
+            if successful {
+                return Err(ProcessVerificationEvidenceFailure::InvalidEvidence);
+            }
+            successful = true;
+        }
+        if let Some(rest) = line.strip_prefix("Ran ") {
+            let Some((value, suffix)) = rest.split_once(' ') else {
+                return Err(ProcessVerificationEvidenceFailure::InvalidEvidence);
+            };
+            if suffix != "test" && !suffix.starts_with("tests ") && !suffix.starts_with("test ") {
+                continue;
+            }
+            let parsed = value
+                .parse::<u32>()
+                .map_err(|_| ProcessVerificationEvidenceFailure::InvalidEvidence)?;
+            if count.replace(parsed).is_some() {
+                return Err(ProcessVerificationEvidenceFailure::InvalidEvidence);
+            }
+        }
+    }
+    let count = count.ok_or(ProcessVerificationEvidenceFailure::InvalidEvidence)?;
+    if !successful || count == 0 || count > MAX_BUILTIN_TEST_CASES {
+        return Err(ProcessVerificationEvidenceFailure::InvalidEvidence);
+    }
+    let mut cases = Vec::with_capacity(
+        usize::try_from(count).map_err(|_| ProcessVerificationEvidenceFailure::InvalidEvidence)?,
+    );
+    for index in 1..=count {
+        let name = TestCaseName::try_from_string(format!("unittest-case-{index:06}"))
+            .map_err(|_| ProcessVerificationEvidenceFailure::InvalidEvidence)?;
+        cases.push(TestCaseEvidence::new(name, TestCaseOutcome::Passed));
+    }
+    let evidence = TestEvidence::new(request.command_evidence(), cases)
+        .map_err(|_| ProcessVerificationEvidenceFailure::InvalidEvidence)?;
+    Ok(VerificationEvidence::Test(evidence))
 }
 
 /// Completed controller response; no variant allows the model to assert verification or success.
@@ -379,8 +512,10 @@ enum PreparedMutation {
     Run {
         action: AgentRunAction,
         command_kind: DiscoveredCommandKind,
+        verification_adapter: ProcessVerificationAdapter,
         result_spec: a3_domain::ProcessSpec,
         dependencies: VerificationDependencies,
+        approval_required: bool,
     },
 }
 
@@ -404,6 +539,16 @@ impl PreparedMutation {
             Self::Patch(_) => AgentMutationKind::Patch,
             Self::Run { .. } => AgentMutationKind::Process,
         }
+    }
+
+    const fn requires_process_approval(&self) -> bool {
+        matches!(
+            self,
+            Self::Run {
+                approval_required: true,
+                ..
+            }
+        )
     }
 }
 
@@ -507,12 +652,31 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             PreparedMutation::Run { .. } => None,
         };
 
+        let forced_policy = if prepared.requires_process_approval() {
+            let mut rules = workspace_policy.rules().to_vec();
+            if !rules
+                .iter()
+                .any(|rule| rule.class() == ActionClass::ExecuteSafe)
+            {
+                rules.push(WorkspacePolicyRule::new(
+                    ActionClass::ExecuteSafe,
+                    WorkspacePolicyRestriction::RequireApproval,
+                ));
+            }
+            Some(
+                WorkspacePolicy::new(rules)
+                    .map_err(|_| MutationControllerFailure::InvalidPolicyResult)?,
+            )
+        } else {
+            None
+        };
+        let effective_policy = forced_policy.as_ref().unwrap_or(workspace_policy);
         let decision = self
             .evaluate_and_persist_policy(
                 project,
                 run,
                 &prepared.policy_action(),
-                workspace_policy,
+                effective_policy,
                 approval,
                 ids,
                 observed_at,
@@ -632,8 +796,10 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             PreparedMutation::Run {
                 action,
                 command_kind,
+                verification_adapter,
                 result_spec,
                 dependencies,
+                ..
             } => {
                 let authorized = crate::AuthorizedProcessSpec::new(result_spec, &decision)?;
                 let result = self
@@ -647,6 +813,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                     ledger_version,
                     action,
                     command_kind,
+                    verification_adapter,
                     dependencies,
                     ids,
                     observed_at,
@@ -1100,6 +1267,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         ledger_version: &mut TaskLedgerStoreVersion,
         action: AgentRunAction,
         command_kind: DiscoveredCommandKind,
+        verification_adapter: ProcessVerificationAdapter,
         dependencies: VerificationDependencies,
         ids: MutationExecutionIds,
         observed_at: AgentRunTimestamp,
@@ -1311,6 +1479,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                 verification_run_id: ids.verification_run_id,
                 dependencies: &dependencies,
                 result: &result,
+                adapter: verification_adapter,
             }) {
             Ok(evidence) => evidence,
             Err(_) => {
@@ -2015,19 +2184,27 @@ fn prepare_action(
         }
         AgentAction::Run(action) => {
             let selection = command.ok_or(MutationControllerFailure::CommandSelectionRequired)?;
-            let spec = PrepareDiscoveredCommand.execute(
-                selection.catalog,
-                selection.confirmation,
-                run.id(),
-                action.step_id(),
-                action.command_id(),
-            )?;
-            let command = selection
-                .catalog
+            let catalog = selection.catalog;
+            let (spec, approval_required) = match selection.authorization {
+                MutationCommandAuthorization::Confirmed(confirmation) => (
+                    PrepareDiscoveredCommand.execute(
+                        catalog,
+                        confirmation,
+                        run.id(),
+                        action.step_id(),
+                        action.command_id(),
+                    )?,
+                    false,
+                ),
+                MutationCommandAuthorization::ApprovalRequired(prepared) => {
+                    ((*prepared).into_process_spec(), true)
+                }
+            };
+            let command = catalog
                 .commands()
                 .binary_search_by_key(&action.command_id(), |candidate| candidate.id())
                 .ok()
-                .and_then(|index| selection.catalog.commands().get(index))
+                .and_then(|index| catalog.commands().get(index))
                 .ok_or(MutationControllerFailure::InvalidCommandSelection)?;
             let mut revisions = BTreeMap::new();
             for evidence in command.evidence() {
@@ -2049,8 +2226,10 @@ fn prepare_action(
             PreparedMutation::Run {
                 action,
                 command_kind: command.kind(),
+                verification_adapter: verification_adapter_for(command),
                 result_spec: spec,
                 dependencies,
+                approval_required,
             }
         }
         AgentAction::Search(_)
@@ -2081,6 +2260,22 @@ fn prepare_action(
         return Err(MutationControllerFailure::AnchorMismatch);
     }
     Ok(prepared)
+}
+
+fn verification_adapter_for(command: &a3_domain::DiscoveredCommand) -> ProcessVerificationAdapter {
+    const PYTHON_UNITTEST_ARGUMENTS: [&str; 4] = ["-B", "-m", "unittest", "discover"];
+    if command.kind() == DiscoveredCommandKind::Test
+        && command.executable().as_str() == "python"
+        && command
+            .arguments()
+            .iter()
+            .map(|argument| argument.as_str())
+            .eq(PYTHON_UNITTEST_ARGUMENTS)
+    {
+        ProcessVerificationAdapter::PythonUnittest
+    } else {
+        ProcessVerificationAdapter::Generic
+    }
 }
 
 fn current_step_spec(
@@ -2482,3 +2677,118 @@ failure_from!(AgentControllerError, Controller);
 failure_from!(ContextCompileFailure, Context);
 failure_from!(crate::AgentExecutionCheckpointError, ExecutionCheckpoint);
 failure_from!(a3_domain::AgentRunError, Run);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use a3_domain::{
+        AgentRunId, MinimumTestCaseCount, PolicyResourceId, ProcessDuration, ProcessExit,
+        ProcessOutputCapture, ProcessOutputContent, ProcessOutputDigest, ProcessStream,
+        TestCaseSelector, VerificationRequirement, VerificationScope, VerificationSpecId,
+    };
+    use std::error::Error;
+
+    #[test]
+    fn builtin_python_unittest_adapter_emits_bounded_structured_cases() -> Result<(), Box<dyn Error>>
+    {
+        let command_id = DiscoveredCommandId::from_bytes([1; 32]);
+        let spec = VerificationSpec::test(
+            VerificationSpecId::from_bytes([2; 32]),
+            VerificationRequirement::try_from_string("all tests pass".to_owned())?,
+            command_id,
+            TestCaseSelector::All,
+            MinimumTestCaseCount::new(1)?,
+            VerificationScope::Workspace,
+        );
+        let result = process_result(
+            "",
+            "..\n----------------------------------------------------------------------\nRan 2 tests in 0.001s\n\nOK\n",
+        )?;
+        let dependencies = VerificationDependencies::new(Vec::new())?;
+        let evidence = BuiltinProcessVerificationEvidenceFactory.create(
+            ProcessVerificationEvidenceRequest {
+                spec: &spec,
+                run_id: AgentRunId::from_bytes([3; 32]),
+                tool_run_id: ToolRunId::from_bytes([4; 32]),
+                command_id,
+                snapshot_id: SnapshotId::from_bytes([5; 32]),
+                verification_run_id: VerificationRunId::from_bytes([6; 32]),
+                dependencies: &dependencies,
+                result: &result,
+                adapter: ProcessVerificationAdapter::PythonUnittest,
+            },
+        )?;
+        let VerificationEvidence::Test(evidence) = evidence else {
+            return Err("adapter did not emit TestEvidence".into());
+        };
+        assert_eq!(evidence.cases().len(), 2);
+        assert!(
+            evidence
+                .cases()
+                .iter()
+                .all(|case| case.outcome() == TestCaseOutcome::Passed)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn builtin_python_unittest_adapter_rejects_ambiguous_or_incomplete_output()
+    -> Result<(), Box<dyn Error>> {
+        let command_id = DiscoveredCommandId::from_bytes([11; 32]);
+        let spec = VerificationSpec::test(
+            VerificationSpecId::from_bytes([12; 32]),
+            VerificationRequirement::try_from_string("all tests pass".to_owned())?,
+            command_id,
+            TestCaseSelector::All,
+            MinimumTestCaseCount::new(1)?,
+            VerificationScope::Workspace,
+        );
+        let dependencies = VerificationDependencies::new(Vec::new())?;
+        for stderr in [
+            "Ran 2 tests in 0.001s\n",
+            "Ran 2 tests in 0.001s\nOK (skipped=1)\n",
+            "Ran 2 tests in 0.001s\nRan 2 tests in 0.001s\nOK\n",
+        ] {
+            let result = process_result("", stderr)?;
+            let created = BuiltinProcessVerificationEvidenceFactory.create(
+                ProcessVerificationEvidenceRequest {
+                    spec: &spec,
+                    run_id: AgentRunId::from_bytes([13; 32]),
+                    tool_run_id: ToolRunId::from_bytes([14; 32]),
+                    command_id,
+                    snapshot_id: SnapshotId::from_bytes([15; 32]),
+                    verification_run_id: VerificationRunId::from_bytes([16; 32]),
+                    dependencies: &dependencies,
+                    result: &result,
+                    adapter: ProcessVerificationAdapter::PythonUnittest,
+                },
+            );
+            assert_eq!(
+                created,
+                Err(ProcessVerificationEvidenceFailure::InvalidEvidence)
+            );
+        }
+        Ok(())
+    }
+
+    fn process_result(stdout: &str, stderr: &str) -> Result<ProcessRunResult, Box<dyn Error>> {
+        let capture = |stream, text: &str| -> Result<ProcessOutputCapture, Box<dyn Error>> {
+            Ok(ProcessOutputCapture::new(
+                stream,
+                ProcessOutputContent::text(text.to_owned())?,
+                u64::try_from(text.len())?,
+                1_024,
+                false,
+                ProcessOutputDigest::from_bytes([17; 32]),
+            )?)
+        };
+        Ok(ProcessRunResult::new(
+            PolicyResourceId::from_bytes([18; 32]),
+            PolicyDecisionId::from_bytes([19; 32]),
+            ProcessTermination::Exited(ProcessExit::new(Some(0), true)?),
+            ProcessDuration::from_millis(1),
+            capture(ProcessStream::Stdout, stdout)?,
+            capture(ProcessStream::Stderr, stderr)?,
+        )?)
+    }
+}

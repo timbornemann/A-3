@@ -46,6 +46,9 @@ impl AskResearchWorkingSet {
                 .and_then(|q| q.result())
                 .is_some_and(|result| {
                     result.kind() == ResearchResultKind::DesignDecision
+                        || super::research_access::is_empty_publication_inventory_result(
+                            work, *id, result,
+                        )
                         || (!result.sources().is_empty()
                             && result.sources().iter().all(|source| {
                                 windows.iter().any(|window| {

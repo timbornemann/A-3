@@ -24,6 +24,8 @@ const DIAGRAM_SYSTEM_PROMPT: &str = "You are A^3 compiling evidence-bound diagra
 pub(crate) struct AgentConversationRuntime {
     settings: Arc<dyn DesktopSettingsStore>,
     credentials: Arc<dyn ProviderCredentialStore>,
+    #[cfg(test)]
+    execution_override: Option<(Arc<dyn ModelProvider>, a3_domain::ModelProfile)>,
 }
 
 impl AgentConversationRuntime {
@@ -35,7 +37,19 @@ impl AgentConversationRuntime {
         Self {
             settings,
             credentials,
+            #[cfg(test)]
+            execution_override: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_execution_override(
+        mut self,
+        provider: Arc<dyn ModelProvider>,
+        profile: a3_domain::ModelProfile,
+    ) -> Self {
+        self.execution_override = Some((provider, profile));
+        self
     }
 
     pub(crate) async fn complete(
@@ -117,6 +131,10 @@ impl AgentConversationRuntime {
     pub(crate) async fn execution_model(
         &self,
     ) -> Result<(Arc<dyn ModelProvider>, a3_domain::ModelProfile), AgentConversationFailure> {
+        #[cfg(test)]
+        if let Some((provider, profile)) = &self.execution_override {
+            return Ok((Arc::clone(provider), profile.clone()));
+        }
         let stored = GetDesktopSettings::new(Arc::clone(&self.settings))
             .execute()
             .await
@@ -459,10 +477,10 @@ pub(crate) fn research_phase_system_prompt(
             "SummarizeOriginals: all named originals are delivered. Return one interpretation for ACTIVE Q with current E-window anchor_ref covering each named file. If a concrete helper is still needed, response={kind:evidenceNeed,question_id:ACTIVE Q,targets:[exact literals from originals/request]}. No empty progress, question, tools or future design. Unknown external details are limits, not invented facts."
         }
         ResearchOutputPhase::DesignTests(_) => {
-            "DesignTests: response.kind=designDecision for ACTIVE Q with evidence=[]. Derive concrete inputs, expected results and verification methods from the request and admitted design. No question response or user confirmation of routine test scenarios; no new reads or implementation claims."
+            "DesignTests: response.kind=designDecision for ACTIVE Q with evidence=[]. Return an ordered top-level list of small, independently verifiable test outcomes in result.text; one item is enough for a truly atomic task. Derive concrete inputs, expected results and verification methods from the request and admitted design. No question response or user confirmation of routine test scenarios; no new reads or implementation claims."
         }
         ResearchOutputPhase::Design(_) => {
-            "Design ACTIVE Q: response.kind=designDecision, concrete text, evidence=[]. New work need not already exist. Only admitted designDecision prerequisites fix future policies. Preserve failure guarantees in tests. State safe reversible assumptions. Only a consequential missing user choice permits response={kind:question,message:...}."
+            "Design ACTIVE Q: response.kind=designDecision, evidence=[]. Return an ordered top-level list of small, concrete, independently verifiable implementation outcomes in result.text; one item is enough for a truly atomic task. New work need not already exist. Include every source, manifest, fixture, and test-support file that must be created or changed so the later Test Plan is executable; the Test Plan itself describes execution and expected results, not missing implementation work. Only admitted designDecision prerequisites fix future policies. Preserve failure guarantees in tests. State safe reversible assumptions. Only a consequential missing user choice permits response={kind:question,message:...}."
         }
         ResearchOutputPhase::Finalize => {
             "Use typed plan fields only in response: kind=plan; concrete changes, interfaces, tests, assumptions. Do not add unsupported facts or claim implementation. The Core renders all headings and original citations. No new investigation, questions or markers."

@@ -822,6 +822,134 @@ fn research_configured_model_coherent_smoke() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+#[ignore = "Requires explicit approval for the configured provider and A3_CONFIGURED_RESEARCH_CATALOG"]
+fn research_configured_model_empty_project_agent_smoke() -> Result<(), Box<dyn Error>> {
+    if std::env::var_os("A3_CONFIGURED_RESEARCH_CATALOG").is_none() {
+        return Err("configured catalog opt-in missing".into());
+    }
+    support::run_libsql_test_selected(
+        async {
+            let repository = support::TempDirectory::new()?;
+            repository.git(["init", "--initial-branch=main"])?;
+            let project = RepositoryInspector::new().inspect(repository.path())?;
+            let data = support::TempDirectory::new()?;
+            let store = Arc::new(
+                LibsqlKnowledgeStore::open(&StorageLayout::prepare(data.path().join("data"))?)
+                    .await?,
+            );
+            store.record_opened_project(&project).await?;
+            RefreshRepositoryIndex::new(
+                Arc::new(Blake3RepositorySnapshotBuilder::new()),
+                store.clone(),
+                Arc::new(Blake3IndexRunIdFactory),
+            )
+            .execute(
+                &project,
+                &RepositoryChangeBatch::full_rescan(
+                    Vec::new(),
+                    RepositoryRescanReason::InitialObservation,
+                )?,
+                &mut BuiltinIncrementalIndexCompiler::new(ParserPoolSize::new(1)?)?,
+                &FixtureControl,
+            )
+            .await?;
+            let live = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?
+                .block_on(live_fixture::LiveResearchModel::probe())?;
+            let mode = AgentSessionMode::Agent;
+            let budget = live.evidence_budget(mode)?;
+            let model = Arc::new(CoherentModel {
+                live: Some(live),
+                fault: WorkFault::None,
+                work_contract: true,
+                budget,
+                calls: AtomicUsize::new(0),
+                diagrams: AtomicUsize::new(0),
+                truncated_packet: std::sync::Mutex::new(None),
+                command_packet: std::sync::Mutex::new(None),
+                oversized_transcript: std::sync::Mutex::new(None),
+            });
+            let id = AgentSessionId::from_bytes([90; 32]);
+            let time = timestamp()?;
+            let objective = "erstelle einen kleinen python server mit einer hello world webseite";
+            let session = AgentSession::from_parts(
+                id,
+                AgentSessionRevision::new(1)?,
+                AgentSessionTitle::try_from_string("Empty Luna project".to_owned())?,
+                mode,
+                AgentSessionState::Running,
+                time,
+                time,
+                Some(AgentSessionSequence::FIRST),
+                None,
+                None,
+                false,
+            );
+            let user = AgentSessionEntry::try_new(
+                id,
+                AgentSessionSequence::FIRST,
+                AgentSessionEntryKind::UserMessage,
+                AgentSessionText::try_from_string(objective.to_owned())?,
+                time,
+                None,
+                None,
+                None,
+            )?;
+            store
+                .create_session(&project, &session, Some(&user), None)
+                .await?;
+            let researcher =
+                AgentAskResearcher::new(store.clone(), store.clone(), store.clone(), store.clone());
+            let worker_model = model.clone();
+            let worker_project = project.clone();
+            let (send, receive) = std::sync::mpsc::sync_channel(1);
+            recovery_contract::owned_with_timeout(Duration::from_secs(420), move |control, _| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                send.send(runtime.block_on(researcher.research(
+                    worker_model.as_ref(),
+                    &worker_project,
+                    id,
+                    AgentSessionSequence::FIRST,
+                    mode,
+                    AgentResearchDepth::Standard,
+                    objective,
+                    &[(ModelMessageRole::User, objective.to_owned())],
+                    None,
+                    &control,
+                )))?;
+                Ok(())
+            })?;
+            let result = receive.recv_timeout(Duration::from_secs(1))??;
+            println!(
+                "configured-empty-project: calls={} continuation={} plan={}",
+                model.calls.load(Ordering::SeqCst),
+                result.awaiting_continuation,
+                result.markdown
+            );
+            assert!(!result.awaiting_continuation);
+            assert!(result.has_plan_grounding());
+            assert!(result.empty_publication_inventory);
+            assert!(result.citations.is_empty());
+            assert!(result.markdown.contains("server.py"));
+            assert!(result.markdown.to_lowercase().contains("hello"));
+            let plan = a3_domain::AgentWorkPlan::from_reviewed_markdown(&result.markdown)?;
+            assert!(plan.steps().len() >= 2);
+            assert!(plan.steps().iter().any(|step| {
+                step.verification_intent() == a3_domain::AgentWorkPlanVerificationIntent::Change
+            }));
+            assert!(plan.steps().iter().any(|step| {
+                step.verification_intent() == a3_domain::AgentWorkPlanVerificationIntent::Test
+            }));
+            Ok(())
+        },
+        true,
+    )
+}
+
+#[test]
 fn research_v5_unresolved_repeated_reads_end_honestly_without_legacy_recovery_or_false_success()
 -> Result<(), Box<dyn Error>> {
     coherent_fixture_selected(true, false, WorkFault::NoResults)

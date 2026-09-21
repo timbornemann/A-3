@@ -538,13 +538,30 @@ impl AskResearchWorkingSet {
         {
             return None;
         }
-        let line = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        let executable =
+            a3_domain::AgentWorkPlan::from_research_decisions(changes.text(), tests.text()).ok()?;
+        let mut change_number = 0usize;
+        let mut test_number = 0usize;
+        let mut change_lines = Vec::new();
+        let mut test_lines = Vec::new();
+        for step in executable.steps() {
+            match step.verification_intent() {
+                a3_domain::AgentWorkPlanVerificationIntent::Change => {
+                    change_number = change_number.saturating_add(1);
+                    change_lines.push(format!("{change_number}. {}", step.outcome()));
+                }
+                a3_domain::AgentWorkPlanVerificationIntent::Test => {
+                    test_number = test_number.saturating_add(1);
+                    test_lines.push(format!("{test_number}. {}", step.outcome()));
+                }
+            }
+        }
         let (basis, refs) = self.render_work_answer(false)?;
         Some((
             format!(
-                "PLAN:\n\n## Summary\n\nDer Plan übernimmt die festgehaltenen Änderungs- und Testentscheidungen. Er ist noch nicht umgesetzt.\n\n## Implementation Changes\n\n1. {}\n\n## Interfaces\n\nSchnittstellen, Reihenfolge und Fehlerverhalten sind im vollständigen Änderungsentwurf oben festgelegt. Bestehende Integrationsgrenzen stehen in der Recherchegrundlage.\n\n## Test Plan\n\n1. {}\n\n## Assumptions\n\nEs gelten die ausdrücklich im Änderungsentwurf genannten Annahmen; diese Darstellung ergänzt keine weiteren Entscheidungen. Recherche ist keine Implementierungsverifikation.\n\n## Recherchegrundlage\n\n{basis}",
-                line(changes.text()),
-                line(tests.text())
+                "PLAN:\n\n## Summary\n\nDer Plan übernimmt die festgehaltenen Änderungs- und Testentscheidungen. Er ist noch nicht umgesetzt.\n\n## Implementation Changes\n\n{}\n\n## Interfaces\n\nSchnittstellen, Reihenfolge und Fehlerverhalten sind im vollständigen Änderungsentwurf oben festgelegt. Bestehende Integrationsgrenzen stehen in der Recherchegrundlage.\n\n## Test Plan\n\n{}\n\n## Assumptions\n\nEs gelten die ausdrücklich im Änderungsentwurf genannten Annahmen; diese Darstellung ergänzt keine weiteren Entscheidungen. Recherche ist keine Implementierungsverifikation.\n\n## Recherchegrundlage\n\n{basis}",
+                change_lines.join("\n"),
+                test_lines.join("\n")
             ),
             refs,
         ))
@@ -1675,6 +1692,59 @@ mod tests {
         let ledger = a3_domain::AgentWorkPlan::from_reviewed_markdown(&plan)?;
         assert_eq!(ledger.steps().len(), 2);
         assert_eq!(state.core_plan_answer(), Some((plan, refs)));
+        Ok(())
+    }
+
+    #[test]
+    fn empty_index_inventory_allows_a_core_plan_without_named_originals() -> TestResult {
+        let mut state = AskResearchWorkingSet::new(4096);
+        let objective = "erstelle einen kleinen python server";
+        state.initialize_plan_work(objective)?;
+        let scope = ContentHash::from_bytes([4; 32]);
+        state
+            .work
+            .as_mut()
+            .ok_or("work")?
+            .exclude(ResearchQuestionId::FIRST, scope)?;
+        state.work.as_mut().ok_or("work")?.resolve(
+            ResearchQuestionId::FIRST,
+            a3_domain::ResearchResult::new(
+                ResearchResultKind::BoundedUnknown,
+                "Der gebundene Indexstand enthält keine Dateien.".to_owned(),
+                vec![],
+                Some(scope),
+            )?,
+        )?;
+        state.design_basis = a3_application::ResearchDesignBasis::Originals;
+        assert!(state.uses_original_design_basis());
+        assert!(
+            !state.design_originals_delivered(),
+            "a source-free bounded unknown without the typed inventory receipt stays blocked"
+        );
+        state.work.as_mut().ok_or("work")?.resolve(
+            ResearchQuestionId::new(2)?,
+            a3_domain::ResearchResult::new(
+                ResearchResultKind::DesignDecision,
+                "Add server.py with http.server serving Hello World on 127.0.0.1:8000.".to_owned(),
+                vec![],
+                None,
+            )?,
+        )?;
+        state.work.as_mut().ok_or("work")?.resolve(
+            ResearchQuestionId::new(3)?,
+            a3_domain::ResearchResult::new(
+                ResearchResultKind::DesignDecision,
+                "GET / returns 200 and Hello World; missing file returns 404.".to_owned(),
+                vec![],
+                None,
+            )?,
+        )?;
+        let (plan, refs) = state.core_plan_answer().ok_or("core plan")?;
+        assert!(refs.is_empty());
+        assert!(plan.contains("server.py"));
+        assert!(plan.contains("Hello World"));
+        let ledger = a3_domain::AgentWorkPlan::from_reviewed_markdown(&plan)?;
+        assert_eq!(ledger.steps().len(), 2);
         Ok(())
     }
 

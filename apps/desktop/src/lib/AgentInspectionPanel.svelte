@@ -211,6 +211,7 @@
       diffInvariant: 'Diff-Evidence',
       test: 'Test-Evidence',
       userConfirm: 'User-Confirmation',
+      deferredCommand: 'Ausstehende Command-Bindung',
     }[evidence.method];
   }
 </script>

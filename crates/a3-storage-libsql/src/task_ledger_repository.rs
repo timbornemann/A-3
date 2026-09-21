@@ -1,18 +1,18 @@
 use crate::{catalog::is_corruption, goal_contract_repository};
 use a3_application::{StoredTaskLedger, TaskLedgerStoreFailure, TaskLedgerStoreVersion};
 use a3_domain::{
-    AcceptanceCriterionId, AgentRunId, DiagnosticPolicy, DiffInvariantMode,
-    DiffInvariantVerification, DiscoveredCommandId, ExpectedTaskEvidence, GoalContractReference,
-    GoalContractRevision, MinimumTestCaseCount, PolicyResourceId, RepositoryPath, StepDependency,
-    StepVerification, StepVerificationId, StepVerificationOutcome, TaskEvidenceId, TaskId,
-    TaskLedger, TaskLedgerReplan, TaskLedgerRevision, TaskLedgerTimestamp, TaskReplanReason,
-    TaskStep, TaskStepAttempt, TaskStepAttemptDetails, TaskStepAttemptNumber,
-    TaskStepAttemptOutcome, TaskStepAttemptTiming, TaskStepBlockingReason,
-    TaskStepCancellationReason, TaskStepDefinition, TaskStepFailureReason, TaskStepId,
-    TaskStepMaterializedState, TaskStepOutcome, TaskStepRationale, TaskStepResultSummary,
-    TaskStepStaleCause, TaskStepStatus, TestCaseSelector, TestCaseSelectorName,
-    VerificationFailureSummary, VerificationMethod, VerificationRequirement, VerificationScope,
-    VerificationSpec, VerificationSpecId, VerificationTarget, WorktreeId,
+    AcceptanceCriterionId, AgentRunId, DeferredCommandVerification, DiagnosticPolicy,
+    DiffInvariantMode, DiffInvariantVerification, DiscoveredCommandId, DiscoveredCommandKind,
+    ExpectedTaskEvidence, GoalContractReference, GoalContractRevision, MinimumTestCaseCount,
+    PolicyResourceId, RepositoryPath, StepDependency, StepVerification, StepVerificationId,
+    StepVerificationOutcome, TaskEvidenceId, TaskId, TaskLedger, TaskLedgerReplan,
+    TaskLedgerRevision, TaskLedgerTimestamp, TaskReplanReason, TaskStep, TaskStepAttempt,
+    TaskStepAttemptDetails, TaskStepAttemptNumber, TaskStepAttemptOutcome, TaskStepAttemptTiming,
+    TaskStepBlockingReason, TaskStepCancellationReason, TaskStepDefinition, TaskStepFailureReason,
+    TaskStepId, TaskStepMaterializedState, TaskStepOutcome, TaskStepRationale,
+    TaskStepResultSummary, TaskStepStaleCause, TaskStepStatus, TestCaseSelector,
+    TestCaseSelectorName, VerificationFailureSummary, VerificationMethod, VerificationRequirement,
+    VerificationScope, VerificationSpec, VerificationSpecId, VerificationTarget, WorktreeId,
 };
 use libsql::{Connection, Transaction, TransactionBehavior, params};
 use std::error::Error;
@@ -407,6 +407,37 @@ async fn write_operational_spec(
                 .await
                 .map_err(classify_unexpected_constraint)?;
         }
+        VerificationTarget::DeferredCommand(deferred) => {
+            transaction
+                .execute(
+                    "INSERT INTO verification_specs_v1 (
+                     task_id, verification_spec_id, target_kind, verification_scope
+                     ) VALUES (?1, ?2, 'deferred_command', ?3)",
+                    params![
+                        id_bytes(task_id),
+                        id_bytes(spec.id()),
+                        verification_scope_text(deferred.scope())
+                    ],
+                )
+                .await
+                .map_err(classify_unexpected_constraint)?;
+            for (index, kind) in deferred.preferred_kinds().iter().enumerate() {
+                transaction
+                    .execute(
+                        "INSERT INTO verification_spec_deferred_kinds (
+                         task_id, verification_spec_id, item_sequence, command_kind
+                         ) VALUES (?1, ?2, ?3, ?4)",
+                        params![
+                            id_bytes(task_id),
+                            id_bytes(spec.id()),
+                            sequence_to_i64(index)?,
+                            kind.as_str()
+                        ],
+                    )
+                    .await
+                    .map_err(classify_unexpected_constraint)?;
+            }
+        }
     }
     Ok(())
 }
@@ -756,7 +787,13 @@ async fn read_step(
     .unwrap_or_else(|| {
         VerificationSpec::new(record.verification_spec_id, legacy_method, requirement)
     });
-    if verification_spec.method() != legacy_method {
+    if verification_spec.method() != legacy_method
+        && !matches!(
+            verification_spec.target(),
+            VerificationTarget::DeferredCommand(_)
+                if legacy_method == VerificationMethod::Test
+        )
+    {
         return Err(TaskLedgerRepositoryError::InvalidStoredData);
     }
     let acceptance_criteria =
@@ -874,6 +911,15 @@ async fn read_operational_spec(
             requirement,
             PolicyResourceId::from_bytes(read_id(&row, 8)?),
         ),
+        "deferred_command" => VerificationSpec::deferred_command(
+            spec_id,
+            requirement,
+            DeferredCommandVerification::new(
+                read_deferred_command_kinds(transaction, task_id, spec_id).await?,
+                parse_verification_scope(&read_text(&row, 2)?)?,
+            )
+            .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?,
+        ),
         _ => return Err(TaskLedgerRepositoryError::InvalidStoredData),
     };
     if rows
@@ -885,6 +931,27 @@ async fn read_operational_spec(
         return Err(TaskLedgerRepositoryError::InvalidStoredData);
     }
     Ok(Some(spec))
+}
+
+async fn read_deferred_command_kinds(
+    transaction: &Transaction,
+    task_id: TaskId,
+    spec_id: VerificationSpecId,
+) -> Result<Vec<DiscoveredCommandKind>, TaskLedgerRepositoryError> {
+    let mut rows = transaction
+        .query(
+            "SELECT item_sequence, command_kind FROM verification_spec_deferred_kinds
+             WHERE task_id = ?1 AND verification_spec_id = ?2 ORDER BY item_sequence",
+            params![id_bytes(task_id), id_bytes(spec_id)],
+        )
+        .await
+        .map_err(TaskLedgerRepositoryError::Read)?;
+    let mut kinds = Vec::new();
+    while let Some(row) = rows.next().await.map_err(TaskLedgerRepositoryError::Read)? {
+        validate_sequence(&row, kinds.len())?;
+        kinds.push(parse_command_kind(&read_text(&row, 1)?)?);
+    }
+    Ok(kinds)
 }
 
 async fn read_verification_paths(
@@ -1359,6 +1426,9 @@ fn verification_method_text(method: VerificationMethod) -> &'static str {
         VerificationMethod::DiffInvariant => "diff_invariant",
         VerificationMethod::Diagnostic => "diagnostic",
         VerificationMethod::UserConfirm => "user_confirm",
+        // The V12 compatibility projection is constrained to the original closed method set.
+        // The authoritative V40 target and ordered kind rows retain the deferred semantics.
+        VerificationMethod::DeferredCommand => "test",
     }
 }
 
@@ -1369,6 +1439,7 @@ fn parse_verification_method(value: &str) -> Result<VerificationMethod, TaskLedg
         "diff_invariant" => Ok(VerificationMethod::DiffInvariant),
         "diagnostic" => Ok(VerificationMethod::Diagnostic),
         "user_confirm" => Ok(VerificationMethod::UserConfirm),
+        "deferred_command" => Ok(VerificationMethod::DeferredCommand),
         _ => Err(TaskLedgerRepositoryError::InvalidStoredData),
     }
 }
@@ -1395,6 +1466,7 @@ const fn diff_mode_text(mode: DiffInvariantMode) -> &'static str {
         DiffInvariantMode::NoChanges => "no_changes",
         DiffInvariantMode::OnlyPaths => "only_paths",
         DiffInvariantMode::ExactPaths => "exact_paths",
+        DiffInvariantMode::NonEmptyChanges => "non_empty_changes",
     }
 }
 
@@ -1403,6 +1475,17 @@ fn parse_diff_mode(value: &str) -> Result<DiffInvariantMode, TaskLedgerRepositor
         "no_changes" => Ok(DiffInvariantMode::NoChanges),
         "only_paths" => Ok(DiffInvariantMode::OnlyPaths),
         "exact_paths" => Ok(DiffInvariantMode::ExactPaths),
+        "non_empty_changes" => Ok(DiffInvariantMode::NonEmptyChanges),
+        _ => Err(TaskLedgerRepositoryError::InvalidStoredData),
+    }
+}
+
+fn parse_command_kind(value: &str) -> Result<DiscoveredCommandKind, TaskLedgerRepositoryError> {
+    match value {
+        "test" => Ok(DiscoveredCommandKind::Test),
+        "build" => Ok(DiscoveredCommandKind::Build),
+        "lint" => Ok(DiscoveredCommandKind::Lint),
+        "format" => Ok(DiscoveredCommandKind::Format),
         _ => Err(TaskLedgerRepositoryError::InvalidStoredData),
     }
 }

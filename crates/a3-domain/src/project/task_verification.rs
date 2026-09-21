@@ -1,6 +1,6 @@
 use super::{
-    AgentRunId, DiscoveredCommandId, PolicyResourceId, RepositoryPath, StepVerificationId,
-    TaskEvidenceId, VerificationSpecId,
+    AgentRunId, DiscoveredCommandId, DiscoveredCommandKind, PolicyResourceId, RepositoryPath,
+    StepVerificationId, TaskEvidenceId, VerificationSpecId,
 };
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -13,6 +13,7 @@ const MAX_VERIFICATION_EVIDENCE: usize = 64;
 const MAX_VERIFICATION_PATHS: usize = 64;
 const MAX_TEST_CASE_NAME_BYTES: usize = 1_024;
 const MAX_TEST_CASES: u32 = 1_000_000;
+const MAX_DEFERRED_COMMAND_KINDS: usize = 4;
 const MAX_PERSISTED_TIMESTAMP_MILLIS: u64 = i64::MAX as u64;
 
 macro_rules! verification_text_type {
@@ -176,6 +177,8 @@ pub enum VerificationMethod {
     Diagnostic,
     /// A scoped user decision is required as evidence.
     UserConfirm,
+    /// A command kind must be resolved from a later current published index before execution.
+    DeferredCommand,
 }
 
 /// Declared repository breadth used to order relevant process verifications narrowly first.
@@ -245,6 +248,8 @@ pub enum DiffInvariantMode {
     OnlyPaths,
     /// The actual changed paths must equal the declared set exactly.
     ExactPaths,
+    /// At least one path must have changed in the exact approved patch action.
+    NonEmptyChanges,
 }
 
 /// Typed path invariant with a canonical bounded path set.
@@ -255,7 +260,7 @@ pub struct DiffInvariantVerification {
 }
 
 impl DiffInvariantVerification {
-    /// Creates a path invariant; only `NoChanges` accepts an empty path set.
+    /// Creates a path invariant; path-free modes accept no declared paths.
     pub fn new(
         mode: DiffInvariantMode,
         mut paths: Vec<RepositoryPath>,
@@ -269,7 +274,11 @@ impl DiffInvariantVerification {
         if paths.windows(2).any(|pair| pair[0] == pair[1]) {
             return Err(DiffInvariantVerificationError::DuplicatePath);
         }
-        if (mode == DiffInvariantMode::NoChanges) != paths.is_empty() {
+        let path_free = matches!(
+            mode,
+            DiffInvariantMode::NoChanges | DiffInvariantMode::NonEmptyChanges
+        );
+        if path_free != paths.is_empty() {
             return Err(DiffInvariantVerificationError::InvalidPathCount);
         }
         Ok(Self { mode, paths })
@@ -313,6 +322,75 @@ impl fmt::Display for DiffInvariantVerificationError {
 }
 
 impl Error for DiffInvariantVerificationError {}
+
+/// A bounded Core-owned preference list that must be resolved against a later current catalog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeferredCommandVerification {
+    preferred_kinds: Vec<DiscoveredCommandKind>,
+    scope: VerificationScope,
+}
+
+impl DeferredCommandVerification {
+    /// Keeps preference order while rejecting empty, duplicate, or unbounded lists.
+    pub fn new(
+        preferred_kinds: Vec<DiscoveredCommandKind>,
+        scope: VerificationScope,
+    ) -> Result<Self, DeferredCommandVerificationError> {
+        if preferred_kinds.is_empty() || preferred_kinds.len() > MAX_DEFERRED_COMMAND_KINDS {
+            return Err(DeferredCommandVerificationError::InvalidKindCount {
+                actual: preferred_kinds.len(),
+            });
+        }
+        let unique = preferred_kinds.iter().copied().collect::<BTreeSet<_>>();
+        if unique.len() != preferred_kinds.len() {
+            return Err(DeferredCommandVerificationError::DuplicateKind);
+        }
+        Ok(Self {
+            preferred_kinds,
+            scope,
+        })
+    }
+
+    /// Returns command kinds in deterministic preference order.
+    #[must_use]
+    pub fn preferred_kinds(&self) -> &[DiscoveredCommandKind] {
+        &self.preferred_kinds
+    }
+
+    /// Returns the declared verification breadth.
+    #[must_use]
+    pub const fn scope(&self) -> VerificationScope {
+        self.scope
+    }
+}
+
+/// Invalid deferred command preference contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeferredCommandVerificationError {
+    /// The preference list was empty or exceeded the closed command-kind set.
+    InvalidKindCount {
+        /// Observed preference count.
+        actual: usize,
+    },
+    /// One command kind appeared more than once.
+    DuplicateKind,
+}
+
+impl fmt::Display for DeferredCommandVerificationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidKindCount { actual } => write!(
+                formatter,
+                "deferred command verification has {actual} kinds; expected 1 through {MAX_DEFERRED_COMMAND_KINDS}"
+            ),
+            Self::DuplicateKind => {
+                formatter.write_str("deferred command verification repeats a command kind")
+            }
+        }
+    }
+}
+
+impl Error for DeferredCommandVerificationError {}
 
 /// Maximum normalized diagnostic severity tolerated by one verification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -362,6 +440,8 @@ pub enum VerificationTarget {
         /// Stable scope digest displayed to and confirmed by the user.
         scope_id: PolicyResourceId,
     },
+    /// A later current published index must resolve one closed command kind before execution.
+    DeferredCommand(DeferredCommandVerification),
 }
 
 impl VerificationTarget {
@@ -375,13 +455,14 @@ impl VerificationTarget {
             Self::DiffInvariant(_) => VerificationMethod::DiffInvariant,
             Self::Diagnostic { .. } => VerificationMethod::Diagnostic,
             Self::UserConfirm { .. } => VerificationMethod::UserConfirm,
+            Self::DeferredCommand(_) => VerificationMethod::DeferredCommand,
         }
     }
 
     /// Returns whether E6 may execute this typed target.
     #[must_use]
     pub const fn is_operational(&self) -> bool {
-        !matches!(self, Self::Legacy(_))
+        !matches!(self, Self::Legacy(_) | Self::DeferredCommand(_))
     }
 }
 
@@ -504,6 +585,20 @@ impl VerificationSpec {
         Self {
             id,
             target: VerificationTarget::UserConfirm { scope_id },
+            requirement,
+        }
+    }
+
+    /// Creates a non-executable command contract that the Core must bind on a later snapshot.
+    #[must_use]
+    pub const fn deferred_command(
+        id: VerificationSpecId,
+        requirement: VerificationRequirement,
+        deferred: DeferredCommandVerification,
+    ) -> Self {
+        Self {
+            id,
+            target: VerificationTarget::DeferredCommand(deferred),
             requirement,
         }
     }
@@ -720,15 +815,15 @@ impl Error for StepVerificationError {}
 #[cfg(test)]
 mod tests {
     use super::{
-        DiffInvariantMode, DiffInvariantVerification, ExpectedTaskEvidence, MinimumTestCaseCount,
-        StepVerification, StepVerificationError, StepVerificationOutcome, TaskLedgerTimestamp,
-        TaskVerificationTextViolation, TestCaseSelector, VerificationFailureSummary,
-        VerificationMethod, VerificationRequirement, VerificationScope, VerificationSpec,
-        VerificationTarget,
+        DeferredCommandVerification, DiffInvariantMode, DiffInvariantVerification,
+        ExpectedTaskEvidence, MinimumTestCaseCount, StepVerification, StepVerificationError,
+        StepVerificationOutcome, TaskLedgerTimestamp, TaskVerificationTextViolation,
+        TestCaseSelector, VerificationFailureSummary, VerificationMethod, VerificationRequirement,
+        VerificationScope, VerificationSpec, VerificationTarget,
     };
     use crate::{
-        AgentRunId, DiscoveredCommandId, RepositoryPath, StepVerificationId, TaskEvidenceId,
-        VerificationSpecId,
+        AgentRunId, DiscoveredCommandId, DiscoveredCommandKind, RepositoryPath, StepVerificationId,
+        TaskEvidenceId, VerificationSpecId,
     };
     use std::error::Error;
 
@@ -834,6 +929,34 @@ mod tests {
             DiffInvariantVerification::new(
                 DiffInvariantMode::NoChanges,
                 vec![RepositoryPath::try_from_bytes(b"src/a.rs".to_vec())?,]
+            )
+            .is_err()
+        );
+        assert!(
+            DiffInvariantVerification::new(DiffInvariantMode::NonEmptyChanges, Vec::new()).is_ok()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn deferred_command_is_closed_bounded_and_not_executable() -> Result<(), Box<dyn Error>> {
+        let deferred = DeferredCommandVerification::new(
+            vec![DiscoveredCommandKind::Test, DiscoveredCommandKind::Lint],
+            VerificationScope::Workspace,
+        )?;
+        let spec = VerificationSpec::deferred_command(
+            VerificationSpecId::from_bytes([9; 32]),
+            VerificationRequirement::try_from_string(
+                "resolve an evidenced current project check".to_owned(),
+            )?,
+            deferred,
+        );
+        assert_eq!(spec.method(), VerificationMethod::DeferredCommand);
+        assert!(!spec.is_operational());
+        assert!(
+            DeferredCommandVerification::new(
+                vec![DiscoveredCommandKind::Test, DiscoveredCommandKind::Test],
+                VerificationScope::Workspace,
             )
             .is_err()
         );

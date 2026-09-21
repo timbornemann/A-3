@@ -167,6 +167,7 @@ HTTP-Body-Stream bereitstellt. Redirects und Umgebungsproxies sind für diese Cl
 3. Rust kanonisiert den ausgewählten Ordner. Ist er bereits ein Git-Worktree, ein Unterordner eines anderen Worktrees oder nicht leer, schlägt der Command fail-closed fehl.
 4. Isoliertes in-process `gix` erzeugt ein Worktree-Repository mit Unborn-HEAD `refs/heads/main`, ohne Commit, Remote oder Scaffold.
 5. Danach folgen Inspektion, Katalog und Aktivierung dem Öffnen-Pfad.
+6. Ein anschließend veröffentlichter Index ohne Dateien ist eine Core-Bestandsaufnahme: Plan und Agent schließen Q1 ohne Originale ab und gehen zum Entwurf über. Siehe [ADR-0111](adrs/0111-leerer-index-bestandsaufnahme.md).
 
 ### Projekt öffnen
 

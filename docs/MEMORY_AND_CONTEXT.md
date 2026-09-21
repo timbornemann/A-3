@@ -1062,6 +1062,14 @@ bleibt eine benannte Grenze, kein erfundener Befund. Leere Ergebnisse/Fragen nut
 nur den bestehenden Einzelrepair; normale Analyze-Fragen bleiben nullable.
 Unabhängig von der Auslieferungsgröße muss Q1 alle ausdrücklich benannten
 Originalrevisionen belegen, bevor der Core zu den belegfreien Designphasen wechselt.
+Ohne benannte aktuelle Revisionen in einem veröffentlichten Index ohne Dateien schließt
+der Core die Bestandsaufnahme selbst als begrenzte Unbekanntheit und geht zum Entwurf
+über; das Modell darf fehlende Originale dort nicht als offene Pflichtfrage fortschreiben.
+Nur der vollständige, scopegleiche Core-Planvertrag darf diese Bestandsaufnahme anstelle
+von Source-Zitaten als Plan-Grounding verwenden. Geordnete Top-Level-Ergebnisse der
+Änderungs- und Testentwürfe bleiben dabei getrennte `AgentWorkPlan`-Schritte; eingebettete
+Überschriften erhalten keine Planstruktur-Autorität.
+Siehe [ADR-0111](adrs/0111-leerer-index-bestandsaufnahme.md).
 Eine unvollständige Bestandsaufnahme wird dort repariert, nicht erst beim Planabschluss.
 Auch vollständige relative Pfade wie `taskflow/manager.py` werden unmittelbar als
 benannte Quelle der aktiven Repositoryfrage erkannt, nicht nur als Suffix eines

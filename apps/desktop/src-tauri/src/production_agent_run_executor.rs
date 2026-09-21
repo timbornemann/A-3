@@ -6,8 +6,8 @@ use a3_application::{
     AgentRunExecutionFuture, AgentRunExecutionOutcome, AgentRunExecutionRequest,
     AgentRunExecutionTrigger, AgentRunExecutor, AgentTurnOutcome, AgentTurnRejectionReason,
     AppendAgentRead, AppendRunEvent, ApplyAgentLedgerUpdate, ApplyAgentPlanRevision,
-    AskResearchStore, CommandAllowlistStore, CompileTaskLens,
-    ConservativeProcessVerificationEvidenceFactory, ContextCompileControl, ContextCompilePhase,
+    AskResearchStore, BindDeferredAgentVerification, BuiltinProcessVerificationEvidenceFactory,
+    CommandAllowlistStore, CompileTaskLens, ContextCompileControl, ContextCompilePhase,
     ContinueVerifiedAgentPlan, ContinueVerifiedAgentPlanOutcome, DeterministicAcceptanceVerifier,
     DiscoverProjectCommands, ExecuteAgentTurn, ExecuteMutatingAgentAction, IndexPersistenceControl,
     IndexPersistenceControlError, KnowledgeIndexStore, KnowledgeSearchStore,
@@ -23,10 +23,12 @@ use a3_application::{
 use a3_context::{DeterministicAgentContextCompiler, DeterministicAgentReadTools};
 use a3_domain::{
     AgentAction, AgentControllerState, AgentRun, AgentRunTimestamp, AgentToolEvidenceSet,
-    ApprovalGrant, ApprovalRequestId, PolicyDecisionId, ProcessEnvironmentVariable, ProcessEvent,
-    Progress, ProjectIdentity, RunEventId, RunMemoryCheckpoint, StepDependency, StepVerificationId,
-    TaskId, TaskLedger, TaskReplanReason, TaskStepDefinition, TaskStepId, TaskStepRationale,
-    TaskStepStatus, ToolRunId, VerificationRunId, VerificationSpecId, WorkspacePolicy,
+    ApprovalGrant, ApprovalRequestId, DiscoveredCommand, MinimumTestCaseCount, PolicyDecisionId,
+    ProcessEnvironmentVariable, ProcessEvent, Progress, ProjectIdentity, RunEventId,
+    RunMemoryCheckpoint, StepDependency, StepVerificationId, TaskId, TaskLedger,
+    TaskLedgerTimestamp, TaskReplanReason, TaskStepBlockingReason, TaskStepDefinition, TaskStepId,
+    TaskStepRationale, TaskStepStatus, TestCaseSelector, ToolRunId, VerificationRunId,
+    VerificationSpec, VerificationSpecId, VerificationTarget, WorkspacePolicy,
 };
 use a3_repo_index::{
     Blake3IndexRunIdFactory, Blake3RepositorySnapshotBuilder, BuiltinIncrementalIndexCompiler,
@@ -205,7 +207,7 @@ impl ProductionAgentRunExecutor {
         );
         let patch_tool = WorkspacePatchAdapter::new();
         let process_runner = WorkspaceProcessRunner::new(self.process_environment.clone());
-        let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
+        let evidence_factory = BuiltinProcessVerificationEvidenceFactory;
         let mut index_compiler = BuiltinIncrementalIndexCompiler::new(
             ParserPoolSize::new(2).map_err(|_| AgentRunExecutionFailure::Unavailable)?,
         )
@@ -767,6 +769,80 @@ impl ProductionAgentRunExecutor {
         ledger_version: &mut a3_application::TaskLedgerStoreVersion,
         control: &AgentAttemptControl<'_>,
     ) -> Result<Option<TaskStepId>, AgentRunExecutionFailure> {
+        let deferred = ledger
+            .steps()
+            .find(|step| step.is_active_plan_step() && step.status() == TaskStepStatus::Ready)
+            .and_then(
+                |step| match step.definition().verification_spec().target() {
+                    VerificationTarget::DeferredCommand(deferred) => {
+                        Some((step.definition().id(), deferred.clone()))
+                    }
+                    _ => None,
+                },
+            );
+        if let Some((deferred_step_id, deferred)) = deferred {
+            let published = current_index(self.ports.index.as_ref(), project, control).await?;
+            let catalog = DiscoverProjectCommands
+                .execute(project.worktree().id(), &published)
+                .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+            let command = deferred.preferred_kinds().iter().find_map(|kind| {
+                catalog
+                    .commands()
+                    .iter()
+                    .find(|command| command.kind() == *kind)
+            });
+            if let Some(command) = command {
+                let (retire_step_ids, additions) =
+                    deferred_binding_steps(ledger, deferred_step_id, command)?;
+                *ledger_version = BindDeferredAgentVerification::new(self.ports.actions.as_ref())
+                    .execute(
+                        project,
+                        *ledger_version,
+                        run,
+                        ledger,
+                        &catalog,
+                        command.id(),
+                        retire_step_ids,
+                        additions,
+                        run_event_id()?,
+                        timestamp()?,
+                        control,
+                    )
+                    .await
+                    .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+            } else {
+                let started = ContinueVerifiedAgentPlan::new(self.ports.actions.as_ref())
+                    .execute(
+                        project,
+                        *ledger_version,
+                        run,
+                        ledger,
+                        run_event_id()?,
+                        timestamp()?,
+                        control,
+                    )
+                    .await
+                    .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+                let ContinueVerifiedAgentPlanOutcome::StepStarted {
+                    step_id,
+                    ledger_version: next_version,
+                } = started
+                else {
+                    return Err(AgentRunExecutionFailure::InvalidState);
+                };
+                *ledger_version = next_version;
+                self.block_missing_deferred_command(
+                    project,
+                    run,
+                    ledger,
+                    ledger_version,
+                    step_id,
+                    control,
+                )
+                .await?;
+                return Ok(None);
+            }
+        }
         match ContinueVerifiedAgentPlan::new(self.ports.actions.as_ref())
             .execute(
                 project,
@@ -789,6 +865,60 @@ impl ProductionAgentRunExecutor {
                 Ok(Some(step_id))
             }
         }
+    }
+
+    async fn block_missing_deferred_command(
+        &self,
+        project: &ProjectIdentity,
+        run: &mut AgentRun,
+        ledger: &mut TaskLedger,
+        ledger_version: &mut a3_application::TaskLedgerStoreVersion,
+        step_id: TaskStepId,
+        control: &AgentAttemptControl<'_>,
+    ) -> Result<(), AgentRunExecutionFailure> {
+        let observed_at = timestamp()?;
+        let mut next_ledger = ledger.clone();
+        next_ledger
+            .block_step(
+                step_id,
+                run.id(),
+                TaskStepBlockingReason::try_from_string(
+                    "Für die geplante Verifikation wurde im aktuellen Projektstand noch kein unterstützter lokaler Prüfcommand gefunden."
+                        .to_owned(),
+                )
+                .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
+                TaskLedgerTimestamp::from_unix_millis(observed_at.unix_millis())
+                    .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
+            )
+            .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+        let expected_sequence = run.last_event_sequence();
+        let mut next_run = run.clone();
+        let advance = AdvanceAgentController
+            .execute(
+                &mut next_run,
+                AgentControllerSignal::FatalFailure,
+                run_event_id()?,
+                run.current_snapshot_id(),
+                observed_at,
+                control.context.cancellation_token().is_cancelled(),
+            )
+            .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+        *ledger_version = self
+            .ports
+            .actions
+            .commit_ledger_action(
+                project,
+                *ledger_version,
+                expected_sequence,
+                &next_ledger,
+                &next_run,
+                advance.event(),
+            )
+            .await
+            .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+        *ledger = next_ledger;
+        *run = next_run;
+        Ok(())
     }
 
     async fn stop_failed_run(
@@ -975,9 +1105,20 @@ impl ProductionAgentRunExecutor {
             .execute(project)
             .await
             .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
-        let selection = confirmation
-            .as_ref()
-            .map(|confirmation| MutationCommandSelection::new(&catalog, confirmation));
+        let selection = match &action {
+            AgentAction::Run(process) => Some(match confirmation.as_ref() {
+                Some(confirmation) => MutationCommandSelection::new(&catalog, confirmation),
+                None => MutationCommandSelection::requiring_approval(
+                    &catalog,
+                    run,
+                    ledger,
+                    process.step_id(),
+                    process.command_id(),
+                )
+                .map_err(|_| AgentRunExecutionFailure::InvalidState)?,
+            }),
+            _ => None,
+        };
         controller
             .execute(
                 project,
@@ -1408,6 +1549,92 @@ fn automatic_replan_steps(
     Ok((retire_step_ids, additions))
 }
 
+fn deferred_binding_steps(
+    ledger: &TaskLedger,
+    deferred_step_id: TaskStepId,
+    command: &DiscoveredCommand,
+) -> Result<(Vec<TaskStepId>, Vec<TaskStepDefinition>), AgentRunExecutionFailure> {
+    let retire_step_ids = ledger
+        .steps()
+        .filter(|step| {
+            step.is_active_plan_step()
+                && matches!(
+                    step.status(),
+                    TaskStepStatus::Pending | TaskStepStatus::Ready
+                )
+        })
+        .map(|step| step.definition().id())
+        .collect::<Vec<_>>();
+    if !retire_step_ids.contains(&deferred_step_id) {
+        return Err(AgentRunExecutionFailure::InvalidState);
+    }
+    let retire_set = retire_step_ids.iter().copied().collect::<BTreeSet<_>>();
+    let mut replacement_ids = BTreeMap::new();
+    for step_id in &retire_step_ids {
+        replacement_ids.insert(*step_id, TaskStepId::from_bytes(random_id()?));
+    }
+    let mut additions = Vec::with_capacity(retire_step_ids.len());
+    for old_id in topological_replan_order(ledger, &retire_set)? {
+        let old = ledger
+            .step(old_id)
+            .ok_or(AgentRunExecutionFailure::AnchorsChanged)?;
+        let definition = old.definition();
+        let replacement_id = *replacement_ids
+            .get(&old_id)
+            .ok_or(AgentRunExecutionFailure::InvalidState)?;
+        let parent_step_id = definition
+            .parent_step_id()
+            .map(|parent| replacement_ids.get(&parent).copied().unwrap_or(parent));
+        let dependencies =
+            remap_dependencies(definition.dependencies(), &replacement_ids, &retire_set)?;
+        let verification_spec = if old_id == deferred_step_id {
+            let VerificationTarget::DeferredCommand(deferred) =
+                definition.verification_spec().target()
+            else {
+                return Err(AgentRunExecutionFailure::InvalidState);
+            };
+            let id = VerificationSpecId::from_bytes(random_id()?);
+            if command.kind() == a3_domain::DiscoveredCommandKind::Test {
+                VerificationSpec::test(
+                    id,
+                    definition.verification_spec().requirement().clone(),
+                    command.id(),
+                    TestCaseSelector::All,
+                    MinimumTestCaseCount::new(1)
+                        .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
+                    deferred.scope(),
+                )
+            } else {
+                VerificationSpec::command(
+                    id,
+                    definition.verification_spec().requirement().clone(),
+                    command.id(),
+                    deferred.scope(),
+                )
+            }
+        } else {
+            definition
+                .verification_spec()
+                .reidentified(VerificationSpecId::from_bytes(random_id()?))
+        };
+        let replacement = attach_acceptance_criteria(
+            TaskStepDefinition::new(
+                replacement_id,
+                parent_step_id,
+                definition.intended_outcome().clone(),
+                definition.rationale().clone(),
+                dependencies,
+                definition.expected_evidence().to_vec(),
+                verification_spec,
+            ),
+            definition.acceptance_criteria(),
+        )
+        .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+        additions.push(replacement);
+    }
+    Ok((retire_step_ids, additions))
+}
+
 fn attach_acceptance_criteria(
     definition: Result<TaskStepDefinition, a3_domain::TaskStepDefinitionError>,
     criteria: &[a3_domain::AcceptanceCriterionId],
@@ -1757,9 +1984,16 @@ fn lock_recovering_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 mod replan_tests;
 
 #[cfg(test)]
+#[path = "production_greenfield_tests.rs"]
+mod greenfield_tests;
+
+#[cfg(test)]
 mod tests {
     use super::repeated_replan_revisions;
-    use super::{AgentAttemptControl, automatic_replan_steps, session_outcome_for_run};
+    use super::{
+        AgentAttemptControl, automatic_replan_steps, deferred_binding_steps,
+        session_outcome_for_run,
+    };
     use a3_application::{
         ContextCompileControl, ContextCompilePhase, JobClock, JobCompletion, JobContext,
         JobEventKind, JobScheduler, JobSchedulerConfig, JobTimestamp, RepositoryIndexControl,
@@ -1767,12 +2001,15 @@ mod tests {
     };
     use a3_domain::{
         AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentRunId,
-        ExpectedTaskEvidence, GoalContract, GoalContractDraft, GoalContractTimestamp,
-        GoalObjective, JobId, JobOwner, Progress, StepDependency, StepVerification,
-        StepVerificationId, StepVerificationOutcome, SuccessVerification, TaskEvidenceId, TaskId,
-        TaskLedger, TaskLedgerTimestamp, TaskReplanReason, TaskStepBlockingReason,
-        TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale, TaskStepStatus,
-        VerificationMethod, VerificationRequirement, VerificationSpec, VerificationSpecId,
+        CommandDiscoveryEvidence, ContentHash, DeferredCommandVerification, DiscoveredCommand,
+        DiscoveredCommandKind, ExpectedTaskEvidence, FileRevision, GoalContract, GoalContractDraft,
+        GoalContractTimestamp, GoalObjective, JobId, JobOwner, Progress, RepositoryPath,
+        StepDependency, StepVerification, StepVerificationId, StepVerificationOutcome,
+        SuccessVerification, TaskEvidenceId, TaskId, TaskLedger, TaskLedgerTimestamp,
+        TaskReplanReason, TaskStepBlockingReason, TaskStepDefinition, TaskStepId, TaskStepOutcome,
+        TaskStepRationale, TaskStepStatus, VerificationMethod, VerificationRequirement,
+        VerificationScope, VerificationSpec, VerificationSpecId, VerificationTarget,
+        WorkspaceDirectory,
     };
     use std::collections::BTreeSet;
     use std::sync::Arc;
@@ -2059,6 +2296,95 @@ mod tests {
             false,
         );
         assert_eq!(state, a3_domain::AgentSessionState::Failed);
+    }
+
+    #[test]
+    fn deferred_test_binding_replaces_the_ready_step_and_remaps_its_successor()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let criterion = AcceptanceCriterionId::from_bytes([31; 32]);
+        let goal = GoalContract::initial(
+            TaskId::from_bytes([32; 32]),
+            GoalContractDraft::new(
+                GoalObjective::try_from_string("create and test the server".to_owned())?,
+                vec![AcceptanceCriterion::new(
+                    criterion,
+                    AcceptanceCriterionStatement::try_from_string(
+                        "the server works and its tests pass".to_owned(),
+                    )?,
+                )],
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                SuccessVerification::try_from_string("unittest passes".to_owned())?,
+            )?,
+            GoalContractTimestamp::from_unix_millis(1)?,
+        );
+        let deferred_id = TaskStepId::from_bytes([33; 32]);
+        let successor_id = TaskStepId::from_bytes([34; 32]);
+        let deferred = TaskStepDefinition::new(
+            deferred_id,
+            None,
+            TaskStepOutcome::try_from_string("run the created tests".to_owned())?,
+            TaskStepRationale::try_from_string("tests are created by an earlier slice".to_owned())?,
+            Vec::new(),
+            vec![ExpectedTaskEvidence::try_from_string(
+                "structured unittest evidence".to_owned(),
+            )?],
+            VerificationSpec::deferred_command(
+                VerificationSpecId::from_bytes([35; 32]),
+                VerificationRequirement::try_from_string("all created tests pass".to_owned())?,
+                DeferredCommandVerification::new(
+                    vec![DiscoveredCommandKind::Test, DiscoveredCommandKind::Build],
+                    VerificationScope::Workspace,
+                )?,
+            ),
+        )?
+        .with_acceptance_criteria(vec![criterion])?;
+        let successor = step(
+            successor_id,
+            vec![StepDependency::new(deferred_id)],
+            "finish the task",
+            36,
+            criterion,
+        )?;
+        let ledger = TaskLedger::new(
+            goal.reference(),
+            vec![deferred, successor],
+            TaskLedgerTimestamp::from_unix_millis(2)?,
+        )?;
+        let revision = FileRevision::new(
+            RepositoryPath::try_from_bytes(b"tests/test_server.py".to_vec())?,
+            ContentHash::from_bytes([37; 32]),
+        );
+        let command = DiscoveredCommand::try_new(
+            DiscoveredCommandKind::Test,
+            WorkspaceDirectory::Root,
+            "python".to_owned(),
+            ["-B", "-m", "unittest", "discover"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            vec![CommandDiscoveryEvidence::File(revision)],
+        )?;
+        let (retired, additions) = deferred_binding_steps(&ledger, deferred_id, &command)?;
+        assert_eq!(retired.len(), 2);
+        let replacement = additions
+            .iter()
+            .find(|step| step.intended_outcome().as_str() == "run the created tests")
+            .ok_or("deferred replacement")?;
+        assert!(matches!(
+            replacement.verification_spec().target(),
+            VerificationTarget::Test { command_id, .. } if *command_id == command.id()
+        ));
+        let remapped_successor = additions
+            .iter()
+            .find(|step| step.intended_outcome().as_str() == "finish the task")
+            .ok_or("successor replacement")?;
+        assert_eq!(
+            remapped_successor.dependencies(),
+            &[StepDependency::new(replacement.id())]
+        );
+        Ok(())
     }
 
     fn step(

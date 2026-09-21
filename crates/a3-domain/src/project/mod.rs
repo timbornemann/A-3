@@ -124,8 +124,8 @@ pub use claim_verification::{
 pub use command_discovery::{
     CommandCatalogError, CommandDiscoveryEvidence, CommandDiscoverySchemaVersion,
     DiscoveredCommand, DiscoveredCommandError, DiscoveredCommandKind,
-    DiscoveredCommandProcessError, ProjectCommandAllowlist, ProjectCommandAllowlistError,
-    ProjectCommandCatalog,
+    DiscoveredCommandProcessError, PreparedDiscoveredCommandApproval, ProjectCommandAllowlist,
+    ProjectCommandAllowlistError, ProjectCommandCatalog,
 };
 pub use context_pack::{
     ContextBudgetError, ContextBudgetPlan, ContextBudgetUsage, ContextCompilerPolicyVersion,
@@ -338,7 +338,8 @@ pub use task_step::{
     TaskStepTextError, TaskStepTextViolation, TaskStepTransitionError,
 };
 pub use task_verification::{
-    DiagnosticPolicy, DiffInvariantMode, DiffInvariantVerification, DiffInvariantVerificationError,
+    DeferredCommandVerification, DeferredCommandVerificationError, DiagnosticPolicy,
+    DiffInvariantMode, DiffInvariantVerification, DiffInvariantVerificationError,
     ExpectedTaskEvidence, MinimumTestCaseCount, MinimumTestCaseCountError, StepVerification,
     StepVerificationError, StepVerificationOutcome, TaskLedgerTimestamp, TaskLedgerTimestampError,
     TaskVerificationTextError, TaskVerificationTextViolation, TestCaseSelector,

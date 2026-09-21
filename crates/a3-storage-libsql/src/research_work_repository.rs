@@ -37,6 +37,7 @@ fn encode_access(a: &ResearchAccessAttempt) -> Access {
         key: *a.key.as_bytes(),
         starts: a.starts,
         kind: match a.kind {
+            ResearchAccessKind::IndexInventory => 12,
             ResearchAccessKind::Inspect => 1,
             ResearchAccessKind::LiteralSearch => 2,
             ResearchAccessKind::IndexSearch => 3,
@@ -67,6 +68,7 @@ fn decode_access(a: Access) -> Result<ResearchAccessAttempt, AskResearchReposito
         key: ContentHash::from_bytes(a.key),
         starts: a.starts,
         kind: match a.kind {
+            12 => ResearchAccessKind::IndexInventory,
             1 => ResearchAccessKind::Inspect,
             2 => ResearchAccessKind::LiteralSearch,
             3 => ResearchAccessKind::IndexSearch,

@@ -4,6 +4,8 @@ use super::{ContentHash, ResearchQuestionId, ResearchWorkError};
 /// Finite kind of an existing, read-only research capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResearchAccessKind {
+    /// Core inspection of the complete file inventory in one pinned published graph.
+    IndexInventory,
     /// Original file page, independent of the source's display alias.
     Inspect,
     /// Bounded literal OR-search in safe current sources.
@@ -68,7 +70,8 @@ impl ResearchAccessAttempt {
         if (self.outcome == Some(ResearchAccessOutcome::NoMatch)
             && !matches!(
                 self.kind,
-                ResearchAccessKind::LiteralSearch
+                ResearchAccessKind::IndexInventory
+                    | ResearchAccessKind::LiteralSearch
                     | ResearchAccessKind::Directory
                     | ResearchAccessKind::SecurityCandidates
             ))

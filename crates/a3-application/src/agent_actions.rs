@@ -4,10 +4,10 @@ use crate::{
 };
 use a3_domain::{
     AgentControllerState, AgentFinishAction, AgentLedgerUpdate, AgentRun, AgentRunTimestamp,
-    AgentToolEvidenceSet, AgentUpdateLedgerAction, ProjectIdentity, RunEvent, RunEventCode,
-    RunEventId, RunEventOutcome, RunEventPayload, RunEventSequence, SnapshotId, TaskLedger,
-    TaskLedgerError, TaskLedgerTimestamp, TaskReplanReason, TaskStepDefinition, TaskStepId,
-    TaskStepStatus,
+    AgentToolEvidenceSet, AgentUpdateLedgerAction, DiscoveredCommandId, ProjectCommandCatalog,
+    ProjectIdentity, RunEvent, RunEventCode, RunEventId, RunEventOutcome, RunEventPayload,
+    RunEventSequence, SnapshotId, TaskLedger, TaskLedgerError, TaskLedgerTimestamp,
+    TaskReplanReason, TaskStepDefinition, TaskStepId, TaskStepStatus, VerificationTarget,
 };
 use std::error::Error;
 use std::fmt;
@@ -578,6 +578,191 @@ impl From<a3_domain::AgentRunError> for ApplyAgentPlanRevisionError {
 }
 
 impl From<AgentActionStoreFailure> for ApplyAgentPlanRevisionError {
+    fn from(value: AgentActionStoreFailure) -> Self {
+        Self::Storage(value)
+    }
+}
+
+/// Atomically binds a not-yet-started deferred verification to one current discovered command.
+#[derive(Debug, Clone, Copy)]
+pub struct BindDeferredAgentVerification<'a> {
+    store: &'a dyn AgentActionStore,
+}
+
+impl<'a> BindDeferredAgentVerification<'a> {
+    /// Creates the use case from the existing atomic Ledger/run persistence boundary.
+    #[must_use]
+    pub const fn new(store: &'a dyn AgentActionStore) -> Self {
+        Self { store }
+    }
+
+    /// Replaces the next deferred step and its affected successors before another model turn.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn execute(
+        self,
+        project: &ProjectIdentity,
+        expected_ledger_version: TaskLedgerStoreVersion,
+        run: &mut AgentRun,
+        ledger: &mut TaskLedger,
+        catalog: &ProjectCommandCatalog,
+        command_id: DiscoveredCommandId,
+        retire_step_ids: Vec<TaskStepId>,
+        additions: Vec<TaskStepDefinition>,
+        event_id: RunEventId,
+        observed_at: AgentRunTimestamp,
+        control: &dyn AgentControllerControl,
+    ) -> Result<TaskLedgerStoreVersion, BindDeferredAgentVerificationError> {
+        if control.is_cancelled() {
+            return Err(BindDeferredAgentVerificationError::Cancelled);
+        }
+        if run.state() != AgentControllerState::Verify
+            || run.goal_contract() != ledger.goal_contract()
+            || run.task_ledger_revision() != ledger.revision()
+            || ledger.steps().any(|step| {
+                matches!(
+                    step.status(),
+                    TaskStepStatus::InProgress
+                        | TaskStepStatus::AwaitingApproval
+                        | TaskStepStatus::Verifying
+                )
+            })
+        {
+            return Err(BindDeferredAgentVerificationError::InvalidState);
+        }
+        let next = ledger
+            .steps()
+            .find(|step| step.is_active_plan_step() && step.status() == TaskStepStatus::Ready)
+            .ok_or(BindDeferredAgentVerificationError::InvalidState)?;
+        let VerificationTarget::DeferredCommand(deferred) =
+            next.definition().verification_spec().target()
+        else {
+            return Err(BindDeferredAgentVerificationError::NotDeferred);
+        };
+        let command = catalog
+            .commands()
+            .iter()
+            .find(|command| command.id() == command_id)
+            .ok_or(BindDeferredAgentVerificationError::CommandUnavailable)?;
+        if !deferred.preferred_kinds().contains(&command.kind())
+            || !retire_step_ids.contains(&next.definition().id())
+            || !additions.iter().any(|definition| {
+                definition.intended_outcome() == next.definition().intended_outcome()
+                    && definition.acceptance_criteria() == next.definition().acceptance_criteria()
+                    && matches!(
+                        definition.verification_spec().target(),
+                        VerificationTarget::Command {
+                            command_id: actual,
+                            ..
+                        } | VerificationTarget::Test {
+                            command_id: actual,
+                            ..
+                        } if *actual == command_id
+                    )
+            })
+        {
+            return Err(BindDeferredAgentVerificationError::InvalidBinding);
+        }
+        let timestamp = TaskLedgerTimestamp::from_unix_millis(observed_at.unix_millis())
+            .map_err(|_| BindDeferredAgentVerificationError::InvalidTimestamp)?;
+        let reason = TaskReplanReason::try_from_string(
+            "Der zuvor nicht verfügbare Prüfcommand wurde aus dem aktuellen veröffentlichten Index gebunden."
+                .to_owned(),
+        )
+        .map_err(|_| BindDeferredAgentVerificationError::InvalidStaticText)?;
+        let mut next_ledger = ledger.clone();
+        let revision = next_ledger.replan(retire_step_ids, additions, reason, timestamp)?;
+        let mut next_run = run.clone();
+        let event = next_run.record_ledger_update(
+            event_id,
+            revision,
+            RunEventPayload::new(
+                RunEventCode::ControllerDecision,
+                Some(RunEventOutcome::Succeeded),
+                None,
+            ),
+            run.current_snapshot_id(),
+            observed_at,
+        )?;
+        let next_version = self
+            .store
+            .commit_ledger_action(
+                project,
+                expected_ledger_version,
+                run.last_event_sequence(),
+                &next_ledger,
+                &next_run,
+                &event,
+            )
+            .await?;
+        *ledger = next_ledger;
+        *run = next_run;
+        Ok(next_version)
+    }
+}
+
+/// A deferred verification could not be bound without changing authoritative state.
+#[derive(Debug)]
+pub enum BindDeferredAgentVerificationError {
+    /// Run, Ledger, or next-step state did not match the post-verification boundary.
+    InvalidState,
+    /// The next current step was not a deferred command verification.
+    NotDeferred,
+    /// The chosen command was absent from the current catalog.
+    CommandUnavailable,
+    /// Replacement steps did not preserve and bind the current deferred contract.
+    InvalidBinding,
+    /// Cancellation won before any persistence mutation.
+    Cancelled,
+    /// Core time could not be represented.
+    InvalidTimestamp,
+    /// Static bounded revision text unexpectedly violated a domain invariant.
+    InvalidStaticText,
+    /// The Ledger rejected the immutable replacement graph.
+    Ledger(TaskLedgerError),
+    /// The run rejected the new Ledger revision event.
+    Run(a3_domain::AgentRunError),
+    /// Atomic storage rejected the new Ledger/run pair.
+    Storage(AgentActionStoreFailure),
+}
+
+impl fmt::Display for BindDeferredAgentVerificationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidState => {
+                "deferred verification binding requires the exact Verify boundary"
+            }
+            Self::NotDeferred => "next Agent step is not deferred",
+            Self::CommandUnavailable => {
+                "deferred verification command is not in the current catalog"
+            }
+            Self::InvalidBinding => {
+                "deferred verification replacement does not preserve its contract"
+            }
+            Self::Cancelled => "deferred verification binding was cancelled",
+            Self::InvalidTimestamp => "deferred verification timestamp is invalid",
+            Self::InvalidStaticText => "deferred verification reason is invalid",
+            Self::Ledger(_) => "deferred verification violates the Task Ledger",
+            Self::Run(_) => "deferred verification violates the durable run",
+            Self::Storage(_) => "deferred verification could not be committed atomically",
+        })
+    }
+}
+
+impl Error for BindDeferredAgentVerificationError {}
+
+impl From<TaskLedgerError> for BindDeferredAgentVerificationError {
+    fn from(value: TaskLedgerError) -> Self {
+        Self::Ledger(value)
+    }
+}
+
+impl From<a3_domain::AgentRunError> for BindDeferredAgentVerificationError {
+    fn from(value: a3_domain::AgentRunError) -> Self {
+        Self::Run(value)
+    }
+}
+
+impl From<AgentActionStoreFailure> for BindDeferredAgentVerificationError {
     fn from(value: AgentActionStoreFailure) -> Self {
         Self::Storage(value)
     }

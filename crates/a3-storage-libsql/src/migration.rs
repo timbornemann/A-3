@@ -3339,6 +3339,11 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
         name: "fast_index_trace_journal",
         sql: include_str!("migrations/knowledge_v39.sql"),
     },
+    Migration {
+        version: 40,
+        name: "deferred_greenfield_verification",
+        sql: include_str!("migrations/knowledge_v40.sql"),
+    },
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -3371,7 +3376,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(39);
+    pub const CURRENT: Self = Self::new(40);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -4006,6 +4011,7 @@ mod tests {
         (knowledge_upgrades_from_v36, 36),
         (knowledge_upgrades_from_v37, 37),
         (knowledge_upgrades_from_v38, 38),
+        (knowledge_upgrades_from_v39, 39),
     );
 
     #[test]
@@ -7150,7 +7156,7 @@ mod tests {
 
                 let result = migrate(
                     &connection,
-                    &migrations,
+                    &migrations[..39],
                     39,
                     super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
                 )

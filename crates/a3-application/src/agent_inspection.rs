@@ -603,7 +603,8 @@ impl AgentProcessInspectionKind {
             VerificationMethod::Diagnostic => Self::Diagnostic,
             VerificationMethod::Command
             | VerificationMethod::DiffInvariant
-            | VerificationMethod::UserConfirm => match command_kind {
+            | VerificationMethod::UserConfirm
+            | VerificationMethod::DeferredCommand => match command_kind {
                 DiscoveredCommandKind::Test => Self::Test,
                 DiscoveredCommandKind::Build => Self::Build,
                 DiscoveredCommandKind::Lint => Self::Lint,

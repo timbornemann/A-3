@@ -327,10 +327,15 @@ offengelegt werden, nicht als isolierter Prosaeffekt erscheinen.
   Ask-Turn muss das bestehende Diagramm über mehrere Polls als dieselbe DOM-Instanz behalten;
   Artefakt-Read und Mermaid-Rendering dürfen dabei nicht erneut starten.
 - Der gemeinsame Recherche-Contract bindet jeden Ask-, Plan- und Agent-Vorbereitungsturn vor dem
-  Modellaufruf an genau einen veröffentlichten Index. Controllerverträge prüfen den Ein-Turn-Pfad,
-  mehrstufige Symbol-/Aufrufer-/Source-Folgen, die exakten Standard-/Gründlich-Grenzen, höchstens
-  vier sequenzielle Aktionen pro Entscheidung, genau einen Reparaturversuch, Deduplizierung, zwei
-  stagnierende Runden, Timeout, Cancellation und Fortsetzung mit neuem Indexanker. Vertrags- und
+  Modellaufruf an genau einen veröffentlichten Index. Ein Index ohne Dateien schließt die
+  Repository-Bestandsaufnahme als Core-Grenze, bevor Design beginnt; ein Graph mit Dateien darf
+  das nicht, auch wenn die Task Lens null Treffer liefert. Plan und Agent müssen danach ohne
+  erfundene Zitate bis zum vollständigen Core-Plan gelangen; geordnete Änderungs- und Testziele
+  müssen als mehrere atomare Arbeitsplan-Schritte erhalten bleiben. Controllerverträge prüfen den
+  Ein-Turn-Pfad, mehrstufige Symbol-/Aufrufer-/Source-Folgen, die exakten Standard-/Gründlich-
+  Grenzen, höchstens vier sequenzielle Aktionen pro Entscheidung, genau einen Reparaturversuch,
+  Deduplizierung, zwei stagnierende Runden, Timeout, Cancellation und Fortsetzung mit neuem
+  Indexanker. Vertrags- und
   Source-Search-Tests prüfen case-insensitive TODO-/FIXME-Treffer außerhalb eines Dateipräfixes,
   Treffer- und Ergebnisgrenzen sowie ehrliche `limited`-Negativaussagen; die Implementierung
   erzwingt zusätzlich 2.000 Dateien, 32 MiB, 30 Sekunden und Cancellation. V31-Migrations- und
@@ -926,7 +931,8 @@ offengelegt werden, nicht als isolierter Prosaeffekt erscheinen.
   Snapshot- und Hashbindung, exakten Approval-Fingerprint, Binary-/Secret-Ablehnung sowie
   unveränderte UTF-8-BOM-, CRLF- und Nicht-ASCII-Bytes. Die öffentliche Workspace-Port-Suite prüft
   die begrenzte Vorschau, tatsächliche Post-Patch-Hashes, No-Replace, Useränderung zwischen Preview
-  und Apply, Symlink-/Junction-Escape und ein explizites partielles Change-Set nach spätem Konflikt.
+  und Apply, sichere fehlende Elternverzeichnisse, Symlink-/Junction-Escape auch nach der Vorschau
+  und ein explizites partielles Change-Set nach spätem Konflikt.
 - ProcessRunner-Contracts kompilieren dasselbe argv-basierte Fixture auf Windows, Linux und macOS.
   Sie prüfen unveränderte Argumentgrenzen trotz Shell-Metazeichen, kanonisches CWD und Executable,
   eine geleerte Umgebung mit expliziter Allowlist, Timeout eines Endlosprozesses, Beendigung eines

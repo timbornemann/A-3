@@ -370,8 +370,12 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   ihr Grenzanker ist der Core-berechnete Publikationsscope. Reopen, Workspace-Projektion und
   Agent-Handoff vergleichen diesen explizit und verlangen zugehörige Zugriffsquittungen.
   Frühere Scopes bleiben als Historie erhalten, werden aber weder mit aktuellen Quittungen
-  vermischt noch als Sperre einer neuen Untersuchung verwendet. Ein Scopewechsel macht auch quellenlose negative Ergebnisse
-  stale. Stale Ausschlüsse dürfen bei einer Fortsetzung keinen neuen Abschluss autorisieren.
+  vermischt noch als Sperre einer neuen Untersuchung verwendet. Ein Scopewechsel macht auch
+  quellenlose negative Ergebnisse stale. Stale Ausschlüsse dürfen bei einer Fortsetzung keinen
+  neuen Abschluss autorisieren. ADR-0111 benötigt keine weitere Migration: Die bestehende
+  Capability-Klasse erhält den geschlossenen Wert `IndexInventory` für die Core-Prüfung des
+  vollständigen Dateibestands eines gebundenen veröffentlichten Graphen. Nur `NoMatch` mit dem
+  scopegleichen Q1-Ergebnis darf den leeren Inventory-Nachweis bilden.
 - Häufige Status- und Dashboard-Reads verwenden die geprüfte, aktuelle Indexprojektion aus dem
   Store-Cache, sofern ihr Run-Anker exakt passt. Ein Cache-Miss wird in einem eigenen konsistenten
   Read-Kontext rekonstruiert; Card- und Atlas-Autorität bleiben dadurch unverändert.

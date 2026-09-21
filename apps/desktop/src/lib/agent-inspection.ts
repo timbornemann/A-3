@@ -30,7 +30,7 @@ export type AgentDiffLineEndingV1 = 'lf' | 'crlf' | 'cr' | 'none';
 export type AgentChangeAttributionV1 =
   'proposedAgent' | 'appliedAgent' | 'external' | 'unattributed';
 export type AgentVerificationMethodV1 =
-  'command' | 'test' | 'diffInvariant' | 'diagnostic' | 'userConfirm';
+  'command' | 'test' | 'diffInvariant' | 'diagnostic' | 'userConfirm' | 'deferredCommand';
 export type AgentVerificationStepStatusV1 =
   | 'pending'
   | 'ready'
@@ -950,7 +950,8 @@ function parseEvidence(value: unknown): AgentVerificationEvidenceV1 {
     !isStableId(value.evidenceId) ||
     !isStableId(value.runId) ||
     !isStableId(value.snapshotId) ||
-    !isMethod(value.method)
+    !isMethod(value.method) ||
+    value.method === 'deferredCommand'
   ) {
     return invalid('verification evidence');
   }
@@ -1333,9 +1334,14 @@ function isRedactionOrNull(value: unknown): value is AgentProcessRedactionV1 | n
 }
 
 function isMethod(value: unknown): value is AgentVerificationMethodV1 {
-  return ['command', 'test', 'diffInvariant', 'diagnostic', 'userConfirm'].includes(
-    value as string,
-  );
+  return [
+    'command',
+    'test',
+    'diffInvariant',
+    'diagnostic',
+    'userConfirm',
+    'deferredCommand',
+  ].includes(value as string);
 }
 
 function isStepStatus(value: unknown): value is AgentVerificationStepStatusV1 {

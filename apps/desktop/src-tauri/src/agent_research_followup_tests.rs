@@ -58,6 +58,99 @@ struct ProgressiveModel {
     seen: std::sync::Mutex<BTreeMap<String, String>>,
     fault: ProgressiveFault,
 }
+
+struct EmptyProjectPlanModel {
+    calls: AtomicUsize,
+}
+
+fn empty_project_model_profile() -> Result<a3_domain::ModelProfile, Box<dyn Error>> {
+    use a3_domain::*;
+    Ok(ModelProfile::from_probe(
+        ModelProviderId::try_from_string("offline".to_owned())?,
+        ModelId::try_from_string("empty-project-fixture".to_owned())?,
+        ModelProfileSettings::new(
+            ModelContextLimit::new(8_192)?,
+            ModelOutputLimit::new(2_048)?,
+            ModelTokenCountingStrategy::ConservativeUtf8BytesV1,
+            ModelParallelismLimit::new(1)?,
+            ModelSamplingProfile::new(
+                ModelTemperature::from_milli(0)?,
+                ModelTopP::from_milli(1_000)?,
+            ),
+            ModelStopSequences::new(Vec::new())?,
+            ModelPromptSchemaGrounding::FormatFieldOnly,
+        )?,
+        ModelCapabilities::new(
+            ModelStructuredOutputCapability::Verified,
+            ModelToolCallMode::NativeProviderReported,
+        ),
+    ))
+}
+
+impl ResearchModel for EmptyProjectPlanModel {
+    fn requires_work_contract(&self) -> bool {
+        true
+    }
+
+    async fn research_evidence_budget(
+        &self,
+        _: AgentSessionMode,
+        _: Option<&str>,
+    ) -> Result<usize, AgentConversationFailure> {
+        Ok(4096)
+    }
+
+    async fn complete_research_decision(
+        &self,
+        mode: AgentSessionMode,
+        _: bool,
+        phase: a3_application::ResearchOutputPhase,
+        transcript: &[(ModelMessageRole, String)],
+        _: Option<String>,
+        _: &JobContext,
+    ) -> Result<String, AgentConversationFailure> {
+        assert!(matches!(
+            mode,
+            AgentSessionMode::Plan | AgentSessionMode::Agent
+        ));
+        let packet = &transcript
+            .iter()
+            .find(|(_, text)| text.starts_with("CURRENT QUESTION:\n"))
+            .ok_or(AgentConversationFailure::InvalidInput)?
+            .1;
+        assert!(packet.contains("ACTIVE Q2:") || packet.contains("ACTIVE Q3:"));
+        assert!(!packet.contains("[S1]"));
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let response = match phase {
+            a3_application::ResearchOutputPhase::Design(id) => serde_json::json!({
+                "kind":"designDecision",
+                "result":{
+                    "question_id":id.get(),
+                    "text":"1. Eine ausführbare server.py ausschließlich mit der Python-Standardbibliothek anlegen.\n2. GET / als UTF-8-Hello-World-Seite implementieren und andere Pfade mit 404 behandeln.\n3. Nicht unterstützte Methoden mit 405 und Allow: GET beantworten.\n4. tests/test_server.py mit Standardbibliothek-unittest für Start, GET, 404 und 405 anlegen.",
+                    "evidence":[]
+                }
+            }),
+            a3_application::ResearchOutputPhase::DesignTests(id) => serde_json::json!({
+                "kind":"designDecision",
+                "result":{
+                    "question_id":id.get(),
+                    "text":"1. Serverstart und kontrolliertes Beenden prüfen.\n2. GET /, einen unbekannten Pfad und POST / gegen Status, Header und Inhalt prüfen.",
+                    "evidence":[]
+                }
+            }),
+            _ => return Err(AgentConversationFailure::InvalidInput),
+        };
+        Ok(serde_json::json!({"schema_version":7,"response":response}).to_string())
+    }
+
+    async fn complete_evidence_diagrams(
+        &self,
+        _: &[(ModelMessageRole, String)],
+        _: &JobContext,
+    ) -> Result<String, AgentConversationFailure> {
+        Err(AgentConversationFailure::InvalidInput)
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ProgressiveFault {
     IndependentRepairs,
@@ -805,6 +898,208 @@ fn storage_gap_is_followed_autonomously_in_all_modes_and_invalid_output_never_ex
             std::fs::read_to_string(repository.path().join("taskflow/manager.py"))?,
             MANAGER
         );
+        Ok(())
+    })
+}
+
+#[test]
+fn empty_project_plan_and_agent_reach_a_grounded_atomic_work_plan_without_sources()
+-> Result<(), Box<dyn Error>> {
+    support::run_libsql_test(async {
+        let repository = support::TempDirectory::new()?;
+        repository.git(["init", "--initial-branch=main"])?;
+        let project = RepositoryInspector::new().inspect(repository.path())?;
+        let data = support::TempDirectory::new()?;
+        let store = Arc::new(
+            LibsqlKnowledgeStore::open(&StorageLayout::prepare(data.path().join("data"))?).await?,
+        );
+        store.record_opened_project(&project).await?;
+        let refresh = RefreshRepositoryIndex::new(
+            Arc::new(Blake3RepositorySnapshotBuilder::new()),
+            store.clone(),
+            Arc::new(Blake3IndexRunIdFactory),
+        );
+        refresh
+            .execute(
+                &project,
+                &RepositoryChangeBatch::full_rescan(
+                    Vec::new(),
+                    RepositoryRescanReason::InitialObservation,
+                )?,
+                &mut BuiltinIncrementalIndexCompiler::new(ParserPoolSize::new(1)?)?,
+                &FixtureControl,
+            )
+            .await?;
+
+        for (ordinal, mode) in [AgentSessionMode::Plan, AgentSessionMode::Agent]
+            .into_iter()
+            .enumerate()
+        {
+            let marker = u8::try_from(ordinal + 40)?;
+            let id = AgentSessionId::from_bytes([marker; 32]);
+            let time = timestamp()?;
+            let session = AgentSession::from_parts(
+                id,
+                AgentSessionRevision::new(1)?,
+                AgentSessionTitle::try_from_string("Empty project".to_owned())?,
+                mode,
+                AgentSessionState::Running,
+                time,
+                time,
+                Some(AgentSessionSequence::FIRST),
+                None,
+                None,
+                false,
+            );
+            let user = AgentSessionEntry::try_new(
+                id,
+                AgentSessionSequence::FIRST,
+                AgentSessionEntryKind::UserMessage,
+                AgentSessionText::try_from_string(
+                    "erstelle einen kleinen python server mit einer hello world webseite"
+                        .to_owned(),
+                )?,
+                time,
+                None,
+                None,
+                None,
+            )?;
+            store
+                .create_session(&project, &session, Some(&user), None)
+                .await?;
+            let model = Arc::new(EmptyProjectPlanModel {
+                calls: AtomicUsize::new(0),
+            });
+            let researcher =
+                AgentAskResearcher::new(store.clone(), store.clone(), store.clone(), store.clone());
+            let worker_model = model.clone();
+            let worker_project = project.clone();
+            let (send, receive) = std::sync::mpsc::sync_channel(1);
+            recovery_contract::owned(move |control, _| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_time()
+                    .build()?;
+                send.send(runtime.block_on(researcher.research(
+                    worker_model.as_ref(),
+                    &worker_project,
+                    id,
+                    AgentSessionSequence::FIRST,
+                    mode,
+                    AgentResearchDepth::Standard,
+                    "erstelle einen kleinen python server mit einer hello world webseite",
+                    &[((ModelMessageRole::User), "erstelle einen kleinen python server mit einer hello world webseite".to_owned())],
+                    None,
+                    &control,
+                )))?;
+                Ok(())
+            })?;
+            let received = receive.recv_timeout(Duration::from_secs(1))?;
+            if let Err(error) = &received {
+                eprintln!(
+                    "empty-project research failed for {mode:?} after {} model calls: {error:?}",
+                    model.calls.load(Ordering::SeqCst)
+                );
+                if let Some(detail) = store
+                    .load_detail(&project, id, AgentSessionSequence::FIRST)
+                    .await?
+                {
+                    for event in detail.events() {
+                        eprintln!("empty-project event: {}", event.action());
+                    }
+                }
+            }
+            let result = received?;
+            assert!(!result.awaiting_continuation, "{}", result.markdown);
+            assert!(result.empty_publication_inventory);
+            assert!(result.has_plan_grounding());
+            assert!(result.citations.is_empty());
+            assert_eq!(model.calls.load(Ordering::SeqCst), 2);
+            let plan = a3_domain::AgentWorkPlan::from_reviewed_markdown(&result.markdown)?;
+            assert_eq!(plan.steps().len(), 6);
+            if mode == AgentSessionMode::Plan {
+                let (state, kind, revision, _) =
+                    plan_session_outcome(&session, &result.markdown, result.has_plan_grounding());
+                assert_eq!(state, AgentSessionState::AwaitingPlanReview);
+                assert_eq!(kind, AgentSessionEntryKind::Plan);
+                assert_eq!(revision, Some(1));
+            } else {
+                let reviewed_plan = match classify_plan_response(&result.markdown) {
+                    PlanConversationResponse::Plan(plan) => plan,
+                    PlanConversationResponse::Question(question) => {
+                        return Err(format!("unexpected plan question: {question}").into());
+                    }
+                };
+                let task = AgentTaskMaterializer::new(
+                    store.clone(),
+                    store.clone(),
+                    store.clone(),
+                    store.clone(),
+                )
+                .materialize(AgentTaskMaterialization {
+                    project: &project,
+                    objective: "erstelle einen kleinen python server mit einer hello world webseite",
+                    reviewed_plan: &reviewed_plan,
+                    profile: empty_project_model_profile()?,
+                    research_handoff: Some(&result.handoff),
+                    verification_profile: None,
+                    control: &FixtureControl,
+                })
+                .await?;
+                let task_id = task.request.task_id();
+                assert_eq!(task.work_item.task_id(), task_id);
+                let goal = a3_application::GoalContractStore::load_current_goal_contract(
+                    store.as_ref(),
+                    &project,
+                    task_id,
+                )
+                .await?
+                .ok_or("materialized goal")?;
+                let stored = a3_application::TaskLedgerStore::load_task_ledger(
+                    store.as_ref(),
+                    &project,
+                    task_id,
+                )
+                .await?
+                .ok_or("materialized ledger")?;
+                assert_eq!(stored.ledger().goal_contract(), goal.reference());
+                assert_eq!(stored.ledger().steps().count(), 6);
+                let active = stored
+                    .ledger()
+                    .steps()
+                    .find(|step| step.status() == a3_domain::TaskStepStatus::InProgress)
+                    .ok_or("active materialized step")?;
+                let run_id = active
+                    .attempts()
+                    .last()
+                    .ok_or("active materialized attempt")?
+                    .run_id();
+                let run = a3_application::RunJournalStore::load_agent_run(
+                    store.as_ref(),
+                    &project,
+                    run_id,
+                )
+                .await?
+                .ok_or("materialized run")?;
+                assert_eq!(run.goal_contract(), goal.reference());
+                assert_eq!(run.state(), a3_domain::AgentControllerState::Execute);
+            }
+            assert!(result.handoff.work_state().is_some_and(|work| {
+                work.ready_to_finish()
+                    && work.questions()[0].result().is_some_and(|inventory| {
+                        inventory.kind() == a3_domain::ResearchResultKind::BoundedUnknown
+                            && inventory.sources().is_empty()
+                    })
+            }));
+            let persisted = store
+                .load_detail(&project, id, AgentSessionSequence::FIRST)
+                .await?
+                .ok_or("persisted empty-project research")?;
+            assert!(persisted.work_state().is_some_and(|work| {
+                work.accesses().len() == 1
+                    && work.accesses()[0].kind == a3_domain::ResearchAccessKind::IndexInventory
+                    && work.accesses()[0].outcome == Some(a3_domain::ResearchAccessOutcome::NoMatch)
+            }));
+        }
         Ok(())
     })
 }

@@ -96,6 +96,8 @@ Stand: 2026-08-03
 5. Umgebungsvariablen werden über eine Allowlist weitergegeben.
 6. Toolausgaben werden typisiert, größenbegrenzt und mit Trunkierungsmetadaten versehen.
 7. Mutationen erzeugen vor dem nächsten Modellturn ein aktualisiertes Change Set.
+8. Add- und Move-Patches dürfen fehlende Elternverzeichnisse nur innerhalb der kanonischen Root
+   erzeugen; vorhandene Link-/Reparse-Komponenten bleiben gesperrt und Ziele werden nie ersetzt.
 
 ## 10. Frontend und IPC
 
@@ -154,9 +156,10 @@ Stand: 2026-08-03
 18. Eine Conversation-Antwort DARF bei einer ausdrücklich als unvollständig ausgewiesenen
     Evidence-Lage nicht abgeschlossen werden, solange das feste Rechercheprofil einen weiteren
     Schritt zulässt. Eindeutig genannte aktuelle Indexdateien bilden eine Core-geprüfte
-    Mindestabdeckung. Transiente Read- und Modell-Retries MÜSSEN innerhalb der bestehenden
-    Entscheidungs-, Zeit- und Aktionsgrenzen bleiben; sie dürfen weder Cancellation noch eine
-    Source-, Policy- oder Capability-Ablehnung umgehen.
+    Mindestabdeckung. Ein veröffentlichter Index ohne Dateien ist eine abgeschlossene
+    Core-Bestandsaufnahme, keine unvollständige Evidence-Lage. Transiente Read- und Modell-Retries
+    MÜSSEN innerhalb der bestehenden Entscheidungs-, Zeit- und Aktionsgrenzen bleiben; sie dürfen
+    weder Cancellation noch eine Source-, Policy- oder Capability-Ablehnung umgehen.
 19. Der flüchtige Conversation-Recherchekontext MUSS aktuelle explizite Repositoryziele vor
     allgemeiner Task-Lens-Auswahl und historischem Sessionwissen priorisieren. Spätere adaptive
     Reads MÜSSEN nutzbaren Kontextplatz erhalten. Revalidierte alte Evidence darf eine aktuelle

@@ -389,6 +389,7 @@ const fn map_verification_method_to_v1(value: VerificationMethod) -> AgentVerifi
         VerificationMethod::DiffInvariant => AgentVerificationMethodV1::DiffInvariant,
         VerificationMethod::Diagnostic => AgentVerificationMethodV1::Diagnostic,
         VerificationMethod::UserConfirm => AgentVerificationMethodV1::UserConfirm,
+        VerificationMethod::DeferredCommand => AgentVerificationMethodV1::DeferredCommand,
     }
 }
 

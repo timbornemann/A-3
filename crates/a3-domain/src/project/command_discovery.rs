@@ -1,10 +1,11 @@
 use super::{
-    AgentRunId, AgentRunTimestamp, CommandCatalogId, DiscoveredCommandId, EvidenceRef,
-    FileRevision, ProcessArgument, ProcessArgumentError, ProcessEnvironmentVariable,
-    ProcessEnvironmentVariableError, ProcessExecutable, ProcessExecutableError,
-    ProcessExecutionMode, ProcessNetworkScope, ProcessOutputLimit, ProcessOutputLimitError,
-    ProcessPlanBinding, ProcessSpec, ProcessSpecError, ProcessSpecSchemaVersion, ProcessTimeout,
-    ProcessTimeoutError, TaskStepId, WorkspaceDirectory, WorktreeId,
+    AgentControllerState, AgentRun, AgentRunId, AgentRunTimestamp, CommandCatalogId,
+    DiscoveredCommandId, EvidenceRef, FileRevision, ProcessArgument, ProcessArgumentError,
+    ProcessEnvironmentVariable, ProcessEnvironmentVariableError, ProcessExecutable,
+    ProcessExecutableError, ProcessExecutionMode, ProcessNetworkScope, ProcessOutputLimit,
+    ProcessOutputLimitError, ProcessPlanBinding, ProcessSpec, ProcessSpecError,
+    ProcessSpecSchemaVersion, ProcessTimeout, ProcessTimeoutError, TaskLedger, TaskStepId,
+    TaskStepStatus, VerificationTarget, WorkspaceDirectory, WorktreeId,
 };
 use std::cmp::Ordering;
 use std::error::Error;
@@ -274,6 +275,23 @@ pub struct ProjectCommandCatalog {
     commands: Vec<DiscoveredCommand>,
 }
 
+/// Single-use proof that one current unconfirmed command is bound to the active plan step.
+///
+/// The private payload and absence of `Clone`/`Copy` prevent callers from manufacturing or
+/// replaying approval eligibility without repeating the authoritative run/Ledger checks.
+#[derive(Debug)]
+pub struct PreparedDiscoveredCommandApproval {
+    process: ProcessSpec,
+}
+
+impl PreparedDiscoveredCommandApproval {
+    /// Consumes the one-shot preparation and yields the still-unapproved process specification.
+    #[must_use]
+    pub fn into_process_spec(self) -> ProcessSpec {
+        self.process
+    }
+}
+
 impl ProjectCommandCatalog {
     /// Canonicalizes the command set and derives its evidence-sensitive identity.
     pub fn new(
@@ -350,6 +368,61 @@ impl ProjectCommandCatalog {
                 ProcessPlanBinding::Validated(step_id),
             )
             .map_err(DiscoveredCommandProcessError::ProcessSpec)
+    }
+
+    /// Prepares a plan-bound command whose first execution must still pass explicit approval.
+    ///
+    /// The returned capability is single-use and can only be minted for the exact active step,
+    /// run attempt, command target, and current catalog. It does not authorize execution.
+    pub fn prepare_for_approval(
+        &self,
+        run: &AgentRun,
+        ledger: &TaskLedger,
+        step_id: TaskStepId,
+        command_id: DiscoveredCommandId,
+    ) -> Result<PreparedDiscoveredCommandApproval, DiscoveredCommandProcessError> {
+        let expected_status = match run.state() {
+            AgentControllerState::Execute => TaskStepStatus::InProgress,
+            AgentControllerState::AwaitApproval => TaskStepStatus::AwaitingApproval,
+            _ => return Err(DiscoveredCommandProcessError::InvalidApprovalContext),
+        };
+        if run.goal_contract() != ledger.goal_contract()
+            || run.task_ledger_revision() != ledger.revision()
+        {
+            return Err(DiscoveredCommandProcessError::InvalidApprovalContext);
+        }
+        let step = ledger
+            .step(step_id)
+            .filter(|step| step.is_active_plan_step())
+            .ok_or(DiscoveredCommandProcessError::InvalidApprovalContext)?;
+        let target_matches = matches!(
+            step.definition().verification_spec().target(),
+            VerificationTarget::Command {
+                command_id: expected,
+                ..
+            } | VerificationTarget::Test {
+                command_id: expected,
+                ..
+            } if *expected == command_id
+        );
+        if step.status() != expected_status
+            || step
+                .attempts()
+                .last()
+                .is_none_or(|attempt| attempt.run_id() != run.id())
+            || !target_matches
+        {
+            return Err(DiscoveredCommandProcessError::InvalidApprovalContext);
+        }
+        let process = self
+            .command(command_id)?
+            .process_spec(
+                run.id(),
+                self.worktree_id,
+                ProcessPlanBinding::Validated(step_id),
+            )
+            .map_err(DiscoveredCommandProcessError::ProcessSpec)?;
+        Ok(PreparedDiscoveredCommandApproval { process })
     }
 
     fn command(
@@ -533,6 +606,8 @@ pub enum DiscoveredCommandProcessError {
     StaleAllowlist,
     /// The exact command was not selected by the user.
     CommandNotConfirmed,
+    /// Run, Ledger, active attempt, or verification target does not authorize preparation.
+    InvalidApprovalContext,
     /// The bounded process invariant unexpectedly rejected the template.
     ProcessSpec(ProcessSpecError),
 }
@@ -544,6 +619,9 @@ impl fmt::Display for DiscoveredCommandProcessError {
             Self::WorktreeMismatch => "command allowlist belongs to another worktree",
             Self::StaleAllowlist => "command allowlist does not match current manifest evidence",
             Self::CommandNotConfirmed => "discovered command was not confirmed",
+            Self::InvalidApprovalContext => {
+                "discovered command is not bound to the current approval context"
+            }
             Self::ProcessSpec(_) => "discovered command could not form a process specification",
         })
     }

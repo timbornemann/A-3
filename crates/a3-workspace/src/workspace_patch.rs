@@ -78,7 +78,7 @@ impl WorkspacePatchAdapter {
             .map_err(|_| PatchApplyFailure::ProgressUnavailable)?;
         let first_live = preflight(project, published, &action, control).map_err(apply_failure)?;
         let root = project.worktree().root().as_path();
-        let mut staged = StagedFiles::create(&action, &first_live, control)?;
+        let mut staged = StagedFiles::create(root, &action, &first_live, control)?;
 
         // Staging can take time. Revalidate every expected hash and absent target immediately
         // before the first visible mutation instead of trusting the preview or first preflight.
@@ -99,7 +99,7 @@ impl WorkspacePatchAdapter {
                     PatchApplyFailure::Cancelled,
                 ));
             }
-            let mutation = apply_operation(index, operation, live_operation, &mut staged);
+            let mutation = apply_operation(root, index, operation, live_operation, &mut staged);
             let change = match mutation {
                 Ok(change) => change,
                 Err(failure) => {
@@ -343,23 +343,13 @@ fn resolve_absent_target(
 ) -> Result<PathBuf, PreflightFailure> {
     let relative = platform_path::repository_path(path).map_err(|_| PreflightFailure::Denied)?;
     ensure_no_link_components(root, &relative, true)?;
-    let file_name = relative.file_name().ok_or(PreflightFailure::Denied)?;
-    let parent_relative = relative.parent().unwrap_or_else(|| Path::new(""));
-    let parent = if parent_relative.as_os_str().is_empty() {
-        root.to_path_buf()
-    } else {
-        let canonical = policy
-            .resolve_existing(parent_relative)
-            .map_err(|_| PreflightFailure::Denied)?;
-        if canonical.kind() != PathEntryKind::Directory {
-            return Err(PreflightFailure::Denied);
-        }
-        canonical.as_path().to_path_buf()
-    };
-    if !parent.starts_with(policy.root().as_path()) {
+    if relative.file_name().is_none() {
         return Err(PreflightFailure::Denied);
     }
-    let target = parent.join(file_name);
+    let target = policy.root().as_path().join(relative);
+    if !target.starts_with(policy.root().as_path()) {
+        return Err(PreflightFailure::Denied);
+    }
     match fs::symlink_metadata(&target) {
         Ok(metadata) => {
             if is_link_or_reparse(&metadata) {
@@ -380,20 +370,15 @@ fn ensure_no_link_components(
     relative: &Path,
     allow_missing_final: bool,
 ) -> Result<(), PreflightFailure> {
-    let count = relative.components().count();
     let mut current = root.to_path_buf();
-    for (index, component) in relative.components().enumerate() {
+    for component in relative.components() {
         current.push(component.as_os_str());
         match fs::symlink_metadata(&current) {
             Ok(metadata) if is_link_or_reparse(&metadata) => {
                 return Err(PreflightFailure::Denied);
             }
             Ok(_) => {}
-            Err(error)
-                if error.kind() == io::ErrorKind::NotFound
-                    && allow_missing_final
-                    && index.saturating_add(1) == count =>
-            {
+            Err(error) if error.kind() == io::ErrorKind::NotFound && allow_missing_final => {
                 return Ok(());
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -487,6 +472,7 @@ struct StagedFiles {
 
 impl StagedFiles {
     fn create(
+        root: &Path,
         action: &PatchAction,
         live: &[LiveOperation],
         control: &dyn WorkspacePatchControl,
@@ -502,10 +488,6 @@ impl StagedFiles {
             let Some(content) = operation.new_content() else {
                 continue;
             };
-            let target = live_operation
-                .target
-                .as_deref()
-                .ok_or(PatchApplyFailure::InvalidResult)?;
             let permissions = match operation {
                 PatchOperation::Update(_) => Some(
                     fs::metadata(
@@ -522,7 +504,7 @@ impl StagedFiles {
                     return Err(PatchApplyFailure::InvalidResult);
                 }
             };
-            let path = stage_file(action, index, target, content, permissions)?;
+            let path = stage_file(root, action, index, content, permissions)?;
             staged.paths[index] = Some(path);
         }
         Ok(staged)
@@ -551,15 +533,14 @@ impl Drop for StagedFiles {
 }
 
 fn stage_file(
+    root: &Path,
     action: &PatchAction,
     operation_index: usize,
-    target: &Path,
     content: &PatchFileContent,
     permissions: Option<Permissions>,
 ) -> Result<PathBuf, PatchApplyFailure> {
-    let parent = target.parent().ok_or(PatchApplyFailure::Denied)?;
     for attempt in 0..TEMPORARY_NAME_ATTEMPTS {
-        let temporary = parent.join(temporary_name(action, operation_index, attempt));
+        let temporary = root.join(temporary_name(action, operation_index, attempt));
         let mut file = match OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -597,6 +578,7 @@ fn temporary_name(action: &PatchAction, operation_index: usize, attempt: u8) -> 
 }
 
 fn apply_operation(
+    root: &Path,
     index: usize,
     operation: &PatchOperation,
     live: &LiveOperation,
@@ -608,7 +590,12 @@ fn apply_operation(
                 .target
                 .as_deref()
                 .ok_or(PatchApplyFailure::InvalidResult)?;
-            if install_no_replace(staged.path(index)?, target).map_err(mutation_failure)? {
+            let created_directories = create_missing_parent_directories(root, target)?;
+            let installed = install_no_replace(staged.path(index)?, target).map_err(|error| {
+                remove_empty_directories(&created_directories);
+                mutation_failure(error)
+            })?;
+            if installed {
                 staged.consumed(index);
             }
             Ok(PatchChange::Added(FileRevision::new(
@@ -640,7 +627,11 @@ fn apply_operation(
                 .target
                 .as_deref()
                 .ok_or(PatchApplyFailure::InvalidResult)?;
-            move_no_replace(source, target).map_err(mutation_failure)?;
+            let created_directories = create_missing_parent_directories(root, target)?;
+            move_no_replace(source, target).map_err(|error| {
+                remove_empty_directories(&created_directories);
+                mutation_failure(error)
+            })?;
             Ok(PatchChange::Moved {
                 previous: movement.expected().clone(),
                 current: FileRevision::new(
@@ -657,6 +648,69 @@ fn apply_operation(
             fs::remove_file(source).map_err(mutation_failure)?;
             Ok(PatchChange::Deleted(expected.clone()))
         }
+    }
+}
+
+fn create_missing_parent_directories(
+    root: &Path,
+    target: &Path,
+) -> Result<Vec<PathBuf>, PatchApplyFailure> {
+    let parent = target.parent().ok_or(PatchApplyFailure::Denied)?;
+    let relative = parent
+        .strip_prefix(root)
+        .map_err(|_| PatchApplyFailure::Denied)?;
+    let mut current = root.to_path_buf();
+    let mut created = Vec::new();
+
+    for component in relative.components() {
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if is_link_or_reparse(&metadata) {
+                    remove_empty_directories(&created);
+                    return Err(PatchApplyFailure::Denied);
+                }
+                if !metadata.is_dir() {
+                    remove_empty_directories(&created);
+                    return Err(PatchApplyFailure::Conflict);
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                match fs::create_dir(&current) {
+                    Ok(()) => created.push(current.clone()),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                        let metadata = fs::symlink_metadata(&current).map_err(|_| {
+                            remove_empty_directories(&created);
+                            PatchApplyFailure::Conflict
+                        })?;
+                        if is_link_or_reparse(&metadata) {
+                            remove_empty_directories(&created);
+                            return Err(PatchApplyFailure::Denied);
+                        }
+                        if !metadata.is_dir() {
+                            remove_empty_directories(&created);
+                            return Err(PatchApplyFailure::Conflict);
+                        }
+                    }
+                    Err(error) => {
+                        remove_empty_directories(&created);
+                        return Err(mutation_failure(error));
+                    }
+                }
+            }
+            Err(_) => {
+                remove_empty_directories(&created);
+                return Err(PatchApplyFailure::Unavailable);
+            }
+        }
+    }
+
+    Ok(created)
+}
+
+fn remove_empty_directories(directories: &[PathBuf]) {
+    for directory in directories.iter().rev() {
+        let _ignored = fs::remove_dir(directory);
     }
 }
 

@@ -30,15 +30,15 @@ use a3_domain::{
     AgentSessionText, AgentSessionTimestamp, AgentSessionTitle, AgentWorkItem, AgentWorkItemId,
     AgentWorkPlan, AgentWorkPlanVerificationIntent, AskResearchCompleteness, AskResearchPhase,
     AskResearchSelectionReason, AskResearchSourceId, AskResearchSourceKind, AskResearchState,
+    DeferredCommandVerification, DiffInvariantMode, DiffInvariantVerification,
     DiscoveredCommandKind, ExpectedTaskEvidence, GoalContract, GoalContractDraft,
     GoalContractTimestamp, GoalObjective, GraphEndpoint, JobId, JobOwner, ParsedSlashCommand,
-    PolicyResourceId, Progress, ProjectIdentity, RunEventId, SecretCandidateClassifierV1,
-    SlashCommand, SlashCommandEmptyInput, SlashCommandVerificationProfile, SourceChannel,
-    StepDependency, SuccessVerification, SyntaxRelationKind, TaskId, TaskLedger,
-    TaskLedgerTimestamp, TaskLensEntryReason, TaskLensSeedSet, TaskLensSeedText, TaskLensTarget,
-    TaskLensTokenBudget, TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale,
-    VerificationRequirement, VerificationScope, VerificationSpec, VerificationSpecId, WorktreeId,
-    parse_slash_command,
+    Progress, ProjectIdentity, RunEventId, SecretCandidateClassifierV1, SlashCommand,
+    SlashCommandEmptyInput, SlashCommandVerificationProfile, SourceChannel, StepDependency,
+    SuccessVerification, SyntaxRelationKind, TaskId, TaskLedger, TaskLedgerTimestamp,
+    TaskLensEntryReason, TaskLensSeedSet, TaskLensSeedText, TaskLensTarget, TaskLensTokenBudget,
+    TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale, VerificationRequirement,
+    VerificationScope, VerificationSpec, VerificationSpecId, WorktreeId, parse_slash_command,
 };
 use a3_workspace::{WorkspaceAgentSourceReader, WorkspaceAskSourceSearcher};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -201,8 +201,8 @@ impl AgentTaskMaterializer {
                     .find(|command| command.kind() == *kind)
             });
             let spec_id = VerificationSpecId::from_bytes(random_id()?);
-            let verification = match verification_command {
-                Some(command) => VerificationSpec::command(
+            let verification = match (verification_command, plan_step.verification_intent()) {
+                (Some(command), _) => VerificationSpec::command(
                     spec_id,
                     verification_requirement(
                         "Der deterministisch entdeckte Projektcheck besteht für diesen Änderungsschritt.",
@@ -210,13 +210,32 @@ impl AgentTaskMaterializer {
                     command.id(),
                     VerificationScope::Workspace,
                 ),
-                None => VerificationSpec::user_confirm(
-                    spec_id,
-                    verification_requirement(
-                        "Nutzer bestätigt diesen Änderungsschritt auf dem aktuellen Snapshot.",
-                    )?,
-                    PolicyResourceId::from_bytes(random_id()?),
-                ),
+                (None, AgentWorkPlanVerificationIntent::Change) => {
+                    VerificationSpec::diff_invariant(
+                        spec_id,
+                        verification_requirement(
+                            "Der exakt freigegebene Änderungsschritt verändert mindestens einen Pfad vollständig und wird anschließend neu indiziert.",
+                        )?,
+                        DiffInvariantVerification::new(
+                            DiffInvariantMode::NonEmptyChanges,
+                            Vec::new(),
+                        )
+                        .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
+                    )
+                }
+                (None, AgentWorkPlanVerificationIntent::Test) => {
+                    VerificationSpec::deferred_command(
+                        spec_id,
+                        verification_requirement(
+                            "Ein auf dem späteren aktuellen Projektstand belegter Prüfcommand besteht.",
+                        )?,
+                        DeferredCommandVerification::new(
+                            preferred_verification.to_vec(),
+                            VerificationScope::Workspace,
+                        )
+                        .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
+                    )
+                }
             };
             let dependencies = index
                 .checked_sub(1)
@@ -773,6 +792,21 @@ impl AgentAskResearcher {
                     command_profile,
                     ResearchStopReason::TimeLimit,
                 );
+            }
+            if state.close_empty_publication_inventory(published)? {
+                state.event_sequence = state.event_sequence.saturating_add(1);
+                self.append_running_event(
+                    project,
+                    turn,
+                    state.event_sequence,
+                    AskResearchPhase::Evaluating,
+                    "Leerer Indexstand: keine bestehenden Dateien; Bestandsaufnahme als Core-Grenze festgehalten",
+                    None,
+                    AskResearchCompleteness::NotApplicable,
+                )
+                .await?;
+                self.append_work_checkpoint(project, turn, &mut state)
+                    .await?;
             }
             let mut compiled_work_packet = None;
             if turn.mode() != AgentSessionMode::Ask
@@ -1495,9 +1529,11 @@ impl AgentAskResearcher {
                             })
                         })
             });
+        let empty_publication_inventory = state.has_empty_publication_inventory(published);
         if citations.is_empty()
             && response_requires_citations(turn.mode(), &markdown)
             && !bounded_only
+            && !empty_publication_inventory
         {
             return awaiting_continuation(
                 turn,
@@ -1585,6 +1621,7 @@ impl AgentAskResearcher {
             diagrams,
             terminal_event,
             awaiting_continuation: diagram_incomplete,
+            empty_publication_inventory,
             handoff: research_handoff(turn, &state, command_profile)?,
         })
     }
@@ -2973,7 +3010,14 @@ struct AskResearchResult {
     diagrams: Vec<EvidenceDiagramArtifact>,
     terminal_event: AskResearchEvent,
     awaiting_continuation: bool,
+    empty_publication_inventory: bool,
     handoff: ResearchHandoff,
+}
+
+impl AskResearchResult {
+    fn has_plan_grounding(&self) -> bool {
+        !self.citations.is_empty() || self.empty_publication_inventory
+    }
 }
 
 #[cfg(test)]
@@ -6066,9 +6110,9 @@ async fn complete_scheduled_session_inner(
     };
     report_progress(context, 9)?;
     let cancelled = context.cancellation_token().is_cancelled();
-    let has_research_citations = research_result
+    let has_research_grounding = research_result
         .as_ref()
-        .is_some_and(|result| !result.citations.is_empty());
+        .is_some_and(AskResearchResult::has_plan_grounding);
     let completed_at = timestamp()?;
     let sequence = user_sequence
         .next()
@@ -6111,7 +6155,8 @@ async fn complete_scheduled_session_inner(
                     None,
                 ),
                 AgentSessionMode::Plan => {
-                    let (state, kind, revision, content) = plan_session_outcome(&session, &content, has_research_citations);
+                    let (state, kind, revision, content) =
+                        plan_session_outcome(&session, &content, has_research_grounding);
                     (state, kind, revision, content, JobCompletion::Succeeded, None, None)
                 },
                 AgentSessionMode::Agent => match classify_plan_response(&content) {
@@ -6124,7 +6169,7 @@ async fn complete_scheduled_session_inner(
                         None,
                         None,
                     ),
-                    PlanConversationResponse::Plan(_) if !has_research_citations => (
+                    PlanConversationResponse::Plan(_) if !has_research_grounding => (
                         AgentSessionState::AwaitingUser,
                         AgentSessionEntryKind::AssistantSummary,
                         session.current_plan_revision(),
@@ -6956,6 +7001,7 @@ fn awaiting_continuation(
         diagrams: Vec::new(),
         terminal_event,
         awaiting_continuation: true,
+        empty_publication_inventory: false,
         handoff: research_handoff(turn, state, command_profile)?,
     })
 }

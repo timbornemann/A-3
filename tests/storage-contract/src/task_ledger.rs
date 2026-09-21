@@ -6,13 +6,14 @@ use a3_application::{
 };
 use a3_domain::{
     AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionRequirement,
-    AcceptanceCriterionStatement, AgentRunId, DiscoveredCommandId, ExpectedTaskEvidence,
-    GoalConstraint, GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective,
-    MinimumTestCaseCount, NonGoal, RepositoryId, StepDependency, StepVerification,
-    StepVerificationId, StepVerificationOutcome, SuccessVerification, TaskEvidenceId, TaskId,
-    TaskLedger, TaskLedgerTimestamp, TaskReplanReason, TaskStepDefinition, TaskStepId,
-    TaskStepOutcome, TaskStepRationale, TaskStepResultSummary, TestCaseSelector, UserDecision,
-    VerificationRequirement, VerificationScope, VerificationSpec, VerificationSpecId, WorktreeId,
+    AcceptanceCriterionStatement, AgentRunId, DeferredCommandVerification, DiscoveredCommandId,
+    DiscoveredCommandKind, ExpectedTaskEvidence, GoalConstraint, GoalContract, GoalContractDraft,
+    GoalContractTimestamp, GoalObjective, MinimumTestCaseCount, NonGoal, RepositoryId,
+    StepDependency, StepVerification, StepVerificationId, StepVerificationOutcome,
+    SuccessVerification, TaskEvidenceId, TaskId, TaskLedger, TaskLedgerTimestamp, TaskReplanReason,
+    TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale, TaskStepResultSummary,
+    TestCaseSelector, UserDecision, VerificationRequirement, VerificationScope, VerificationSpec,
+    VerificationSpecId, WorktreeId,
 };
 
 pub(crate) async fn verify<F>(factory: &F, workspace: &ContractWorkspace) -> ContractResult<()>
@@ -56,7 +57,7 @@ where
                 Some(StepDependency::new(first_step_id)),
                 228,
             )?,
-            step(future_step_id, None, 229)?,
+            deferred_step(future_step_id, 229)?,
         ],
         TaskLedgerTimestamp::from_unix_millis(1_010)?,
     )?;
@@ -263,6 +264,32 @@ fn step(
             TestCaseSelector::All,
             MinimumTestCaseCount::new(1)?,
             VerificationScope::Targeted,
+        ),
+    )?
+    .with_acceptance_criteria(vec![AcceptanceCriterionId::from_bytes([241; 32])])?)
+}
+
+fn deferred_step(id: TaskStepId, spec_id: u8) -> ContractResult<TaskStepDefinition> {
+    Ok(TaskStepDefinition::new(
+        id,
+        None,
+        TaskStepOutcome::try_from_string("run the later discovered checks".to_owned())?,
+        TaskStepRationale::try_from_string(
+            "the greenfield command does not exist before source creation".to_owned(),
+        )?,
+        Vec::new(),
+        vec![ExpectedTaskEvidence::try_from_string(
+            "the discovered test report".to_owned(),
+        )?],
+        VerificationSpec::deferred_command(
+            VerificationSpecId::from_bytes([spec_id; 32]),
+            VerificationRequirement::try_from_string(
+                "the newly created project tests pass".to_owned(),
+            )?,
+            DeferredCommandVerification::new(
+                vec![DiscoveredCommandKind::Test, DiscoveredCommandKind::Build],
+                VerificationScope::Workspace,
+            )?,
         ),
     )?
     .with_acceptance_criteria(vec![AcceptanceCriterionId::from_bytes([241; 32])])?)

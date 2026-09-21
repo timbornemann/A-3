@@ -157,7 +157,6 @@ pub(super) async fn evaluate() -> Result<CodingEvalResult, Box<dyn Error>> {
     }
 
     let wrong_index = latest_index(&fixture).await?;
-    let selection = MutationCommandSelection::new(&catalog, &confirmation);
     let first_failure = controller
         .execute(
             &fixture.project,
@@ -166,7 +165,7 @@ pub(super) async fn evaluate() -> Result<CodingEvalResult, Box<dyn Error>> {
             &mut durable.ledger_version,
             &wrong_index,
             AgentAction::Run(AgentRunAction::new(failed_step_id, command.id())),
-            Some(selection),
+            Some(MutationCommandSelection::new(&catalog, &confirmation)),
             &WorkspacePolicy::unrestricted(),
             None,
             mutation_ids(100),
@@ -194,7 +193,7 @@ pub(super) async fn evaluate() -> Result<CodingEvalResult, Box<dyn Error>> {
             &mut durable.ledger_version,
             &wrong_index,
             AgentAction::Run(AgentRunAction::new(failed_step_id, command.id())),
-            Some(selection),
+            Some(MutationCommandSelection::new(&catalog, &confirmation)),
             &WorkspacePolicy::unrestricted(),
             None,
             mutation_ids(120),

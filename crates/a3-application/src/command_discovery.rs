@@ -403,6 +403,7 @@ fn discover_python(
                 .push(manifest);
         }
     }
+    let has_python_manifest = !roots.is_empty();
     for (root, manifests) in roots {
         let mut references = BTreeMap::<String, CommandDiscoveryEvidence>::new();
         let mut has_build = None;
@@ -476,7 +477,45 @@ fn discover_python(
             )?);
         }
     }
+    if !has_python_manifest {
+        discover_python_unittest(index, commands)?;
+    }
     Ok(())
+}
+
+/// Closed standard-library fallback for a manifest-free Python worktree. Every test revision is
+/// bound into the command identity; an oversized set is left unresolved rather than truncated.
+fn discover_python_unittest(
+    index: &PublishedIndex,
+    commands: &mut Vec<DiscoveredCommand>,
+) -> Result<(), CommandDiscoveryFailure> {
+    let tests = index
+        .publication()
+        .graph()
+        .files()
+        .iter()
+        .filter(|revision| is_python_test_path(revision.path()))
+        .collect::<Vec<_>>();
+    if tests.is_empty() || tests.len() > 16 {
+        return Ok(());
+    }
+    commands.push(DiscoveredCommand::try_new(
+        DiscoveredCommandKind::Test,
+        WorkspaceDirectory::Root,
+        "python".to_owned(),
+        strings(&["-B", "-m", "unittest", "discover"]),
+        tests
+            .into_iter()
+            .cloned()
+            .map(CommandDiscoveryEvidence::File)
+            .collect(),
+    )?);
+    Ok(())
+}
+
+fn is_python_test_path(path: &RepositoryPath) -> bool {
+    let name = file_name(path);
+    name.starts_with(b"test") && name.ends_with(b".py")
 }
 
 fn python_command(
@@ -628,5 +667,93 @@ mod tests {
         assert_eq!(CommandAllowlistStoreVersion::new(1)?.get(), 1);
         assert!(CommandAllowlistStoreVersion::new((i64::MAX as u64) + 1).is_err());
         Ok(())
+    }
+
+    #[test]
+    fn manifest_free_python_tests_discover_only_the_closed_unittest_command()
+    -> Result<(), Box<dyn Error>> {
+        let test = a3_domain::FileRevision::new(
+            RepositoryPath::try_from_bytes(b"tests/test_server.py".to_vec())?,
+            a3_domain::ContentHash::from_bytes([1; 32]),
+        );
+        let source = a3_domain::FileRevision::new(
+            RepositoryPath::try_from_bytes(b"server.py".to_vec())?,
+            a3_domain::ContentHash::from_bytes([2; 32]),
+        );
+        let index = published_index(vec![source, test.clone()])?;
+        let catalog =
+            DiscoverProjectCommands.execute(a3_domain::WorktreeId::from_bytes([3; 32]), &index)?;
+        assert_eq!(catalog.commands().len(), 1);
+        let command = &catalog.commands()[0];
+        assert_eq!(command.kind(), DiscoveredCommandKind::Test);
+        assert_eq!(command.executable().as_str(), "python");
+        assert_eq!(
+            command
+                .arguments()
+                .iter()
+                .map(|argument| argument.as_str())
+                .collect::<Vec<_>>(),
+            ["-B", "-m", "unittest", "discover"]
+        );
+        assert_eq!(command.evidence().len(), 1);
+        assert_eq!(command.evidence()[0].revision(), &test);
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_free_unittest_discovery_matches_the_exact_default_filename_pattern()
+    -> Result<(), Box<dyn Error>> {
+        let source = a3_domain::FileRevision::new(
+            RepositoryPath::try_from_bytes(b"server.py".to_vec())?,
+            a3_domain::ContentHash::from_bytes([6; 32]),
+        );
+        let unsupported_name = a3_domain::FileRevision::new(
+            RepositoryPath::try_from_bytes(b"tests/server_test.py".to_vec())?,
+            a3_domain::ContentHash::from_bytes([7; 32]),
+        );
+        let index = published_index(vec![source, unsupported_name])?;
+        let catalog =
+            DiscoverProjectCommands.execute(a3_domain::WorktreeId::from_bytes([8; 32]), &index)?;
+        assert!(catalog.commands().is_empty());
+        Ok(())
+    }
+
+    fn published_index(
+        files: Vec<a3_domain::FileRevision>,
+    ) -> Result<a3_domain::PublishedIndex, Box<dyn Error>> {
+        let snapshot_id = a3_domain::SnapshotId::from_bytes([4; 32]);
+        let graph = a3_domain::LinkedGraph::new(
+            snapshot_id,
+            files.clone(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )?;
+        let ranking = a3_domain::RankProjection::new(
+            snapshot_id,
+            a3_domain::RankingPolicyVersion::v1(),
+            Vec::new(),
+        )?;
+        let policy = a3_domain::ModulePolicyVersion::v1();
+        let card = a3_domain::RepositoryCard::new(
+            snapshot_id,
+            policy,
+            Vec::new(),
+            Vec::new(),
+            a3_domain::ModuleSymbolSet::empty(),
+            u32::try_from(files.len())?,
+            0,
+        )?;
+        let modules =
+            a3_domain::ModuleProjection::new(snapshot_id, policy, Vec::new(), Vec::new(), card)?;
+        let publication = a3_domain::IndexPublication::new(graph, ranking, files, modules)?;
+        let run = a3_domain::IndexRunRecord::new(
+            a3_domain::IndexRunId::from_bytes([5; 32]),
+            snapshot_id,
+            a3_domain::RankingPolicyVersion::v1(),
+            a3_domain::IndexRunSequence::new(1)?,
+            a3_domain::IndexRunStatus::Published,
+        );
+        Ok(a3_domain::PublishedIndex::new(run, publication)?)
     }
 }

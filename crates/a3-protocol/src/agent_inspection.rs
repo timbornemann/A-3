@@ -546,6 +546,8 @@ pub enum AgentVerificationMethodV1 {
     Diagnostic,
     /// Explicit user confirmation.
     UserConfirm,
+    /// Command resolution is deferred until a later current project snapshot.
+    DeferredCommand,
 }
 
 /// Stable semantic failure reason derived by the Core.

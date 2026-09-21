@@ -100,6 +100,9 @@ A^3 ermöglicht einem Entwickler, einen lokalen Coding-Agenten mit begrenztem Mo
   der Zielmodus Agent materialisiert den Core-validierten Arbeitsplan ohne Nutzerklick.
 - **FR-079** Die operative Agentenlauf-Seitenleiste DARF erst nach Task-Materialisierung erscheinen;
   Recherche und Quellen erscheinen ausschließlich beim zugehörigen Chat-Turn.
+- **FR-080** Auf einem veröffentlichten Index ohne Dateien MUSS Plan- und Agent-Recherche die
+  Bestandsaufnahme als Core-Grenze abschließen und zum Entwurf übergehen; fehlende Originale in
+  einem leeren Graph DÜRFEN den Auftrag nicht in einer Fortsetzungsschleife halten.
 
 ## Nichtfunktionale Anforderungen
 

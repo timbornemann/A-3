@@ -1265,6 +1265,114 @@ fn recovery_store_unavailable_or_corrupt_never_opens_process_boundary() -> Resul
 }
 
 #[test]
+fn current_unconfirmed_discovered_command_requires_exact_approval_before_process_start()
+-> Result<(), Box<dyn Error>> {
+    run_libsql_test(async {
+        let fixture = Fixture::new().await?;
+        let catalog =
+            DiscoverProjectCommands.execute(fixture.project.worktree().id(), &fixture.published)?;
+        let command = catalog
+            .commands()
+            .iter()
+            .find(|command| command.kind() == DiscoveredCommandKind::Test)
+            .ok_or_else(|| test_error("fixture test command was not discovered"))?;
+        let criterion_id = AcceptanceCriterionId::from_bytes(id(54));
+        let step_id = TaskStepId::from_bytes(id(55));
+        let spec = VerificationSpec::command(
+            VerificationSpecId::from_bytes(id(56)),
+            requirement("the current command must be approved once")?,
+            command.id(),
+            VerificationScope::Workspace,
+        );
+        let mut durable = DurableMutation::new(&fixture, criterion_id, step_id, spec).await?;
+        let action = AgentAction::Run(AgentRunAction::new(step_id, command.id()));
+        assert!(
+            MutationCommandSelection::requiring_approval(
+                &catalog,
+                &durable.run,
+                &durable.ledger,
+                TaskStepId::from_bytes(id(254)),
+                command.id(),
+            )
+            .is_err(),
+            "approval preparation must not bind a command to another step"
+        );
+        let selection = MutationCommandSelection::requiring_approval(
+            &catalog,
+            &durable.run,
+            &durable.ledger,
+            step_id,
+            command.id(),
+        )?;
+        let refresh = refresh(fixture.store.clone());
+        let context = DeterministicAgentContextCompiler::new(
+            CompileTaskLens::new(
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+            ),
+            &a3_workspace::WorkspaceAgentSourceReader,
+        );
+        let coordinator = WorktreeMutationCoordinator::new();
+        let patch_tool = WorkspacePatchAdapter::new();
+        let process_runner = FailingProcessRunner::default();
+        let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
+        let inspection = AgentInspectionBuffer::new();
+        inspection.activate_project(&fixture.project);
+        let approval = AgentApprovalBuffer::new();
+        approval.activate_project(&fixture.project);
+        let controller = ExecuteMutatingAgentAction::new(
+            &coordinator,
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            &inspection,
+            &approval,
+            &patch_tool,
+            &process_runner,
+            &evidence_factory,
+            &context,
+            &refresh,
+        );
+        let seed = durable.context_seed();
+        let mut index_compiler = compiler()?;
+        let outcome = controller
+            .execute(
+                &fixture.project,
+                &mut durable.run,
+                &mut durable.ledger,
+                &mut durable.ledger_version,
+                &fixture.published,
+                action,
+                Some(selection),
+                &WorkspacePolicy::unrestricted(),
+                None,
+                mutation_ids(57),
+                timestamp(20)?,
+                timestamp(100)?,
+                &seed,
+                &mut index_compiler,
+                &NoopProcessEvents,
+                &ActiveControl,
+            )
+            .await?;
+        assert!(matches!(
+            outcome,
+            MutationControllerOutcome::AwaitingApproval(_)
+        ));
+        assert_eq!(durable.run.state(), AgentControllerState::AwaitApproval);
+        assert_eq!(
+            durable.ledger.step(step_id).map(|step| step.status()),
+            Some(TaskStepStatus::AwaitingApproval)
+        );
+        assert_eq!(process_runner.calls.load(Ordering::SeqCst), 0);
+        Ok(())
+    })
+}
+
+#[test]
 fn process_failure_timeout_and_cancellation_have_explicit_dispositions()
 -> Result<(), Box<dyn Error>> {
     run_libsql_test(async {
@@ -1447,7 +1555,6 @@ fn one_worktree_lock_and_repeated_failed_run_force_replan() -> Result<(), Box<dy
         );
         let mut durable = DurableMutation::new(&fixture, criterion_id, step_id, spec).await?;
         let action = AgentAction::Run(AgentRunAction::new(step_id, command.id()));
-        let selection = MutationCommandSelection::new(&catalog, &confirmation);
         let refresh = refresh(fixture.store.clone());
         let context = DeterministicAgentContextCompiler::new(
             CompileTaskLens::new(
@@ -1498,7 +1605,7 @@ fn one_worktree_lock_and_repeated_failed_run_force_replan() -> Result<(), Box<dy
                 &mut durable.ledger_version,
                 &fixture.published,
                 action.clone(),
-                Some(selection),
+                Some(MutationCommandSelection::new(&catalog, &confirmation)),
                 &WorkspacePolicy::unrestricted(),
                 None,
                 mutation_ids(140),
@@ -1527,7 +1634,7 @@ fn one_worktree_lock_and_repeated_failed_run_force_replan() -> Result<(), Box<dy
                 &mut durable.ledger_version,
                 &fixture.published,
                 action.clone(),
-                Some(selection),
+                Some(MutationCommandSelection::new(&catalog, &confirmation)),
                 &WorkspacePolicy::unrestricted(),
                 None,
                 mutation_ids(160),
@@ -1554,7 +1661,7 @@ fn one_worktree_lock_and_repeated_failed_run_force_replan() -> Result<(), Box<dy
                 &mut durable.ledger_version,
                 &fixture.published,
                 action,
-                Some(selection),
+                Some(MutationCommandSelection::new(&catalog, &confirmation)),
                 &WorkspacePolicy::unrestricted(),
                 None,
                 mutation_ids(180),

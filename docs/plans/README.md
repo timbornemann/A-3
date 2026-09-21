@@ -18,6 +18,7 @@ Diese Pl채ne zerlegen A^3 in 체berpr체fbare vertikale Arbeitspakete. Sie sind f�
 12. [Einstellungen und Modellauswahl](11-SETTINGS_MODEL_LAYOUT.md)
 13. [Autonomer Agent-Einstieg](14-AUTONOMOUS_AGENT_START.md)
 14. [Leeres Projekt anlegen](15-CREATE_EMPTY_PROJECT.md)
+15. [Agent in leeren und bestehenden Projekten](16-AGENT-GREENFIELD-AND-EXISTING.md)
 
 ## Ausf체hrungsregeln f체r Codex
 
