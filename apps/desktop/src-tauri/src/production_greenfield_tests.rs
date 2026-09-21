@@ -397,7 +397,10 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
                     return Err("expected process approval".into());
                 };
                 assert_eq!(process.executable(), "python");
-                assert_eq!(process.arguments(), ["-B", "-m", "unittest", "discover"]);
+                assert_eq!(
+                    process.arguments(),
+                    ["-B", "-m", "unittest", "discover", "-s", "tests"]
+                );
             }
             let approval_id = a3_domain::ApprovalId::from_bytes([20 + attempt; 32]);
             let result = approve

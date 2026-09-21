@@ -48,6 +48,23 @@ const MAX_AUTOMATIC_REPLANS_PER_RUN: usize = 8;
 const MAX_REPLAN_LOCALIZATION_READS: u8 = 4;
 const APPROVAL_LIFETIME_MILLIS: u64 = 10 * 60 * 1_000;
 
+/// Closed, content-free halt class safe to project into the user conversation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentAttemptHaltReason {
+    AnchorsChanged,
+    InvalidState,
+    ProgressUnavailable,
+    RuntimeUnavailable,
+    InvalidModelAction,
+    ModelUnavailable,
+    ModelRejected,
+    ModelTimedOut,
+    ToolFailed,
+    ToolTimedOut,
+    PolicyDenied,
+    AttemptBudgetExhausted,
+}
+
 /// Narrow production capabilities used by the existing deterministic Agent harness.
 #[derive(Clone)]
 pub(crate) struct ProductionAgentRunPorts {
@@ -87,7 +104,10 @@ impl ProductionAgentRunExecutor {
         approval: Arc<a3_application::AgentApprovalBuffer>,
         reporter: Option<Arc<AgentSessionRunReporter>>,
     ) -> Result<Self, AgentRunExecutionFailure> {
-        let variables = ["PATH", "TEMP", "TMP", "TMPDIR"]
+        let mut variable_names = vec!["PATH", "TEMP", "TMP", "TMPDIR"];
+        #[cfg(windows)]
+        variable_names.push("SYSTEMROOT");
+        let variables = variable_names
             .into_iter()
             .map(|name| ProcessEnvironmentVariable::try_from_string(name.to_owned()))
             .collect::<Result<Vec<_>, _>>()
@@ -122,6 +142,7 @@ impl ProductionAgentRunExecutor {
         project: &ProjectIdentity,
         request: AgentRunExecutionRequest,
         control: &a3_application::JobContext,
+        halt_reason: &mut Option<AgentAttemptHaltReason>,
     ) -> Result<AgentRunExecutionOutcome, AgentRunExecutionFailure> {
         if control.cancellation_token().is_cancelled() {
             return Ok(AgentRunExecutionOutcome::Cancelled);
@@ -554,6 +575,7 @@ impl ProductionAgentRunExecutor {
                 }
                 AgentTurnOutcome::Executed(execution) => execution,
                 AgentTurnOutcome::Rejected(rejected) => {
+                    *halt_reason = halt_reason_for_rejected_turn(rejected.reason());
                     #[cfg(test)]
                     eprintln!(
                         "A3_AGENT_TURN_REJECTED {:?} repair={:?}",
@@ -1211,6 +1233,7 @@ impl ProductionAgentRunExecutor {
         project: &ProjectIdentity,
         task_id: TaskId,
         outcome: &Result<AgentRunExecutionOutcome, AgentRunExecutionFailure>,
+        halt_reason: Option<AgentAttemptHaltReason>,
         control: &a3_application::JobContext,
     ) {
         let Some(reporter) = &self.reporter else {
@@ -1268,7 +1291,7 @@ impl ProductionAgentRunExecutor {
             None => (None, None),
         };
         let (session_state, message) =
-            session_outcome_for_run(state, blocker.as_deref(), outcome.is_ok());
+            session_outcome_for_run(state, blocker.as_deref(), halt_reason, outcome.is_ok());
         let _reported = reporter
             .report(project, task_id, session_state, &message)
             .await;
@@ -1282,37 +1305,60 @@ mod generation_probe;
 fn session_outcome_for_run(
     state: Option<AgentControllerState>,
     blocker: Option<&str>,
+    halt_reason: Option<AgentAttemptHaltReason>,
     executor_completed: bool,
 ) -> (a3_domain::AgentSessionState, String) {
-    match (state, blocker) {
-        (Some(AgentControllerState::Done), _) => (
+    match (state, blocker, halt_reason) {
+        (Some(AgentControllerState::Done), _, _) => (
             a3_domain::AgentSessionState::Completed,
-            "Die Aufgabe ist verifiziert abgeschlossen. Änderungen und Evidence stehen im Review bereit.".to_owned(),
+            "Die Aufgabe ist verifiziert abgeschlossen. Änderungen und Prüfbelege stehen direkt im Chat bereit.".to_owned(),
         ),
-        (Some(AgentControllerState::AwaitApproval), _) => (
-            a3_domain::AgentSessionState::AwaitingApproval,
-            "Der Agent wartet auf die exakte Freigabe der im Review sichtbaren Aktion.".to_owned(),
-        ),
-        (Some(AgentControllerState::Cancelled), _) => (
+        (Some(AgentControllerState::Cancelled), _, _) => (
             a3_domain::AgentSessionState::Cancelled,
             "Der Agentenlauf wurde abgebrochen. Bereits verifizierte Auditdaten bleiben erhalten.".to_owned(),
         ),
-        (Some(AgentControllerState::Replan), _) => (
-            a3_domain::AgentSessionState::Failed,
-            "Die aktuelle Ausführung benötigt eine neue Planung. Der bisherige Lauf bleibt prüfbar.".to_owned(),
-        ),
-        (Some(AgentControllerState::Failed), Some(blocker)) if executor_completed => (
+        (Some(AgentControllerState::Failed), Some(blocker), None) if executor_completed => (
             a3_domain::AgentSessionState::AwaitingUser,
             format!(
                 "Ich brauche deine Entscheidung, bevor ich sicher weiterarbeiten kann: {}",
                 bounded_utf8(blocker, 3 * 1_024)
             ),
         ),
-        (Some(AgentControllerState::Failed), _) => (
+        (Some(AgentControllerState::Failed), _, Some(reason)) => (
             a3_domain::AgentSessionState::Failed,
-            "Der Agentenlauf wurde sicher angehalten. Details und Recovery stehen im Inspector bereit.".to_owned(),
+            halt_message(reason).to_owned(),
         ),
-        (Some(AgentControllerState::Execute | AgentControllerState::Verify), _)
+        (Some(AgentControllerState::Failed), _, None) => (
+            a3_domain::AgentSessionState::Failed,
+            "Der Agentenlauf wurde sicher angehalten. Der letzte belegte Arbeitsstand und zulässige Recovery-Schritte stehen direkt im Chat.".to_owned(),
+        ),
+        (Some(AgentControllerState::AwaitApproval), _, None) => (
+            a3_domain::AgentSessionState::AwaitingApproval,
+            "Der Agent wartet auf die exakte Freigabe der im Chat sichtbaren Aktion.".to_owned(),
+        ),
+        (Some(AgentControllerState::Replan), _, None) => (
+            a3_domain::AgentSessionState::Failed,
+            "Die aktuelle Ausführung benötigt eine neue Planung. Der bisherige Lauf bleibt prüfbar.".to_owned(),
+        ),
+        (Some(AgentControllerState::AwaitApproval | AgentControllerState::Replan), _, Some(reason)) => (
+            a3_domain::AgentSessionState::Failed,
+            halt_message(reason).to_owned(),
+        ),
+        (
+            Some(
+                AgentControllerState::Execute
+                | AgentControllerState::Verify
+                | AgentControllerState::Intake
+                | AgentControllerState::Localize
+                | AgentControllerState::Plan,
+            ),
+            _,
+            Some(reason),
+        ) => (
+            a3_domain::AgentSessionState::Failed,
+            halt_message(reason).to_owned(),
+        ),
+        (Some(AgentControllerState::Execute | AgentControllerState::Verify), _, None)
         | (
             Some(
                 AgentControllerState::Intake
@@ -1320,11 +1366,128 @@ fn session_outcome_for_run(
                 | AgentControllerState::Plan,
             ),
             _,
+            None,
         )
-        | (None, _) => (
+        | (None, _, None) => (
             a3_domain::AgentSessionState::Failed,
-            "Der Agentenlauf endete ohne verifizierten Abschluss. Details stehen im Inspector bereit.".to_owned(),
+            "Der Agentenlauf endete ohne verifizierten Abschluss. Der letzte belegte Arbeitsstand steht direkt im Chat.".to_owned(),
         ),
+        (None, _, Some(reason)) => (
+            a3_domain::AgentSessionState::Failed,
+            halt_message(reason).to_owned(),
+        ),
+    }
+}
+
+fn halt_reason_for_rejected_turn(
+    reason: AgentTurnRejectionReason,
+) -> Option<AgentAttemptHaltReason> {
+    match reason {
+        AgentTurnRejectionReason::CancelledBeforeAction
+        | AgentTurnRejectionReason::ModelFailed(a3_application::ModelProviderFailure::Cancelled)
+        | AgentTurnRejectionReason::ReadFailed(a3_application::AgentReadToolFailure::Cancelled) => {
+            None
+        }
+        AgentTurnRejectionReason::ModelFailed(
+            a3_application::ModelProviderFailure::Unavailable
+            | a3_application::ModelProviderFailure::EndpointDenied,
+        ) => Some(AgentAttemptHaltReason::ModelUnavailable),
+        AgentTurnRejectionReason::ModelFailed(a3_application::ModelProviderFailure::Rejected) => {
+            Some(AgentAttemptHaltReason::ModelRejected)
+        }
+        AgentTurnRejectionReason::ModelFailed(
+            a3_application::ModelProviderFailure::InvalidResponse,
+        )
+        | AgentTurnRejectionReason::InvalidAfterRepair
+        | AgentTurnRejectionReason::InvalidActionAfterRepair(_)
+        | AgentTurnRejectionReason::InvalidReplanAnalysisAfterRepair(_)
+        | AgentTurnRejectionReason::IncompleteModelOutput(_)
+        | AgentTurnRejectionReason::Staged(
+            a3_application::StagedActionFailure::InvalidAfterChange
+            | a3_application::StagedActionFailure::InvalidSourceWork
+            | a3_application::StagedActionFailure::SourceAlreadySupplied
+            | a3_application::StagedActionFailure::InvalidChoice
+            | a3_application::StagedActionFailure::InvalidArguments
+            | a3_application::StagedActionFailure::InvalidAction(_)
+            | a3_application::StagedActionFailure::Contract,
+        ) => Some(AgentAttemptHaltReason::InvalidModelAction),
+        AgentTurnRejectionReason::ModelFailed(a3_application::ModelProviderFailure::TimedOut)
+        | AgentTurnRejectionReason::Staged(a3_application::StagedActionFailure::Deadline) => {
+            Some(AgentAttemptHaltReason::ModelTimedOut)
+        }
+        AgentTurnRejectionReason::Staged(a3_application::StagedActionFailure::BudgetExceeded) => {
+            Some(AgentAttemptHaltReason::AttemptBudgetExhausted)
+        }
+        AgentTurnRejectionReason::StepMismatch
+        | AgentTurnRejectionReason::InvalidReadResult
+        | AgentTurnRejectionReason::Staged(a3_application::StagedActionFailure::ContextChanged) => {
+            Some(AgentAttemptHaltReason::AnchorsChanged)
+        }
+        AgentTurnRejectionReason::ReadFailed(a3_application::AgentReadToolFailure::Denied)
+        | AgentTurnRejectionReason::ReplanReadRejected(_) => {
+            Some(AgentAttemptHaltReason::PolicyDenied)
+        }
+        AgentTurnRejectionReason::ReadFailed(a3_application::AgentReadToolFailure::TimedOut) => {
+            Some(AgentAttemptHaltReason::ToolTimedOut)
+        }
+        AgentTurnRejectionReason::ReadFailed(
+            a3_application::AgentReadToolFailure::Unavailable
+            | a3_application::AgentReadToolFailure::InvalidResult,
+        ) => Some(AgentAttemptHaltReason::ToolFailed),
+    }
+}
+
+const fn halt_reason_for_execution_failure(
+    failure: AgentRunExecutionFailure,
+) -> AgentAttemptHaltReason {
+    match failure {
+        AgentRunExecutionFailure::AnchorsChanged => AgentAttemptHaltReason::AnchorsChanged,
+        AgentRunExecutionFailure::InvalidState => AgentAttemptHaltReason::InvalidState,
+        AgentRunExecutionFailure::Unavailable => AgentAttemptHaltReason::RuntimeUnavailable,
+        AgentRunExecutionFailure::ProgressUnavailable => {
+            AgentAttemptHaltReason::ProgressUnavailable
+        }
+    }
+}
+
+const fn halt_message(reason: AgentAttemptHaltReason) -> &'static str {
+    match reason {
+        AgentAttemptHaltReason::AnchorsChanged => {
+            "Der Projektstand hat sich während des Laufs geändert. A^3 hat angehalten, bevor es mit veralteten Belegen weiterarbeitet."
+        }
+        AgentAttemptHaltReason::InvalidState => {
+            "Der gespeicherte Laufzustand erlaubt keine sichere Fortsetzung. Der letzte belegte Arbeitsstand bleibt im Chat sichtbar."
+        }
+        AgentAttemptHaltReason::ProgressUnavailable => {
+            "Der Fortschritt konnte nicht zuverlässig an die laufende Aufgabe übertragen werden. A^3 hat deshalb sicher angehalten."
+        }
+        AgentAttemptHaltReason::RuntimeUnavailable => {
+            "Eine benötigte lokale Modell-, Speicher- oder Werkzeugfähigkeit war nicht verfügbar. Es wurde kein unbestätigter Erfolg angenommen."
+        }
+        AgentAttemptHaltReason::InvalidModelAction => {
+            "Das Modell hat auch nach der einmaligen Korrektur keine gültige ausführbare Aktion geliefert. A^3 hat ohne weitere Änderung angehalten."
+        }
+        AgentAttemptHaltReason::ModelUnavailable => {
+            "Das konfigurierte Modell war für diesen Arbeitsschritt nicht erreichbar oder nicht freigegeben. Der Lauf wurde ohne weitere Änderung angehalten."
+        }
+        AgentAttemptHaltReason::ModelRejected => {
+            "Das konfigurierte Modell hat die Anfrage abgelehnt. Der Lauf wurde ohne weitere Änderung angehalten."
+        }
+        AgentAttemptHaltReason::ModelTimedOut => {
+            "Die begrenzte Modellanfrage hat ihr Zeitlimit erreicht. Der Lauf wurde ohne spekulative Fortsetzung angehalten."
+        }
+        AgentAttemptHaltReason::ToolFailed => {
+            "Ein benötigtes lokales Lesewerkzeug hat kein gültiges Ergebnis geliefert. A^3 hat angehalten, statt auf unbelegte Annahmen zu bauen."
+        }
+        AgentAttemptHaltReason::ToolTimedOut => {
+            "Ein begrenzter lokaler Werkzeugaufruf hat sein Zeitlimit erreicht. Der letzte belegte Arbeitsstand bleibt erhalten."
+        }
+        AgentAttemptHaltReason::PolicyDenied => {
+            "Die Sicherheitsrichtlinie hat die benötigte Aktion nicht zugelassen. Es wurde keine Umgehung versucht."
+        }
+        AgentAttemptHaltReason::AttemptBudgetExhausted => {
+            "Das sichere Turn- oder Kontextbudget dieses Versuchs ist ausgeschöpft. A^3 hat vor einer ungebundenen Fortsetzung angehalten."
+        }
     }
 }
 
@@ -1752,8 +1915,18 @@ impl AgentRunExecutor for ProductionAgentRunExecutor {
         control: &'a a3_application::JobContext,
     ) -> AgentRunExecutionFuture<'a> {
         Box::pin(async move {
-            let outcome = self.execute_inner(project, request, control).await;
-            self.synchronize_session(project, request.task_id(), &outcome, control)
+            let mut halt_reason = None;
+            let outcome = self
+                .execute_inner(project, request, control, &mut halt_reason)
+                .await;
+            let halt_reason = halt_reason.or_else(|| {
+                outcome
+                    .as_ref()
+                    .err()
+                    .copied()
+                    .map(halt_reason_for_execution_failure)
+            });
+            self.synchronize_session(project, request.task_id(), &outcome, halt_reason, control)
                 .await;
             outcome
         })
@@ -1992,12 +2165,12 @@ mod tests {
     use super::repeated_replan_revisions;
     use super::{
         AgentAttemptControl, automatic_replan_steps, deferred_binding_steps,
-        session_outcome_for_run,
+        halt_reason_for_execution_failure, halt_reason_for_rejected_turn, session_outcome_for_run,
     };
     use a3_application::{
-        ContextCompileControl, ContextCompilePhase, JobClock, JobCompletion, JobContext,
-        JobEventKind, JobScheduler, JobSchedulerConfig, JobTimestamp, RepositoryIndexControl,
-        WorkspacePatchControl,
+        AgentRunExecutionFailure, AgentTurnRejectionReason, ContextCompileControl,
+        ContextCompilePhase, JobClock, JobCompletion, JobContext, JobEventKind, JobScheduler,
+        JobSchedulerConfig, JobTimestamp, RepositoryIndexControl, WorkspacePatchControl,
     };
     use a3_domain::{
         AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentRunId,
@@ -2281,21 +2454,67 @@ mod tests {
         let (state, message) = session_outcome_for_run(
             Some(a3_domain::AgentControllerState::Failed),
             Some("Soll die bestehende API kompatibel bleiben oder darf sie ersetzt werden?"),
+            None,
             true,
         );
         assert_eq!(state, a3_domain::AgentSessionState::AwaitingUser);
         assert!(message.contains("Soll die bestehende API kompatibel bleiben"));
 
-        let (state, _) =
-            session_outcome_for_run(Some(a3_domain::AgentControllerState::Failed), None, true);
+        let (state, _) = session_outcome_for_run(
+            Some(a3_domain::AgentControllerState::Failed),
+            None,
+            None,
+            true,
+        );
         assert_eq!(state, a3_domain::AgentSessionState::Failed);
 
         let (state, _) = session_outcome_for_run(
             Some(a3_domain::AgentControllerState::Failed),
             Some("automatic replan limit exhausted"),
+            None,
             false,
         );
         assert_eq!(state, a3_domain::AgentSessionState::Failed);
+    }
+
+    #[test]
+    fn rejected_model_action_surfaces_a_concrete_safe_chat_reason() {
+        let reason = halt_reason_for_rejected_turn(AgentTurnRejectionReason::InvalidAfterRepair);
+        let (state, message) = session_outcome_for_run(
+            Some(a3_domain::AgentControllerState::Failed),
+            None,
+            reason,
+            true,
+        );
+
+        assert_eq!(state, a3_domain::AgentSessionState::Failed);
+        assert!(message.contains("keine gültige ausführbare Aktion"));
+        assert!(!message.contains("Inspector"));
+    }
+
+    #[test]
+    fn executor_failures_keep_distinct_safe_reasons_while_a_run_is_active() {
+        let cases = [
+            (AgentRunExecutionFailure::AnchorsChanged, "Projektstand"),
+            (AgentRunExecutionFailure::InvalidState, "Laufzustand"),
+            (
+                AgentRunExecutionFailure::Unavailable,
+                "lokale Modell-, Speicher- oder Werkzeugfähigkeit",
+            ),
+            (AgentRunExecutionFailure::ProgressUnavailable, "Fortschritt"),
+        ];
+
+        for (failure, expected) in cases {
+            let (state, message) = session_outcome_for_run(
+                Some(a3_domain::AgentControllerState::Execute),
+                None,
+                Some(halt_reason_for_execution_failure(failure)),
+                false,
+            );
+            assert_eq!(state, a3_domain::AgentSessionState::Failed);
+            assert!(message.contains(expected), "message was {message:?}");
+            assert!(!message.contains("Inspector"));
+        }
     }
 
     #[test]

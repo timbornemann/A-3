@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import AgentWorkspace from './AgentWorkspace.svelte';
 import * as sessionApi from './agent-session';
 import type { AgentActivityResponseV1 } from './agent-activity';
+import { patchApprovalResponse } from './agent-approval.fixture';
 import type {
   AgentSessionControlActionV1,
   AgentSessionResponseV1,
@@ -397,7 +398,7 @@ describe('AgentWorkspace', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
-  it('uses bounded keyboard resizing for both workspace separators', async () => {
+  it('uses bounded keyboard resizing for the conversation history', async () => {
     vi.spyOn(sessionApi, 'updateAgentWorkspaceLayout').mockImplementation(
       async (current, layout) => ({ ...current, ...layout }),
     );
@@ -415,21 +416,16 @@ describe('AgentWorkspace', () => {
       }),
     });
     const history = await screen.findByRole('separator', { name: 'Verlaufbreite ändern' });
-    const inspector = await screen.findByRole('separator', { name: 'Inspectorbreite ändern' });
-    for (const [separator, min, max, arrow] of [
-      [history, '220', '360', 'ArrowRight'],
-      [inspector, '320', '640', 'ArrowLeft'],
-    ] as const) {
-      expect(separator.getAttribute('tabindex')).toBe('0');
-      expect(separator.getAttribute('aria-orientation')).toBe('vertical');
-      await fireEvent.keyDown(separator, { key: 'Home' });
-      expect(separator.getAttribute('aria-valuenow')).toBe(min);
-      await fireEvent.keyDown(separator, { key: arrow });
-      expect(separator.getAttribute('aria-valuenow')).toBe(String(Number(min) + 16));
-      await fireEvent.keyDown(separator, { key: 'End' });
-      await fireEvent.keyDown(separator, { key: arrow });
-      expect(separator.getAttribute('aria-valuenow')).toBe(max);
-    }
+    expect(history.getAttribute('tabindex')).toBe('0');
+    expect(history.getAttribute('aria-orientation')).toBe('vertical');
+    await fireEvent.keyDown(history, { key: 'Home' });
+    expect(history.getAttribute('aria-valuenow')).toBe('220');
+    await fireEvent.keyDown(history, { key: 'ArrowRight' });
+    expect(history.getAttribute('aria-valuenow')).toBe('236');
+    await fireEvent.keyDown(history, { key: 'End' });
+    await fireEvent.keyDown(history, { key: 'ArrowRight' });
+    expect(history.getAttribute('aria-valuenow')).toBe('360');
+    expect(screen.queryByRole('separator', { name: 'Inspectorbreite ändern' })).toBeNull();
   });
 
   it('ends pointer resizing on cancellation and releases all listeners on unmount', async () => {
@@ -1399,20 +1395,107 @@ describe('AgentWorkspace', () => {
       workPlanLoader: vi.fn(async () => adaptiveWorkPlan()),
     });
 
-    expect(await screen.findByText('Änderungen werden umgesetzt')).toBeTruthy();
-    expect(screen.getByRole('complementary', { name: 'Agentenlauf' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Fortschritt' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Änderungen' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Review' })).toBeTruthy();
-    expect(screen.getByText('Umsetzung vorbereitet')).toBeTruthy();
-    expect(screen.getByText('Sichere Aktion ausgeführt')).toBeTruthy();
-    expect(screen.getByRole('heading', { name: '1 von 3 Schritten erledigt' })).toBeTruthy();
-    expect(screen.getByText('Serializer ergänzen und Adapter anbinden')).toBeTruthy();
-    expect(screen.getByText('Integrationstests ausführen')).toBeTruthy();
-    expect(screen.getByText(/Nach einem neuen Befund angepasst/)).toBeTruthy();
+    const execution = await screen.findByRole('article', {
+      name: 'Änderungen werden umgesetzt',
+    });
+    expect(screen.queryByRole('complementary', { name: 'Agentenlauf' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Fortschritt' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Änderungen' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Review' })).toBeNull();
+    expect(
+      within(execution).getAllByRole('heading', { name: 'Änderungen werden umgesetzt' }).length,
+    ).toBe(2);
+    expect(within(execution).getByRole('region', { name: 'Dateien und Prüfungen' })).toBeTruthy();
+    expect(within(execution).getByRole('heading', { name: 'Änderungen & Prüfungen' })).toBeTruthy();
+    expect(within(execution).getByText('Umsetzung vorbereitet')).toBeTruthy();
+    expect(within(execution).getByText('Sichere Aktion ausgeführt')).toBeTruthy();
+    expect(
+      within(execution).getByRole('heading', { name: '1 von 3 Schritten erledigt' }),
+    ).toBeTruthy();
+    expect(within(execution).getAllByText('Serializer ergänzen und Adapter anbinden').length).toBe(
+      2,
+    );
+    expect(within(execution).getByText('Integrationstests ausführen')).toBeTruthy();
+    expect(within(execution).getByText(/Nach einem neuen Befund angepasst/)).toBeTruthy();
     expect(screen.queryByText('controllerDecision')).toBeNull();
     expect(screen.queryByText('policyDecision')).toBeNull();
     expect(screen.queryByText(/dddddddd/u)).toBeNull();
     expect(screen.queryByText(/eeeeeeee/u)).toBeNull();
+  });
+
+  it('shows a concrete terminal failure inside the conversation instead of only in history', async () => {
+    const response = activeAgentSession();
+    const activity = activeAgentActivity();
+    if (response.result.status !== 'available' || activity.result.status !== 'available') {
+      throw new Error('available fixtures required');
+    }
+    response.result.session.summary.state = 'failed';
+    const summary = response.result.session.summary;
+    const run = activity.result.activity.run;
+    if (!run) throw new Error('run fixture required');
+    run.state = 'failed';
+    run.terminal = true;
+    run.timeline.push({
+      code: 'invalidModelOutput',
+      event: { kind: 'modelInteraction', turn: null },
+      occurredAtUnixMillis: '102',
+      outcome: 'failed',
+      sequence: '3',
+      snapshotId: 'c'.repeat(64),
+    });
+
+    render(AgentWorkspace, {
+      activeProject: true,
+      activityLoader: async () => activity,
+      pollIntervalMs: 60_000,
+      sessionLoader: async () => response,
+      sessionsLoader: async () => ({
+        protocolVersion: 1,
+        result: {
+          nextCursor: null,
+          sessions: [summary],
+          status: 'available',
+        },
+      }),
+      workPlanLoader: async () => adaptiveWorkPlan(),
+    });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Warum der Lauf angehalten wurde');
+    expect(alert.textContent).toContain('keine gültige, sicher ausführbare Aktion');
+    expect(screen.queryByRole('complementary', { name: 'Agentenlauf' })).toBeNull();
+  });
+
+  it('places exact action approval inside the conversation', async () => {
+    const response = activeAgentSession();
+    const activity = activeAgentActivity();
+    if (response.result.status !== 'available' || activity.result.status !== 'available') {
+      throw new Error('available fixtures required');
+    }
+    response.result.session.summary.state = 'awaitingApproval';
+    const summary = response.result.session.summary;
+    if (!activity.result.activity.run) throw new Error('run fixture required');
+    activity.result.activity.run.state = 'awaitApproval';
+
+    render(AgentWorkspace, {
+      activeProject: true,
+      activityLoader: async () => activity,
+      approvalLoader: async () => patchApprovalResponse(),
+      pollIntervalMs: 60_000,
+      sessionLoader: async () => response,
+      sessionsLoader: async () => ({
+        protocolVersion: 1,
+        result: {
+          nextCursor: null,
+          sessions: [summary],
+          status: 'available',
+        },
+      }),
+      workPlanLoader: async () => adaptiveWorkPlan(),
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Aktion freigeben' })).toBeTruthy();
+    expect(screen.getByRole('radio', { name: 'Diese Aktion einmal erlauben' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Review' })).toBeNull();
   });
 });

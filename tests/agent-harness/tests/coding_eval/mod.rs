@@ -825,20 +825,26 @@ async fn advance(
 fn process_environment() -> Result<ProcessHostEnvironment, Box<dyn Error>> {
     let ambient_path = std::env::var_os("PATH").ok_or_else(|| test_error("PATH is unavailable"))?;
     let temporary = OsString::from(std::env::temp_dir());
-    let values = [
+    let mut values = vec![
         ("PATH", ambient_path),
         ("TEMP", temporary.clone()),
         ("TMP", temporary.clone()),
         ("TMPDIR", temporary),
-    ]
-    .into_iter()
-    .map(|(name, value)| {
-        Ok((
-            ProcessEnvironmentVariable::try_from_string(name.to_owned())?,
-            value,
-        ))
-    })
-    .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    ];
+    #[cfg(windows)]
+    values.push((
+        "SYSTEMROOT",
+        std::env::var_os("SYSTEMROOT").ok_or_else(|| test_error("SYSTEMROOT is unavailable"))?,
+    ));
+    let values = values
+        .into_iter()
+        .map(|(name, value)| {
+            Ok((
+                ProcessEnvironmentVariable::try_from_string(name.to_owned())?,
+                value,
+            ))
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
     Ok(ProcessHostEnvironment::new(values)?)
 }
 

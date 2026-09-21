@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CURRENT_PROTOCOL_VERSION } from './health';
-import { createProject, openProject, parseOpenProjectResponseV1, type OpenProjectResponseV1 } from './project';
+import {
+  createProject,
+  openProject,
+  parseOpenProjectResponseV1,
+  type OpenProjectResponseV1,
+} from './project';
 
 const openedResponse: OpenProjectResponseV1 = {
   protocolVersion: CURRENT_PROTOCOL_VERSION,

@@ -84,7 +84,12 @@
     ModuleRuntimeMapQueryV1,
     ModuleRuntimeMapResponseV1,
   } from './lib/module-runtime';
-  import { createProject, openProject, type GitHeadV1, type OpenProjectResponseV1 } from './lib/project';
+  import {
+    createProject,
+    openProject,
+    type GitHeadV1,
+    type OpenProjectResponseV1,
+  } from './lib/project';
   import {
     activateCatalogProject,
     queryProjectCatalog,
@@ -736,9 +741,7 @@
     await selectProject(projectCreator);
   }
 
-  async function selectProject(
-    opener: () => Promise<OpenProjectResponseV1>,
-  ): Promise<void> {
+  async function selectProject(opener: () => Promise<OpenProjectResponseV1>): Promise<void> {
     projectDialogOpen = false;
     projectView = { kind: 'opening' };
     try {

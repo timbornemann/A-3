@@ -115,7 +115,10 @@ impl DiscoveredCommand {
             .map(ProcessArgument::try_from_string)
             .collect::<Result<Vec<_>, _>>()
             .map_err(DiscoveredCommandError::Argument)?;
-        let environment_allowlist = ["PATH", "TEMP", "TMP", "TMPDIR"]
+        let mut environment_names = vec!["PATH", "TEMP", "TMP", "TMPDIR"];
+        #[cfg(windows)]
+        environment_names.push("SYSTEMROOT");
+        let environment_allowlist = environment_names
             .into_iter()
             .map(|name| {
                 ProcessEnvironmentVariable::try_from_string(name.to_owned())
@@ -755,14 +758,15 @@ mod tests {
         )?;
         let preview = catalog.preview(AgentRunId::from_bytes([3; 32]), command_id)?;
         assert_eq!(preview.plan_binding(), ProcessPlanBinding::Unbound);
-        assert_eq!(
-            preview
-                .environment_allowlist()
-                .iter()
-                .map(ProcessEnvironmentVariable::as_str)
-                .collect::<Vec<_>>(),
-            ["PATH", "TEMP", "TMP", "TMPDIR"]
-        );
+        let names = preview
+            .environment_allowlist()
+            .iter()
+            .map(ProcessEnvironmentVariable::as_str)
+            .collect::<Vec<_>>();
+        #[cfg(windows)]
+        assert_eq!(names, ["PATH", "SYSTEMROOT", "TEMP", "TMP", "TMPDIR"]);
+        #[cfg(not(windows))]
+        assert_eq!(names, ["PATH", "TEMP", "TMP", "TMPDIR"]);
 
         let allowlist = ProjectCommandAllowlist::confirm(
             &catalog,

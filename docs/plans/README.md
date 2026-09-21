@@ -19,6 +19,7 @@ Diese Pl채ne zerlegen A^3 in 체berpr체fbare vertikale Arbeitspakete. Sie sind f�
 13. [Autonomer Agent-Einstieg](14-AUTONOMOUS_AGENT_START.md)
 14. [Leeres Projekt anlegen](15-CREATE_EMPTY_PROJECT.md)
 15. [Agent in leeren und bestehenden Projekten](16-AGENT-GREENFIELD-AND-EXISTING.md)
+16. [Tats채chliche Agentenausf체hrung im Chat](17-CHAT-AGENT-EXECUTION.md)
 
 ## Ausf체hrungsregeln f체r Codex
 

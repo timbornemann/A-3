@@ -25,8 +25,8 @@ use a3_domain::{
     MutationApplicationState, MutationReconciliation, PatchAction, PatchChangeSet, PolicyDecision,
     PolicyDecisionId, PolicyDecisionOutcome, PolicyEvaluationTiming,
     PreparedDiscoveredCommandApproval, ProcessOutputRedaction, ProcessRunResult,
-    ProcessTermination, ProjectCommandCatalog, ProjectIdentity, PublishedIndex, RunEventCode,
-    RunEventId, RunEventKind, RunEventOutcome, RunEventPayload, RunEventRedaction,
+    ProcessTermination, ProjectCommandCatalog, ProjectIdentity, PublishedIndex, RepositoryPath,
+    RunEventCode, RunEventId, RunEventKind, RunEventOutcome, RunEventPayload, RunEventRedaction,
     RunEventRedactionSource, RunEventSubject, SnapshotId, StepVerificationId, TaskEvidenceId,
     TaskLedger, TaskLedgerTimestamp, TaskLensSeed, TaskStepBlockingReason, TaskStepFailureReason,
     TaskStepId, TaskStepResultSummary, TaskStepStatus, TestCaseEvidence, TestCaseName,
@@ -2264,13 +2264,18 @@ fn prepare_action(
 
 fn verification_adapter_for(command: &a3_domain::DiscoveredCommand) -> ProcessVerificationAdapter {
     const PYTHON_UNITTEST_ARGUMENTS: [&str; 4] = ["-B", "-m", "unittest", "discover"];
+    let arguments = command
+        .arguments()
+        .iter()
+        .map(|argument| argument.as_str())
+        .collect::<Vec<_>>();
+    let default_discovery = arguments == PYTHON_UNITTEST_ARGUMENTS;
+    let rooted_discovery = arguments.len() == 6
+        && arguments[..5] == ["-B", "-m", "unittest", "discover", "-s"]
+        && RepositoryPath::try_from_bytes(arguments[5].as_bytes().to_vec()).is_ok();
     if command.kind() == DiscoveredCommandKind::Test
         && command.executable().as_str() == "python"
-        && command
-            .arguments()
-            .iter()
-            .map(|argument| argument.as_str())
-            .eq(PYTHON_UNITTEST_ARGUMENTS)
+        && (default_discovery || rooted_discovery)
     {
         ProcessVerificationAdapter::PythonUnittest
     } else {

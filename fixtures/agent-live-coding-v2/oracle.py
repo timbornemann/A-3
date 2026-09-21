@@ -6,7 +6,12 @@ This is supplementary evaluation, not evidence injected into the agent ledger.
 """
 
 import importlib
+import os
+import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 
 
 def check(case: str, root: str) -> None:
@@ -15,6 +20,55 @@ def check(case: str, root: str) -> None:
         increment = importlib.import_module("increment").increment
         for value in [-10**18, -100, -2, -1, 0, 1, 2, 40, 41, 42, 100, 10**18]:
             assert increment(value) == value + 1
+        return
+    if case == "greenfield-python-server":
+        server = subprocess.Popen(
+            [sys.executable, "-B", os.path.join(root, "server.py")],
+            cwd=root,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            for _ in range(50):
+                try:
+                    with urllib.request.urlopen("http://127.0.0.1:8765/", timeout=0.2) as response:
+                        assert response.status == 200
+                        assert response.read() == b"Hello, world!\n"
+                        assert response.headers.get_content_type() == "text/plain"
+                        assert response.headers.get_content_charset() == "utf-8"
+                    break
+                except (OSError, urllib.error.URLError):
+                    assert server.poll() is None
+                    time.sleep(0.1)
+            else:
+                raise AssertionError("server did not become ready")
+
+            for path in ["/missing", "/health", "/index.html"]:
+                try:
+                    urllib.request.urlopen(f"http://127.0.0.1:8765{path}", timeout=0.5)
+                except urllib.error.HTTPError as error:
+                    assert error.code == 404
+                else:
+                    raise AssertionError("unknown path did not return 404")
+            for method in ["POST", "PUT", "DELETE", "PATCH"]:
+                request = urllib.request.Request(
+                    "http://127.0.0.1:8765/", method=method, data=b""
+                )
+                try:
+                    urllib.request.urlopen(request, timeout=0.5)
+                except urllib.error.HTTPError as error:
+                    assert error.code == 405
+                    assert error.headers["Allow"] == "GET"
+                else:
+                    raise AssertionError("unsupported method did not return 405")
+        finally:
+            server.terminate()
+            try:
+                server.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait(timeout=3)
         return
     if case != "two-module-change":
         raise ValueError("unknown closed live coding case")

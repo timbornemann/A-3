@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from 'svelte';
-  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+  import { SvelteMap } from 'svelte/reactivity';
   import {
     controlAgentSession,
     controlAgentSessionQueue,
@@ -131,8 +131,6 @@
     | { kind: 'available'; session: AgentSessionV1 }
     | { kind: 'missing' }
     | { kind: 'error' };
-  type InspectorTab = 'progress' | 'changes' | 'review';
-
   let {
     activeProject,
     activityLoader = queryAgentActivity,
@@ -183,8 +181,6 @@
   let renameSaving = $state(false);
   let resizeCleanup: (() => void) | null = null;
   let historyOpen = $state(true);
-  let inspectorOpen = $state(true);
-  let inspectorTab = $state<InspectorTab>('progress');
   let preferences = $state<UiPreferencesV1>({
     inspectorCollapsed: false,
     inspectorWidth: 400,
@@ -220,7 +216,6 @@
   let followFrame: number | null = null;
   let manualScrollIntent = false;
   let previousScrollTop = 0;
-  const autoOpenedAgentTasks = new SvelteSet<string>();
 
   const CONVERSATION_END_TOLERANCE_PX = 12;
 
@@ -253,7 +248,6 @@
       : researchDepth,
   );
   const activeTaskId = $derived(selectedSession?.activeTaskId ?? null);
-  const agentSidebarVisible = $derived(activeTaskId !== null);
   const latestResearchSequence = $derived(
     selectedSession ? latestUserSequence(selectedSession.entries) : null,
   );
@@ -381,13 +375,6 @@
   });
 
   $effect(() => {
-    const taskId = activeTaskId;
-    if (!taskId || autoOpenedAgentTasks.has(taskId)) return;
-    autoOpenedAgentTasks.add(taskId);
-    inspectorOpen = true;
-  });
-
-  $effect(() => {
     const sessionId = pollingSessionId;
     if (!sessionId) return;
     let stopped = false;
@@ -433,14 +420,6 @@
       event.preventDefault();
       sessionMenuOpen = false;
       sessionMenuTrigger?.focus();
-    } else if (
-      agentSidebarVisible &&
-      inspectorOpen &&
-      (mediaMatches('(max-width: 1100px)', false) ||
-        workspaceElement?.querySelector('.inspector')?.contains(document.activeElement))
-    ) {
-      event.preventDefault();
-      void toggleInspector();
     } else if (
       historyOpen &&
       (mediaMatches('(max-width: 760px)', false) ||
@@ -551,18 +530,14 @@
 
   $effect(() => {
     if (typeof window.matchMedia !== 'function') return;
-    const inspectorDrawer = window.matchMedia('(max-width: 1100px)');
     const historyDrawer = window.matchMedia('(max-width: 760px)');
     const adaptPanes = (): void => {
       const saved = untrack(() => preferences);
-      inspectorOpen = inspectorDrawer.matches ? false : !saved.inspectorCollapsed;
       historyOpen = historyDrawer.matches ? false : !saved.sessionRailCollapsed;
     };
     adaptPanes();
-    inspectorDrawer.addEventListener('change', adaptPanes);
     historyDrawer.addEventListener('change', adaptPanes);
     return () => {
-      inspectorDrawer.removeEventListener('change', adaptPanes);
       historyDrawer.removeEventListener('change', adaptPanes);
     };
   });
@@ -600,7 +575,6 @@
       const next = await queryUiPreferences();
       preferences = next;
       historyOpen = mediaMatches('(min-width: 761px)', true) && !next.sessionRailCollapsed;
-      inspectorOpen = mediaMatches('(min-width: 1101px)', true) && !next.inspectorCollapsed;
     } catch {
       // Valid defaults remain usable when nonessential layout persistence is unavailable.
     }
@@ -1205,50 +1179,32 @@
       ?.focus();
   }
 
-  async function toggleInspector(): Promise<void> {
-    inspectorOpen = !inspectorOpen;
-    void persistLayout();
-    await tick();
-    workspaceElement
-      ?.querySelector<HTMLButtonElement>(
-        inspectorOpen ? '.inspector-header button' : '.inspector-toggle',
-      )
-      ?.focus();
+  function setHistoryWidth(width: number): void {
+    preferences = { ...preferences, sessionRailWidth: Math.max(220, Math.min(360, width)) };
   }
 
-  function setPaneWidth(pane: 'history' | 'inspector', width: number): void {
-    preferences =
-      pane === 'history'
-        ? { ...preferences, sessionRailWidth: Math.max(220, Math.min(360, width)) }
-        : { ...preferences, inspectorWidth: Math.max(320, Math.min(640, width)) };
-  }
-
-  function resizeWithKeyboard(event: KeyboardEvent, pane: 'history' | 'inspector'): void {
+  function resizeWithKeyboard(event: KeyboardEvent): void {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
-    const width = pane === 'history' ? preferences.sessionRailWidth : preferences.inspectorWidth;
-    const direction = pane === 'history' ? 1 : -1;
-    setPaneWidth(
-      pane,
+    setHistoryWidth(
       event.key === 'Home'
         ? 0
         : event.key === 'End'
-          ? 640
-          : width + (event.key === 'ArrowRight' ? 16 : -16) * direction,
+          ? 360
+          : preferences.sessionRailWidth + (event.key === 'ArrowRight' ? 16 : -16),
     );
     void persistLayout();
   }
 
-  function beginResize(event: PointerEvent, pane: 'history' | 'inspector'): void {
+  function beginResize(event: PointerEvent): void {
     if (event.button !== 0) return;
     event.preventDefault();
     resizeCleanup?.();
     const startX = event.clientX;
-    const startWidth =
-      pane === 'history' ? preferences.sessionRailWidth : preferences.inspectorWidth;
+    const startWidth = preferences.sessionRailWidth;
     const move = (moveEvent: PointerEvent): void => {
       const delta = moveEvent.clientX - startX;
-      setPaneWidth(pane, startWidth + (pane === 'history' ? delta : -delta));
+      setHistoryWidth(startWidth + delta);
     };
     const cleanup = (): void => {
       window.removeEventListener('pointermove', move);
@@ -1268,7 +1224,7 @@
 
   async function persistLayout(): Promise<void> {
     const layout = {
-      inspectorCollapsed: !inspectorOpen,
+      inspectorCollapsed: true,
       inspectorWidth: preferences.inspectorWidth,
       sessionRailCollapsed: !historyOpen,
       sessionRailWidth: preferences.sessionRailWidth,
@@ -1372,20 +1328,19 @@
   }
 
   function activityEventFeedback(item: AgentActivityEventV1): string {
-    if (item.outcome === 'failed') return 'Fehlgeschlagen – der Arbeitsstand bleibt erhalten.';
-    if (item.outcome === 'denied') return 'Nicht erlaubt – es wurde nichts ausgeführt.';
-    if (item.outcome === 'cancelled') return 'Abgebrochen – es folgen keine weiteren Aktionen.';
     switch (item.code) {
       case 'timeout':
         return 'Das Zeitlimit wurde erreicht.';
       case 'invalidModelOutput':
-        return 'Der Vorschlag war nicht sicher ausführbar.';
+        return 'Das Modell hat keine gültige, sicher ausführbare Aktion geliefert.';
       case 'toolFailure':
         return 'Die Aktion konnte nicht sicher abgeschlossen werden.';
       case 'verificationFailure':
         return 'Die Prüfung hat noch offene Probleme gefunden.';
       case 'policyDecision':
-        return 'Die Sicherheitsregeln wurden vor der Ausführung geprüft.';
+        return item.outcome === 'denied'
+          ? 'Die Sicherheitsrichtlinie hat diese Aktion nicht zugelassen.'
+          : 'Die Sicherheitsregeln wurden vor der Ausführung geprüft.';
       case 'stateRecovered':
         return 'Der letzte sichere Arbeitsstand wurde wiederhergestellt.';
       case 'cancellation':
@@ -1393,8 +1348,16 @@
       case 'userRequest':
         return 'Aus deiner bestätigten Aufgabe abgeleitet.';
       case 'controllerDecision':
+        if (item.outcome === 'failed') {
+          return 'Der sichere Ablaufcontroller konnte diesen Schritt nicht fortsetzen.';
+        }
         return 'Vom sicheren Ablaufcontroller bestätigt.';
       case 'none':
+        if (item.outcome === 'failed') return 'Fehlgeschlagen – der Arbeitsstand bleibt erhalten.';
+        if (item.outcome === 'denied') return 'Nicht erlaubt – es wurde nichts ausgeführt.';
+        if (item.outcome === 'cancelled') {
+          return 'Abgebrochen – es folgen keine weiteren Aktionen.';
+        }
         return item.outcome === 'succeeded' ? 'Erledigt.' : 'Wird verarbeitet.';
     }
   }
@@ -1408,6 +1371,23 @@
     if (item.outcome === 'cancelled') return 'cancelled';
     if (!terminal && item.sequence === latestSequence) return 'active';
     return 'done';
+  }
+
+  function executionHaltMessage(value: AgentActivityV1 | null): string {
+    const blocker = value?.blockers[0]?.reason;
+    const timeline = value?.run?.timeline ?? [];
+    for (let index = timeline.length - 1; index >= 0; index -= 1) {
+      const event = timeline[index];
+      if (!event) continue;
+      if (event.outcome === 'failed' || event.outcome === 'denied') {
+        if (blocker && (event.code === 'controllerDecision' || event.code === 'none')) {
+          return blocker;
+        }
+        return activityEventFeedback(event);
+      }
+    }
+    if (blocker) return blocker;
+    return 'Der Lauf wurde sicher angehalten. Der letzte belegte Arbeitsstand bleibt sichtbar.';
   }
 
   function relativeTime(value: string): string {
@@ -1430,8 +1410,7 @@
   class="agent-workspace"
   bind:this={workspaceElement}
   class:history-collapsed={!historyOpen}
-  class:inspector-collapsed={!agentSidebarVisible || !inspectorOpen}
-  style={`--history-width:${preferences.sessionRailWidth}px;--inspector-width:${preferences.inspectorWidth}px`}
+  style={`--history-width:${preferences.sessionRailWidth}px`}
   aria-label="Agent Workspace"
 >
   {#if !activeProject}
@@ -1520,9 +1499,9 @@
         aria-valuemin={220}
         aria-valuemax={360}
         aria-valuenow={preferences.sessionRailWidth}
-        onkeydown={(event) => resizeWithKeyboard(event, 'history')}
+        onkeydown={resizeWithKeyboard}
         aria-label="Verlaufbreite ändern"
-        onpointerdown={(event) => beginResize(event, 'history')}
+        onpointerdown={beginResize}
       ></div>{/if}
 
     <section class="conversation" aria-label="Agent-Chat">
@@ -1588,17 +1567,6 @@
                   onclick={() => void applySessionAction({ kind: 'cancel' })}>Abbrechen</button
                 >
               </div>
-            {/if}
-            {#if activeTaskId}
-              <button
-                class="icon-button inspector-toggle"
-                type="button"
-                onclick={toggleInspector}
-                aria-controls={`${workspaceId}-inspector`}
-                aria-expanded={inspectorOpen}
-                aria-label={inspectorOpen ? 'Agentenlauf einklappen' : 'Agentenlauf öffnen'}
-                >◫</button
-              >
             {/if}
             <div class="session-menu" bind:this={sessionMenuElement}>
               <button
@@ -1816,6 +1784,180 @@
                 {/if}
               </div>
             {/each}
+            {#if activeTaskId}
+              {@const visibleTaskId = activeTaskId}
+              {@const completedSteps =
+                workPlan?.status === 'available'
+                  ? workPlan.steps.filter((step) => step.status === 'completed').length
+                  : 0}
+              {@const currentStep =
+                workPlan?.status === 'available'
+                  ? workPlan.steps.find((step) =>
+                      ['inProgress', 'verifying', 'awaitingApproval', 'blocked', 'ready'].includes(
+                        step.status,
+                      ),
+                    )
+                  : null}
+              {@const remainingSteps =
+                workPlan?.status === 'available'
+                  ? workPlan.steps.filter((step) => step.status !== 'completed').length
+                  : 0}
+              {@const runState = activity?.run?.state ?? null}
+              <article
+                class="execution-card"
+                class:failed={runState === 'failed'}
+                class:completed={runState === 'done'}
+                aria-labelledby={`${workspaceId}-execution-heading`}
+              >
+                <header class="execution-heading">
+                  <div>
+                    <p class="section-label">
+                      {runState === 'done'
+                        ? 'Finaler Review'
+                        : runState === 'failed'
+                          ? 'Sicherer Haltepunkt'
+                          : 'Live-Ausführung'}
+                    </p>
+                    <h3 id={`${workspaceId}-execution-heading`}>
+                      {runState ? controllerStateLabel(runState) : 'Agentenlauf wird vorbereitet'}
+                    </h3>
+                  </div>
+                  <span class="execution-state"
+                    >{stateLabel(selectedSummary?.state ?? 'draft')}</span
+                  >
+                </header>
+
+                {#if workPlan?.status === 'available'}
+                  <div class="execution-focus">
+                    <span>Aktuelle Aufgabe</span>
+                    <strong>{currentStep?.intendedOutcome ?? workPlan.task.objective}</strong>
+                    <small>
+                      {remainingSteps === 0
+                        ? 'Alle geplanten Schritte sind abgeschlossen.'
+                        : `${remainingSteps} Schritt${remainingSteps === 1 ? '' : 'e'} verbleiben.`}
+                    </small>
+                  </div>
+                {/if}
+
+                {#if runState === 'failed'}
+                  <div class="execution-alert" role="alert">
+                    <strong>Warum der Lauf angehalten wurde</strong>
+                    <p>{executionHaltMessage(activity)}</p>
+                  </div>
+                {:else if runState === 'done'}
+                  <div class="execution-success" role="status">
+                    <strong>Aufgabe verifiziert abgeschlossen</strong>
+                    <p>Änderungen und Prüfungen sind unten gemeinsam nachvollziehbar.</p>
+                  </div>
+                {/if}
+
+                {#if workPlanLoading && workPlan === null}
+                  <p role="status">Arbeitsplan wird geladen …</p>
+                {:else if workPlan?.status === 'available'}
+                  <section class="agent-work-plan" aria-labelledby="agent-work-plan-heading">
+                    <header>
+                      <div>
+                        <p class="section-label">
+                          Arbeitsplan · Revision {workPlan.ledgerRevision}
+                        </p>
+                        <h3 id="agent-work-plan-heading">
+                          {completedSteps} von {workPlan.steps.length} Schritten erledigt
+                        </h3>
+                      </div>
+                      <span>{remainingSteps} offen</span>
+                    </header>
+                    {#if workPlan.ledgerRevision > 1}
+                      <p class="adaptive-plan-note">
+                        Nach einem neuen Befund angepasst; bestätigte Arbeit bleibt erhalten.
+                      </p>
+                    {/if}
+                    <ol>
+                      {#each workPlan.steps as step, index (step.stepId)}
+                        <li
+                          class:active={step.status === 'inProgress' ||
+                            step.status === 'verifying' ||
+                            step.status === 'awaitingApproval'}
+                        >
+                          <span class="todo-marker" aria-hidden="true">
+                            {step.status === 'completed' ? '✓' : index + 1}
+                          </span>
+                          <div>
+                            <strong>{step.intendedOutcome}</strong>
+                            <small>{workPlanStepStatus(step.status)}</small>
+                          </div>
+                        </li>
+                      {/each}
+                    </ol>
+                  </section>
+                {/if}
+
+                <section class="execution-activity" aria-labelledby="execution-activity-heading">
+                  <div class="run-summary">
+                    <p class="section-label">Vorgehen und sichere Entscheidungen</p>
+                    <h3 id="execution-activity-heading">
+                      {activity?.run
+                        ? controllerStateLabel(activity.run.state)
+                        : 'Noch keine Run-Aktivität'}
+                    </h3>
+                    <p>
+                      Sichtbar sind Controllerentscheidungen und Werkzeugresultate, keine versteckte
+                      Modellgedankenkette.
+                    </p>
+                  </div>
+                  {#if activityLoading && activity === null}
+                    <p role="status">Aktivität wird geladen …</p>
+                  {:else if activity?.run}
+                    <ol class="activity-timeline">
+                      {#each activity.run.timeline as event (event.sequence)}
+                        {@const eventState = activityEventState(
+                          event,
+                          activity.run.timeline.at(-1)?.sequence,
+                          activity.run.terminal,
+                        )}
+                        <li
+                          class={eventState}
+                          aria-current={eventState === 'active' ? 'step' : undefined}
+                        >
+                          <span aria-hidden="true">{eventState === 'done' ? '✓' : ''}</span>
+                          <div>
+                            <strong>{activityEventLabel(event)}</strong>
+                            <p>{activityEventFeedback(event)}</p>
+                          </div>
+                        </li>
+                      {/each}
+                    </ol>
+                  {:else}
+                    <p>Der sichere Run wird nach der Planmaterialisierung sichtbar.</p>
+                  {/if}
+                </section>
+
+                <section class="execution-evidence" aria-label="Dateien und Prüfungen">
+                  {#key `${visibleTaskId}:${activity?.run?.updatedAtUnixMillis ?? 'initial'}`}
+                    <AgentInspectionPanel
+                      taskId={visibleTaskId}
+                      loader={inspectionLoader}
+                      logLoader={inspectionLogLoader}
+                    />
+                  {/key}
+                </section>
+
+                {#if selectedSummary?.state === 'awaitingApproval'}
+                  <section class="execution-approval" aria-label="Erforderliche Freigabe">
+                    <AgentApprovalCenter
+                      taskId={visibleTaskId}
+                      loader={approvalLoader}
+                      controller={approvalController}
+                      onChanged={async () => {
+                        await Promise.all([
+                          loadActivity(visibleTaskId),
+                          loadWorkPlan(visibleTaskId),
+                        ]);
+                      }}
+                    />
+                  </section>
+                {/if}
+              </article>
+            {/if}
             {#if pendingMessage}
               <article class="message user-message pending">
                 <header><span>Du</span><span>Wird gesendet</span></header>
@@ -2038,140 +2180,6 @@
         <p class="composer-hint">Enter senden · Shift + Enter neue Zeile</p>
       </div>
     </section>
-
-    {#if agentSidebarVisible && inspectorOpen}
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-      <div
-        class="resize-handle inspector-resize"
-        role="separator"
-        aria-label="Inspectorbreite ändern"
-        tabindex="0"
-        aria-orientation="vertical"
-        aria-valuemin={320}
-        aria-valuemax={640}
-        aria-valuenow={preferences.inspectorWidth}
-        onkeydown={(event) => resizeWithKeyboard(event, 'inspector')}
-        onpointerdown={(event) => beginResize(event, 'inspector')}
-      ></div>{/if}
-
-    {#if agentSidebarVisible && activeTaskId}
-      {@const visibleTaskId = activeTaskId}
-      <aside class="inspector" id={`${workspaceId}-inspector`} aria-label="Agentenlauf">
-        <header class="inspector-header">
-          <strong>Agentenlauf</strong>
-          <button
-            class="icon-button"
-            type="button"
-            onclick={toggleInspector}
-            aria-label="Agentenlauf einklappen">›</button
-          >
-        </header>
-        <nav class="inspector-tabs" aria-label="Agentenlauf Ansichten">
-          <button
-            type="button"
-            aria-current={inspectorTab === 'progress' ? 'page' : undefined}
-            onclick={() => (inspectorTab = 'progress')}>Fortschritt</button
-          >
-          <button
-            type="button"
-            aria-current={inspectorTab === 'changes' ? 'page' : undefined}
-            onclick={() => (inspectorTab = 'changes')}>Änderungen</button
-          >
-          <button
-            type="button"
-            aria-current={inspectorTab === 'review' ? 'page' : undefined}
-            onclick={() => (inspectorTab = 'review')}>Review</button
-          >
-        </nav>
-        <div class="inspector-content">
-          {#if inspectorTab === 'progress'}
-            {#if workPlanLoading && workPlan === null}
-              <p role="status">Arbeitsplan wird geladen …</p>
-            {:else if workPlan?.status === 'available'}
-              {@const completedSteps = workPlan.steps.filter(
-                (step) => step.status === 'completed',
-              ).length}
-              <section class="agent-work-plan" aria-labelledby="agent-work-plan-heading">
-                <header>
-                  <div>
-                    <p class="section-label">Arbeitsplan · Revision {workPlan.ledgerRevision}</p>
-                    <h3 id="agent-work-plan-heading">
-                      {completedSteps} von {workPlan.steps.length} Schritten erledigt
-                    </h3>
-                  </div>
-                  <span>{workPlan.steps.length} Todos</span>
-                </header>
-                {#if workPlan.ledgerRevision > 1}
-                  <p class="adaptive-plan-note">
-                    Nach einem neuen Befund angepasst; bestätigte Arbeit bleibt erhalten.
-                  </p>
-                {/if}
-                <ol>
-                  {#each workPlan.steps as step, index (step.stepId)}
-                    <li class:active={step.status === 'inProgress' || step.status === 'verifying'}>
-                      <span class="todo-marker" aria-hidden="true">
-                        {step.status === 'completed' ? '✓' : index + 1}
-                      </span>
-                      <div>
-                        <strong>{step.intendedOutcome}</strong>
-                        <small>{workPlanStepStatus(step.status)}</small>
-                      </div>
-                    </li>
-                  {/each}
-                </ol>
-              </section>
-            {/if}
-            {#if activityLoading}<p role="status">Fortschritt wird geladen …</p>
-            {:else if activity?.run}
-              <section class="run-summary">
-                <p class="section-label">Umsetzung & Prüfung</p>
-                <h3>{controllerStateLabel(activity.run.state)}</h3>
-                <p>Der sichere Agent arbeitet den belegten Plan schrittweise ab.</p>
-              </section>
-              <ol class="activity-timeline">
-                {#each activity.run.timeline as event (event.sequence)}
-                  {@const eventState = activityEventState(
-                    event,
-                    activity.run.timeline.at(-1)?.sequence,
-                    activity.run.terminal,
-                  )}
-                  <li
-                    class={eventState}
-                    aria-current={eventState === 'active' ? 'step' : undefined}
-                  >
-                    <span aria-hidden="true">{eventState === 'done' ? '✓' : ''}</span>
-                    <div>
-                      <strong>{activityEventLabel(event)}</strong>
-                      <p>{activityEventFeedback(event)}</p>
-                    </div>
-                  </li>
-                {/each}
-              </ol>
-            {:else}<p>Für diese Aufgabe existiert noch kein aktiver Run.</p>{/if}
-          {:else if inspectorTab === 'changes'}
-            <AgentInspectionPanel
-              taskId={visibleTaskId}
-              loader={inspectionLoader}
-              logLoader={inspectionLogLoader}
-            />
-          {:else}
-            <div class="review-stack">
-              <AgentInspectionPanel
-                taskId={visibleTaskId}
-                loader={inspectionLoader}
-                logLoader={inspectionLogLoader}
-              />
-              <AgentApprovalCenter
-                taskId={visibleTaskId}
-                loader={approvalLoader}
-                controller={approvalController}
-                onChanged={() => loadActivity(visibleTaskId)}
-              />
-            </div>
-          {/if}
-        </div>
-      </aside>
-    {/if}
   {/if}
   {#if renameOpen}
     <dialog
@@ -2215,10 +2223,7 @@
   .agent-workspace {
     position: relative;
     display: grid;
-    grid-template-columns: min(var(--history-width), 24%) 1px minmax(0, 1fr) 1px min(
-        var(--inspector-width),
-        38%
-      );
+    grid-template-columns: min(var(--history-width), 28%) 1px minmax(0, 1fr);
     width: 100%;
     height: 100%;
     min-height: 0;
@@ -2227,16 +2232,9 @@
     background: var(--color-canvas);
   }
   .agent-workspace.history-collapsed {
-    grid-template-columns: 0 0 minmax(0, 1fr) 1px min(var(--inspector-width), 40%);
+    grid-template-columns: 0 0 minmax(0, 1fr);
   }
-  .agent-workspace.inspector-collapsed {
-    grid-template-columns: min(var(--history-width), 28%) 1px minmax(0, 1fr) 0 0;
-  }
-  .agent-workspace.history-collapsed.inspector-collapsed {
-    grid-template-columns: 0 0 minmax(0, 1fr) 0 0;
-  }
-  .session-rail,
-  .inspector {
+  .session-rail {
     min-width: 0;
     min-height: 0;
     overflow: hidden;
@@ -2247,12 +2245,10 @@
     flex-direction: column;
     border-inline-end: 1px solid var(--color-border-soft);
   }
-  .history-collapsed .session-rail,
-  .inspector-collapsed .inspector {
+  .history-collapsed .session-rail {
     visibility: hidden;
   }
-  .rail-header,
-  .inspector-header {
+  .rail-header {
     display: flex;
     min-height: 3.5rem;
     align-items: center;
@@ -2913,54 +2909,70 @@
     color: var(--color-danger);
     font-size: var(--font-size-sm);
   }
-  .inspector {
+  .execution-card {
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr);
-    border-inline-start: 1px solid var(--color-border-soft);
+    padding: var(--space-4);
+    margin-block-start: var(--space-5);
+    gap: var(--space-4);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-card);
+    background: var(--color-surface-subtle);
+    box-shadow: var(--shadow-subtle);
   }
-  .inspector-tabs {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    padding: var(--space-2);
-    gap: var(--space-1);
-    border-block-end: 1px solid var(--color-border-soft);
+  .execution-card.failed {
+    border-color: color-mix(in srgb, var(--color-danger) 55%, var(--color-border));
   }
-  .inspector-tabs button {
-    min-height: var(--control-min-size);
-    padding: 0 var(--space-1);
-    border: 0;
-    border-radius: var(--radius-control);
-    color: var(--color-muted);
-    background: transparent;
-    cursor: pointer;
-    font-size: var(--font-size-sm);
+  .execution-card.completed {
+    border-color: color-mix(in srgb, var(--color-status-ready) 55%, var(--color-border));
   }
-  .inspector-tabs button[aria-current='page'] {
+  .execution-heading {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+  .execution-heading h3,
+  .execution-focus strong,
+  .execution-alert p,
+  .execution-success p {
+    margin: var(--space-1) 0 0;
+  }
+  .execution-state {
+    flex: 0 0 auto;
+    padding: 0.25rem 0.55rem;
+    border-radius: 999px;
     color: var(--color-accent-text);
     background: var(--color-accent-surface);
+    font-size: var(--font-size-xs);
     font-weight: 700;
   }
-  .inspector-content {
-    min-height: 0;
+  .execution-focus,
+  .execution-alert,
+  .execution-success {
+    display: grid;
     padding: var(--space-3);
-    overflow: auto;
+    gap: var(--space-1);
+    border-inline-start: 3px solid var(--color-accent);
+    background: var(--color-canvas);
   }
-
-  .review-stack {
-    display: grid;
-    gap: 1rem;
-  }
-  .inspector-empty {
-    display: grid;
-    min-height: 16rem;
-    place-content: center;
-    justify-items: center;
-    padding: var(--space-5);
+  .execution-focus > span,
+  .execution-focus small {
     color: var(--color-muted);
-    text-align: center;
+    font-size: var(--font-size-xs);
   }
-  .inspector-empty span {
-    font-size: 1.5rem;
+  .execution-alert {
+    border-inline-start-color: var(--color-danger);
+    color: var(--color-danger);
+  }
+  .execution-success {
+    border-inline-start-color: var(--color-status-ready);
+  }
+  .execution-activity,
+  .execution-evidence,
+  .execution-approval {
+    min-width: 0;
+    padding-block-start: var(--space-3);
+    border-block-start: 1px solid var(--color-border-soft);
   }
   .section-label {
     margin: 0;
@@ -3127,23 +3139,10 @@
   }
   @media (max-width: 1100px) {
     .agent-workspace {
-      grid-template-columns: min(var(--history-width), 32%) 1px minmax(0, 1fr) 0 0;
+      grid-template-columns: min(var(--history-width), 32%) 1px minmax(0, 1fr);
     }
     .agent-workspace.history-collapsed {
-      grid-template-columns: 0 0 minmax(0, 1fr) 0 0;
-    }
-    .inspector {
-      position: absolute;
-      z-index: 24;
-      inset: 0 0 0 auto;
-      width: min(var(--inspector-width), calc(100% - 3rem));
-      box-shadow: none;
-    }
-    .inspector-resize {
-      display: none;
-    }
-    .inspector-collapsed .inspector {
-      display: none;
+      grid-template-columns: 0 0 minmax(0, 1fr);
     }
     .conversation-header {
       padding-inline-end: var(--space-3);
@@ -3151,10 +3150,8 @@
   }
   @media (max-width: 760px) {
     .agent-workspace,
-    .agent-workspace.history-collapsed,
-    .agent-workspace.inspector-collapsed,
-    .agent-workspace.history-collapsed.inspector-collapsed {
-      grid-template-columns: 0 0 minmax(0, 1fr) 0 0;
+    .agent-workspace.history-collapsed {
+      grid-template-columns: 0 0 minmax(0, 1fr);
     }
     .session-rail {
       position: absolute;
@@ -3197,14 +3194,6 @@
   }
   .conversation {
     grid-column: 3;
-    grid-row: 1;
-  }
-  .inspector-resize {
-    grid-column: 4;
-    grid-row: 1;
-  }
-  .inspector {
-    grid-column: 5;
     grid-row: 1;
   }
   .conversation-heading {
@@ -3260,17 +3249,19 @@
     animation: app-surface-in var(--motion-normal) var(--ease-out);
   }
   @media (max-width: 1100px) {
-    .inspector {
-      grid-column: 1 / -1;
-    }
     .mode-switch span {
       display: none;
     }
   }
   @media (max-width: 760px) {
-    .session-rail,
-    .inspector {
+    .session-rail {
       grid-column: 1 / -1;
+    }
+    .execution-card {
+      padding: var(--space-3);
+    }
+    .execution-heading {
+      display: grid;
     }
   }
   @media (max-height: 600px) {

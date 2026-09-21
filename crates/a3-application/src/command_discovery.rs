@@ -496,14 +496,38 @@ fn discover_python_unittest(
         .iter()
         .filter(|revision| is_python_test_path(revision.path()))
         .collect::<Vec<_>>();
-    if tests.is_empty() || tests.len() > 16 {
+    let has_python_source = index.publication().graph().files().iter().any(|revision| {
+        file_name(revision.path()).ends_with(b".py") && !is_python_test_path(revision.path())
+    });
+    if !has_python_source || tests.is_empty() || tests.len() > 16 {
         return Ok(());
     }
+    let roots = tests
+        .iter()
+        .map(|revision| parent_path(revision.path()).to_vec())
+        .collect::<BTreeSet<_>>();
+    let mut roots = roots.iter();
+    let Some(root) = roots.next() else {
+        return Ok(());
+    };
+    if roots.next().is_some() {
+        return Ok(());
+    }
+    let arguments = if root.is_empty() {
+        strings(&["-B", "-m", "unittest", "discover"])
+    } else {
+        let Ok(root) = std::str::from_utf8(root) else {
+            return Ok(());
+        };
+        let mut arguments = strings(&["-B", "-m", "unittest", "discover", "-s"]);
+        arguments.push(root.to_owned());
+        arguments
+    };
     commands.push(DiscoveredCommand::try_new(
         DiscoveredCommandKind::Test,
         WorkspaceDirectory::Root,
         "python".to_owned(),
-        strings(&["-B", "-m", "unittest", "discover"]),
+        arguments,
         tests
             .into_iter()
             .cloned()
@@ -693,7 +717,7 @@ mod tests {
                 .iter()
                 .map(|argument| argument.as_str())
                 .collect::<Vec<_>>(),
-            ["-B", "-m", "unittest", "discover"]
+            ["-B", "-m", "unittest", "discover", "-s", "tests"]
         );
         assert_eq!(command.evidence().len(), 1);
         assert_eq!(command.evidence()[0].revision(), &test);
@@ -715,6 +739,39 @@ mod tests {
         let catalog =
             DiscoverProjectCommands.execute(a3_domain::WorktreeId::from_bytes([8; 32]), &index)?;
         assert!(catalog.commands().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_free_unittest_requires_one_test_root_and_a_python_source()
+    -> Result<(), Box<dyn Error>> {
+        let test_a = a3_domain::FileRevision::new(
+            RepositoryPath::try_from_bytes(b"tests/test_a.py".to_vec())?,
+            a3_domain::ContentHash::from_bytes([9; 32]),
+        );
+        let test_b = a3_domain::FileRevision::new(
+            RepositoryPath::try_from_bytes(b"spec/test_b.py".to_vec())?,
+            a3_domain::ContentHash::from_bytes([10; 32]),
+        );
+        let source = a3_domain::FileRevision::new(
+            RepositoryPath::try_from_bytes(b"server.py".to_vec())?,
+            a3_domain::ContentHash::from_bytes([11; 32]),
+        );
+        let worktree = a3_domain::WorktreeId::from_bytes([12; 32]);
+        let without_source = published_index(vec![test_a.clone()])?;
+        assert!(
+            DiscoverProjectCommands
+                .execute(worktree, &without_source)?
+                .commands()
+                .is_empty()
+        );
+        let ambiguous = published_index(vec![source, test_a, test_b])?;
+        assert!(
+            DiscoverProjectCommands
+                .execute(worktree, &ambiguous)?
+                .commands()
+                .is_empty()
+        );
         Ok(())
     }
 

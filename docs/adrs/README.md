@@ -137,6 +137,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0111](0111-leerer-index-bestandsaufnahme.md) | Leerer veröffentlichter Index ist eine Core-Bestandsaufnahme |
 | [0112](0112-nachgelagerte-greenfield-verifikation.md) | Nachgelagerte evidenzgebundene Greenfield-Verifikation |
 | [0113](0113-sichere-unterverzeichnisse-fuer-patches.md) | Sichere Unterverzeichnisse für strukturierte Patches |
+| [0114](0114-chatgebundene-agentenausfuehrung.md) | Chatgebundene Agentenausführung und konkrete Haltegründe |
 
 ## Neue ADRs
 

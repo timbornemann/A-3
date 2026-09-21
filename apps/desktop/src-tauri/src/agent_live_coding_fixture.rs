@@ -61,7 +61,7 @@ fn check_scope(case: LiveCodingCase, action: &AgentApprovalAction) -> Result<(),
     let allowed = match action {
         AgentApprovalAction::Patch(patch) => {
             !patch.files().is_empty()
-                && patch.files().len() <= case.sources().len()
+                && patch.files().len() <= case.maximum_patch_file_count()
                 && patch.files().iter().all(|file| {
                     case.patch_scope(
                         file.operation(),
@@ -73,6 +73,7 @@ fn check_scope(case: LiveCodingCase, action: &AgentApprovalAction) -> Result<(),
                 })
         }
         AgentApprovalAction::Process(process) => process_scope(
+            case,
             process.executable(),
             process.arguments(),
             process.working_directory(),
@@ -88,24 +89,42 @@ fn check_scope(case: LiveCodingCase, action: &AgentApprovalAction) -> Result<(),
 }
 
 fn process_scope(
+    case: LiveCodingCase,
     executable: &str,
     arguments: &[String],
     directory: &AgentApprovalWorkingDirectory,
     mode: ProcessExecutionMode,
     network: AgentApprovalNetworkScope,
 ) -> bool {
+    let expected = if case.is_greenfield() {
+        ["-B", "-m", "unittest", "discover", "-s", "tests"].as_slice()
+    } else {
+        ["-m", "pytest"].as_slice()
+    };
     executable == "python"
-        && arguments == ["-m", "pytest"]
+        && arguments
+            .iter()
+            .map(String::as_str)
+            .eq(expected.iter().copied())
         && directory == &AgentApprovalWorkingDirectory::Root
         && mode == ProcessExecutionMode::KnownSafe
         && network == AgentApprovalNetworkScope::Denied
 }
 
 /// Independent physical check; the model cannot change the locked runner or tests.
-fn run_locked_tests(path: &std::path::Path, control: &JobContext) -> Result<bool, Box<dyn Error>> {
+fn run_locked_tests(
+    case: LiveCodingCase,
+    path: &std::path::Path,
+    control: &JobContext,
+) -> Result<bool, Box<dyn Error>> {
+    let arguments = if case.is_greenfield() {
+        ["-B", "-m", "unittest", "discover", "-s", "tests"].as_slice()
+    } else {
+        ["-B", "-m", "pytest"].as_slice()
+    };
     run_check(
         std::process::Command::new("python")
-            .args(["-B", "-m", "pytest"])
+            .args(arguments)
             .current_dir(path),
         || control.cancellation_token().is_cancelled(),
     )
@@ -222,9 +241,24 @@ fn live_coding_scope_rejects_process_scope_changes() -> Result<(), Box<dyn Error
     let root = AgentApprovalWorkingDirectory::Root;
     let allowed = ProcessExecutionMode::KnownSafe;
     let denied = AgentApprovalNetworkScope::Denied;
-    assert!(process_scope("python", &args, &root, allowed, denied));
-    assert!(!process_scope("cmd", &args, &root, allowed, denied));
+    assert!(process_scope(
+        LiveCodingCase::Bugfix,
+        "python",
+        &args,
+        &root,
+        allowed,
+        denied
+    ));
     assert!(!process_scope(
+        LiveCodingCase::Bugfix,
+        "cmd",
+        &args,
+        &root,
+        allowed,
+        denied
+    ));
+    assert!(!process_scope(
+        LiveCodingCase::Bugfix,
         "python",
         &["-m".to_owned(), "pip".to_owned()],
         &root,
@@ -232,6 +266,7 @@ fn live_coding_scope_rejects_process_scope_changes() -> Result<(), Box<dyn Error
         denied
     ));
     assert!(!process_scope(
+        LiveCodingCase::Bugfix,
         "python",
         &args,
         &root,
@@ -239,6 +274,7 @@ fn live_coding_scope_rejects_process_scope_changes() -> Result<(), Box<dyn Error
         denied
     ));
     assert!(!process_scope(
+        LiveCodingCase::Bugfix,
         "python",
         &args,
         &root,
@@ -246,6 +282,7 @@ fn live_coding_scope_rejects_process_scope_changes() -> Result<(), Box<dyn Error
         denied
     ));
     assert!(!process_scope(
+        LiveCodingCase::Bugfix,
         "python",
         &args,
         &AgentApprovalWorkingDirectory::Subtree(RepositoryPath::try_from_bytes(b"tests".to_vec())?),
@@ -253,11 +290,27 @@ fn live_coding_scope_rejects_process_scope_changes() -> Result<(), Box<dyn Error
         denied
     ));
     assert!(!process_scope(
+        LiveCodingCase::Bugfix,
         "python",
         &args,
         &root,
         allowed,
         AgentApprovalNetworkScope::Requested(PolicyResourceId::from_bytes([99; 32]))
+    ));
+    assert!(process_scope(
+        LiveCodingCase::Greenfield,
+        "python",
+        &[
+            "-B".to_owned(),
+            "-m".to_owned(),
+            "unittest".to_owned(),
+            "discover".to_owned(),
+            "-s".to_owned(),
+            "tests".to_owned()
+        ],
+        &root,
+        allowed,
+        denied
     ));
     Ok(())
 }
@@ -358,10 +411,14 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
         repository.write(path, content)?;
     }
     repository.git(["add", "."])?;
-    assert!(
-        !run_locked_tests(repository.path(), control)?,
-        "fixture must start red"
-    );
+    if case.is_greenfield() {
+        assert_eq!(case.changed_sources(repository.path())?, 0);
+    } else {
+        assert!(
+            !run_locked_tests(case, repository.path(), control)?,
+            "fixture must start red"
+        );
+    }
     assert!(
         !run_oracle(case, repository.path(), || control
             .cancellation_token()
@@ -390,25 +447,38 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
             &FixtureControl,
         )
         .await?;
-    let commands =
-        DiscoverProjectCommands.execute(project.worktree().id(), indexed.published_index())?;
-    let command = commands
-        .commands()
-        .iter()
-        .find(|c| c.kind() == DiscoveredCommandKind::Test)
-        .ok_or("test command not discovered")?;
-    assert_eq!(command.executable().as_str(), "python");
-    assert_eq!(
-        command
-            .arguments()
+    let command = if case.is_greenfield() {
+        assert!(
+            indexed
+                .published_index()
+                .publication()
+                .graph()
+                .files()
+                .is_empty()
+        );
+        None
+    } else {
+        let commands =
+            DiscoverProjectCommands.execute(project.worktree().id(), indexed.published_index())?;
+        let command = commands
+            .commands()
             .iter()
-            .map(ProcessArgument::as_str)
-            .collect::<Vec<_>>(),
-        ["-m", "pytest"]
-    );
-    ConfirmProjectCommandAllowlist::new(store.as_ref())
-        .execute(&project, &commands, vec![command.id()], now()?, None)
-        .await?;
+            .find(|c| c.kind() == DiscoveredCommandKind::Test)
+            .ok_or("test command not discovered")?;
+        assert_eq!(command.executable().as_str(), "python");
+        assert_eq!(
+            command
+                .arguments()
+                .iter()
+                .map(ProcessArgument::as_str)
+                .collect::<Vec<_>>(),
+            ["-m", "pytest"]
+        );
+        ConfirmProjectCommandAllowlist::new(store.as_ref())
+            .execute(&project, &commands, vec![command.id()], now()?, None)
+            .await?;
+        Some(command.clone())
+    };
     let criterion = AcceptanceCriterionId::from_bytes([1; 32]);
     let step_id = TaskStepId::from_bytes([2; 32]);
     let task_id = TaskId::from_bytes([3; 32]);
@@ -419,17 +489,21 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
             GoalObjective::try_from_string(case.objective().to_owned())?,
             vec![AcceptanceCriterion::new(
                 criterion,
-                AcceptanceCriterionStatement::try_from_string(
+                AcceptanceCriterionStatement::try_from_string(if case.is_greenfield() {
+                    "The new server files exist and the discovered offline tests pass".to_owned()
+                } else {
                     "The unchanged existing tests pass after the requested implementation"
-                        .to_owned(),
-                )?,
+                        .to_owned()
+                })?,
             )],
             Vec::new(),
             Vec::new(),
             Vec::new(),
-            SuccessVerification::try_from_string(
-                "Run python -m pytest using the confirmed command profile".to_owned(),
-            )?,
+            SuccessVerification::try_from_string(if case.is_greenfield() {
+                "Run the discovered Python unittest command after creating the files".to_owned()
+            } else {
+                "Run python -m pytest using the confirmed command profile".to_owned()
+            })?,
         )?,
         GoalContractTimestamp::from_unix_millis(now()?.unix_millis())?,
     );
@@ -444,17 +518,57 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
         vec![ExpectedTaskEvidence::try_from_string(
             case.evidence().to_owned(),
         )?],
-        VerificationSpec::command(
-            VerificationSpecId::from_bytes([5; 32]),
-            VerificationRequirement::try_from_string("Existing tests pass".to_owned())?,
-            command.id(),
-            VerificationScope::Workspace,
-        ),
+        if case.is_greenfield() {
+            VerificationSpec::diff_invariant(
+                VerificationSpecId::from_bytes([5; 32]),
+                VerificationRequirement::try_from_string(
+                    "The patch creates the requested project files".to_owned(),
+                )?,
+                DiffInvariantVerification::new(DiffInvariantMode::NonEmptyChanges, Vec::new())?,
+            )
+        } else {
+            VerificationSpec::command(
+                VerificationSpecId::from_bytes([5; 32]),
+                VerificationRequirement::try_from_string("Existing tests pass".to_owned())?,
+                command.as_ref().ok_or("existing case command")?.id(),
+                VerificationScope::Workspace,
+            )
+        },
     )?
     .with_acceptance_criteria(vec![criterion])?;
+    let definitions = if case.is_greenfield() {
+        vec![
+            definition,
+            TaskStepDefinition::new(
+                TaskStepId::from_bytes([7; 32]),
+                None,
+                TaskStepOutcome::try_from_string(
+                    "Run and pass the created project tests".to_owned(),
+                )?,
+                TaskStepRationale::try_from_string(
+                    "Behavior requires executable verification after files exist".to_owned(),
+                )?,
+                vec![StepDependency::new(step_id)],
+                vec![ExpectedTaskEvidence::try_from_string(
+                    "Structured unittest cases pass".to_owned(),
+                )?],
+                VerificationSpec::deferred_command(
+                    VerificationSpecId::from_bytes([8; 32]),
+                    VerificationRequirement::try_from_string("All tests pass".to_owned())?,
+                    DeferredCommandVerification::new(
+                        vec![DiscoveredCommandKind::Test],
+                        VerificationScope::Workspace,
+                    )?,
+                ),
+            )?
+            .with_acceptance_criteria(vec![criterion])?,
+        ]
+    } else {
+        vec![definition]
+    };
     let mut ledger = TaskLedger::new(
         goal.reference(),
-        vec![definition],
+        definitions,
         TaskLedgerTimestamp::from_unix_millis(now()?.unix_millis())?,
     )?;
     ledger.start_step(
@@ -541,7 +655,7 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
                 .iter()
                 .map(|message| case.originals_delivered(message.content()))
                 .sum();
-            if originals_delivered == 0 {
+            if originals_delivered == 0 && !case.is_greenfield() {
                 println!(
                     "A3_LIVE_CODING preflight_code_allowance={} prompt_tokens={}",
                     compiled
@@ -569,7 +683,7 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
             // Initial hydration is bounded; further originals may require normal safe reads.
             println!(
                 "A3_LIVE_CODING context_preflight=passed original_sources={originals_delivered} required_sources={}",
-                case.sources().len()
+                case.required_source_count()
             );
         }
         Err(error) => {
@@ -641,7 +755,7 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
             mutations.len(),
             mutations.len().saturating_sub(32),
             case.changed_sources(repository.path())?,
-            case.sources().len(),
+            case.required_source_count(),
             run.current_snapshot_id() != indexed.published_index().run().snapshot_id()
         );
         for (ordinal, mutation) in mutations.iter().take(32).enumerate() {
@@ -660,10 +774,37 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
         if let Some(overview) = inspection.overview(&project, task_id)? {
             for process in overview.processes() {
                 println!(
-                    "A3_LIVE_CODING process={:?} termination={:?}",
+                    "A3_LIVE_CODING process={:?} termination={:?} stdout_bytes={} stderr_bytes={}",
                     process.kind(),
-                    process.termination()
+                    process.termination(),
+                    process.stdout().observed_bytes(),
+                    process.stderr().observed_bytes()
                 );
+                for stream in [ProcessStream::Stdout, ProcessStream::Stderr] {
+                    let page = inspection.load_process_log_page(
+                        &project,
+                        task_id,
+                        overview.revision(),
+                        process.id(),
+                        stream,
+                        AgentLogPageOffset::START,
+                        AgentLogPageLimit::DEFAULT,
+                    )?;
+                    let text = page.text();
+                    println!(
+                        "A3_LIVE_CODING process_log={stream:?} traceback={} assertion={} import={} connection={} address={} permission={} ran={} ok={} failed={} error={}",
+                        text.contains("Traceback"),
+                        text.contains("AssertionError"),
+                        text.contains("ImportError") || text.contains("ModuleNotFoundError"),
+                        text.contains("ConnectionRefused"),
+                        text.contains("Address already in use"),
+                        text.contains("PermissionError"),
+                        text.contains("Ran "),
+                        text.contains("OK"),
+                        text.contains("FAILED"),
+                        text.contains("ERROR")
+                    );
+                }
             }
         }
         for step in observed.ledger().steps() {
@@ -680,7 +821,7 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
         if outcome.is_err() || run.state() == AgentControllerState::Failed {
             println!(
                 "A3_LIVE_CODING failure_physical_test_passed={} independent_oracle_passed={} protected_files_unchanged={} settings_unchanged={}",
-                run_locked_tests(repository.path(), control)?,
+                run_locked_tests(case, repository.path(), control)?,
                 run_oracle(case, repository.path(), || control
                     .cancellation_token()
                     .is_cancelled())?,
@@ -757,7 +898,7 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
                 .is_some_and(|v| v.passed() && !v.evidence_ids().is_empty())
     }));
     assert!(
-        run_locked_tests(repository.path(), control)?,
+        run_locked_tests(case, repository.path(), control)?,
         "physical post-run verification failed"
     );
     let oracle_passed = run_oracle(case, repository.path(), || {
@@ -773,7 +914,7 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
     }
     assert_eq!(
         case.changed_sources(repository.path())?,
-        case.sources().len(),
+        case.required_source_count(),
         "all requested source files must change"
     );
     assert_eq!(

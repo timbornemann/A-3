@@ -35,6 +35,8 @@ const TWO_MODULE: &[(&str, &str)] = &[
     fixture!("two-module-change", "pyproject.toml"),
     UNRELATED,
 ];
+const GREENFIELD_TARGETS: &[&str] = &["server.py", "tests/__init__.py", "tests/test_server.py"];
+const GREENFIELD_REQUIRED: &[&str] = &["server.py", "tests/test_server.py"];
 
 pub(super) const ORACLE: &str = include_str!("../../../../fixtures/agent-live-coding-v2/oracle.py");
 
@@ -42,6 +44,7 @@ pub(super) const ORACLE: &str = include_str!("../../../../fixtures/agent-live-co
 pub(super) enum LiveCodingCase {
     Bugfix,
     TwoModule,
+    Greenfield,
 }
 
 impl LiveCodingCase {
@@ -49,7 +52,10 @@ impl LiveCodingCase {
         match value {
             None | Some("small-local-bugfix") => Ok(Self::Bugfix),
             Some("two-module-change") => Ok(Self::TwoModule),
-            _ => Err("A3_LIVE_AGENT_CASE must be small-local-bugfix or two-module-change"),
+            Some("greenfield-python-server") => Ok(Self::Greenfield),
+            _ => Err(
+                "A3_LIVE_AGENT_CASE must be small-local-bugfix, two-module-change or greenfield-python-server",
+            ),
         }
     }
 
@@ -57,6 +63,7 @@ impl LiveCodingCase {
         match self {
             Self::Bugfix => "small-local-bugfix",
             Self::TwoModule => "two-module-change",
+            Self::Greenfield => "greenfield-python-server",
         }
     }
 
@@ -64,6 +71,7 @@ impl LiveCodingCase {
         match self {
             Self::Bugfix => BUGFIX,
             Self::TwoModule => TWO_MODULE,
+            Self::Greenfield => &[],
         }
     }
 
@@ -75,6 +83,7 @@ impl LiveCodingCase {
         match self {
             Self::Bugfix => 1,
             Self::TwoModule => 2,
+            Self::Greenfield => 0,
         }
     }
 
@@ -90,6 +99,9 @@ impl LiveCodingCase {
             Self::TwoModule => {
                 "Implement invoice discounts across pricing.py and invoice.py. discounted_total(cents, percent) must apply an integer percent discount to nonnegative integer cents, rounding down to whole cents; percent is 0 through 100 inclusive. invoice_total(line_cents, discount_percent) must call this helper on the sum of the line cents, then format the discounted total with a dollar sign and exactly two decimal digits. Empty line lists total zero. Change both pricing.py and invoice.py only. Do not modify tests, pytest.py, pyproject.toml or unrelated.txt. Run the existing python -m pytest command and verify the actual result."
             }
+            Self::Greenfield => {
+                "Create a small Python HTTP server in this empty project, listening on 127.0.0.1 port 8765. A GET request to / must return status 200 and the exact UTF-8 body Hello, world! followed by a newline. Unknown paths return 404. Unsupported methods return 405 with Allow: GET. Use only the Python standard library. Add executable unittest coverage under tests. Do not install packages or use the network. Run the discovered local unittest command and verify the actual result."
+            }
         }
     }
 
@@ -99,6 +111,9 @@ impl LiveCodingCase {
             Self::TwoModule => {
                 "Implement discounted_total in pricing.py and reuse it from invoice_total in invoice.py; prove the unchanged tests pass"
             }
+            Self::Greenfield => {
+                "Create the Python server and its unittest suite, then prove the discovered offline tests pass"
+            }
         }
     }
 
@@ -106,6 +121,9 @@ impl LiveCodingCase {
         match self {
             Self::Bugfix => "Current increment.py and passing locked test result",
             Self::TwoModule => "Current pricing.py and invoice.py and passing locked test result",
+            Self::Greenfield => {
+                "New server.py and tests/test_server.py plus passing structured unittest evidence"
+            }
         }
     }
 
@@ -115,9 +133,18 @@ impl LiveCodingCase {
         source: Option<&str>,
         target: Option<&str>,
     ) -> bool {
-        operation == AgentApprovalFileOperation::Update
-            && source == target
-            && self.sources().iter().any(|(path, _)| Some(*path) == source)
+        match self {
+            Self::Greenfield => {
+                operation == AgentApprovalFileOperation::Add
+                    && source.is_none()
+                    && GREENFIELD_TARGETS.iter().any(|path| Some(*path) == target)
+            }
+            _ => {
+                operation == AgentApprovalFileOperation::Update
+                    && source == target
+                    && self.sources().iter().any(|(path, _)| Some(*path) == source)
+            }
+        }
     }
 
     pub(super) fn originals_delivered(self, text: &str) -> usize {
@@ -136,6 +163,12 @@ impl LiveCodingCase {
     }
 
     pub(super) fn changed_sources(self, root: &Path) -> Result<usize, Box<dyn Error>> {
+        if self == Self::Greenfield {
+            return Ok(GREENFIELD_REQUIRED
+                .iter()
+                .filter(|path| root.join(path).is_file())
+                .count());
+        }
         let mut changed = 0;
         for (path, original) in self.sources() {
             if std::fs::read(root.join(path))? != original.as_bytes() {
@@ -150,6 +183,26 @@ impl LiveCodingCase {
             std::fs::read(root.join(path)).is_ok_and(|bytes| bytes == content.as_bytes())
         })
     }
+
+    pub(super) fn required_source_count(self) -> usize {
+        if self == Self::Greenfield {
+            GREENFIELD_REQUIRED.len()
+        } else {
+            self.sources().len()
+        }
+    }
+
+    pub(super) fn maximum_patch_file_count(self) -> usize {
+        if self == Self::Greenfield {
+            GREENFIELD_TARGETS.len()
+        } else {
+            self.sources().len()
+        }
+    }
+
+    pub(super) fn is_greenfield(self) -> bool {
+        self == Self::Greenfield
+    }
 }
 
 #[test]
@@ -158,6 +211,10 @@ fn live_case_selection_is_closed_and_scope_is_case_specific() {
     assert_eq!(
         LiveCodingCase::parse(Some("two-module-change")),
         Ok(LiveCodingCase::TwoModule)
+    );
+    assert_eq!(
+        LiveCodingCase::parse(Some("greenfield-python-server")),
+        Ok(LiveCodingCase::Greenfield)
     );
     for unknown in [
         "",
@@ -196,6 +253,21 @@ fn live_case_selection_is_closed_and_scope_is_case_specific() {
         Some("invoice.py")
     ));
     assert!(!LiveCodingCase::TwoModule.patch_scope(AgentApprovalFileOperation::Update, None, None));
+    assert!(LiveCodingCase::Greenfield.patch_scope(
+        AgentApprovalFileOperation::Add,
+        None,
+        Some("server.py")
+    ));
+    assert!(!LiveCodingCase::Greenfield.patch_scope(
+        AgentApprovalFileOperation::Update,
+        Some("server.py"),
+        Some("server.py")
+    ));
+    assert!(!LiveCodingCase::Greenfield.patch_scope(
+        AgentApprovalFileOperation::Add,
+        None,
+        Some("requirements.txt")
+    ));
 }
 
 #[test]
@@ -266,6 +338,11 @@ fn independent_oracle_rejects_example_only_and_partial_implementations()
                 assert!(visible_tests_pass(repository.path())?);
                 assert!(!super::run_oracle(case, repository.path(), || false)?);
                 repository.write("invoice.py", "from pricing import discounted_total\n\ndef invoice_total(line_cents, discount_percent):\n    total = discounted_total(sum(line_cents), discount_percent)\n    return f'${total // 100}.{total % 100:02d}'\n")?;
+            }
+            LiveCodingCase::Greenfield => {
+                return Err(
+                    "greenfield is covered by its dedicated live and production fixtures".into(),
+                );
             }
         }
         assert!(visible_tests_pass(repository.path())?);
