@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 const MAX_PAGES: usize = 2;
 const MAX_LINES: u16 = 64;
+const PAGE_LINE_LIMITS: [u16; 7] = [64, 32, 16, 8, 4, 2, 1];
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Default)]
@@ -88,45 +89,59 @@ pub(super) async fn materialize(
             packed.truncated = true;
             break;
         }
-        let request = request(&candidate)?;
-        let result = reader
-            .read_page(input.project(), candidate.revision, &request, &deadline)
-            .await;
-        deadline.check()?;
-        let page = match result {
-            Ok(page) => page,
-            Err(AgentSourceReadFailure::Stale) => {
-                return Err(ContextCompileFailure::StaleOrMismatchedInput);
-            }
-            Err(AgentSourceReadFailure::InvalidPage) => {
-                return Err(ContextCompileFailure::InvalidPack);
-            }
-            Err(AgentSourceReadFailure::Cancelled) => return Err(ContextCompileFailure::Cancelled),
-            Err(
-                AgentSourceReadFailure::Unavailable
-                | AgentSourceReadFailure::Denied
-                | AgentSourceReadFailure::FileTooLarge
-                | AgentSourceReadFailure::InvalidEncoding
-                | AgentSourceReadFailure::BinaryContent
-                | AgentSourceReadFailure::SecretCandidate
-                | AgentSourceReadFailure::LineTooLong,
-            ) => {
-                packed.truncated = true;
+        let mut selected = None;
+        let mut last_line_count = None;
+        for line_limit in PAGE_LINE_LIMITS {
+            let request = request(&candidate, line_limit)?;
+            if last_line_count == Some(request.line_count()) {
                 continue;
             }
-        };
-        validate_page(&page, candidate.revision, &request)?;
-        let rendered = render(&page);
-        super::reject_secret_candidate(&rendered)?;
-        let cost = super::count(input.model_profile(), &rendered)?;
-        let next = packed
-            .tokens
-            .checked_add(cost)
-            .ok_or(ContextCompileFailure::InvalidPack)?;
-        if next > allowance {
+            last_line_count = Some(request.line_count());
+            let result = reader
+                .read_page(input.project(), candidate.revision, &request, &deadline)
+                .await;
+            deadline.check()?;
+            let page = match result {
+                Ok(page) => page,
+                Err(AgentSourceReadFailure::Stale) => {
+                    return Err(ContextCompileFailure::StaleOrMismatchedInput);
+                }
+                Err(AgentSourceReadFailure::InvalidPage) => {
+                    return Err(ContextCompileFailure::InvalidPack);
+                }
+                Err(AgentSourceReadFailure::Cancelled) => {
+                    return Err(ContextCompileFailure::Cancelled);
+                }
+                Err(
+                    AgentSourceReadFailure::Unavailable
+                    | AgentSourceReadFailure::Denied
+                    | AgentSourceReadFailure::FileTooLarge
+                    | AgentSourceReadFailure::InvalidEncoding
+                    | AgentSourceReadFailure::BinaryContent
+                    | AgentSourceReadFailure::SecretCandidate
+                    | AgentSourceReadFailure::LineTooLong,
+                ) => {
+                    packed.truncated = true;
+                    break;
+                }
+            };
+            validate_page(&page, candidate.revision, &request)?;
+            let rendered = render(&page);
+            super::reject_secret_candidate(&rendered)?;
+            let cost = super::count(input.model_profile(), &rendered)?;
+            let next = packed
+                .tokens
+                .checked_add(cost)
+                .ok_or(ContextCompileFailure::InvalidPack)?;
+            if next <= allowance {
+                selected = Some((page, rendered, next));
+                break;
+            }
             packed.truncated = true;
-            continue;
         }
+        let Some((page, rendered, next)) = selected else {
+            continue;
+        };
         packed.text.push_str(&rendered);
         packed
             .delivered
@@ -140,19 +155,24 @@ pub(super) async fn materialize(
     Ok(packed)
 }
 
-fn request(candidate: &Candidate<'_>) -> Result<AgentFileInspection, ContextCompileFailure> {
+fn request(
+    candidate: &Candidate<'_>,
+    line_limit: u16,
+) -> Result<AgentFileInspection, ContextCompileFailure> {
     let start = candidate
         .range
         .map_or(0, |range| range.start_position().row())
         .checked_add(1)
         .ok_or(ContextCompileFailure::InvalidPack)?;
-    let lines = candidate.range.map_or(u32::from(MAX_LINES), |range| {
-        let end = range.end_position();
-        end.row()
-            .saturating_sub(range.start_position().row())
-            .saturating_add(u32::from(end.column() != 0))
-            .clamp(1, u32::from(MAX_LINES))
-    });
+    let lines = candidate
+        .range
+        .map_or(u32::from(MAX_LINES.min(line_limit)), |range| {
+            let end = range.end_position();
+            end.row()
+                .saturating_sub(range.start_position().row())
+                .saturating_add(u32::from(end.column() != 0))
+                .clamp(1, u32::from(MAX_LINES.min(line_limit)))
+        });
     Ok(AgentFileInspection::new(
         candidate.revision.path().clone(),
         AgentFileStartLine::new(start).map_err(|_| ContextCompileFailure::InvalidPack)?,

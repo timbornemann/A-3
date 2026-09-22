@@ -309,9 +309,7 @@ fn patch_waits_for_approval_then_reindexes_before_compiling_context() -> Result<
         };
         if !compiled.request().messages().iter().any(|message| {
             message.content().contains("[EXECUTION_CHECKPOINT]")
-                && message
-                    .content()
-                    .contains("last_confirmed_run_action=patch_applied")
+                && message.content().contains("mutation=patch_applied")
                 && message.content().contains("step_verified=false")
         }) {
             return Err(test_error(
@@ -2179,15 +2177,16 @@ enum ScriptedProcessMode {
 
 impl ScriptedProcessMode {
     const fn requires_reconciliation(self) -> bool {
-        matches!(self, Self::TimedOut | Self::CancelledAfterStart)
+        matches!(self, Self::CancelledAfterStart)
     }
 
     const fn expected_disposition(self) -> AgentMutationDisposition {
         match self {
             Self::ExitedFailure => AgentMutationDisposition::Applied,
-            Self::TimedOut | Self::CancelledAfterStart => {
+            Self::CancelledAfterStart => {
                 AgentMutationDisposition::Unknown(MutationReconciliation::Required)
             }
+            Self::TimedOut => AgentMutationDisposition::Applied,
             Self::CancelledBeforeStart => AgentMutationDisposition::NotApplied,
         }
     }

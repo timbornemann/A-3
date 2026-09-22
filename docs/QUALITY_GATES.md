@@ -495,6 +495,15 @@ offengelegt werden, nicht als isolierter Prosaeffekt erscheinen.
   Queue-Leiste, Core-selektierbare Modi ohne Agent-Chip „Nach Planfreigabe“, die ausschließlich
   taskgebundene Agentenlauf-Seitenleiste und einen überlagerungsfreien, per Escape schließbaren
   Header-Aktionsbereich.
+- Der ADR-0115-Contract prüft den vollständigen Greenfield-Pfad zusätzlich zum deterministischen
+  Harness als opt-in Live-Abnahme mit dem tatsächlich konfigurierten Modell: reale Recherche,
+  Planmaterialisierung, unveränderter Desktop-Produktstandard ohne Test-Override, geschlossene
+  Patch-/Run-Freigaben, nachgelagert entdeckter lokaler Prüfcommand, `Done` mit frischer Step- und
+  Acceptance-Evidence sowie unabhängige Datei-, Test- und HTTP-Orakel. Gezielte Regressionen
+  decken den kompakten V9-Handoff, aktuelle Originale und Read-Grenzen, Core-normalisierte
+  Add/Update-/Hashanker, Repair-vor-Retry, manifestfreie Python-Tests über mehrere Wurzeln und die
+  Prozessbaumbeendigung bei Timeout ab. Der Live-Test bleibt wegen externer Laufzeit und Kosten
+  ignoriert; der deterministische End-to-End-Vertrag ist Teil jedes normalen Rust-Laufs.
 - Der erste U5-Agent-Workspace-Contract prüft die vollständige Goal-Neuanlage mit ausschließlich
   Core-generierten Task- und Kriterien-IDs sowie immutable Revisionen gegen einen sichtbar
   gebundenen Vorgänger. Application-Tests lehnen WebView-IDs bei Revision eins, erfundene

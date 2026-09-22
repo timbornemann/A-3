@@ -489,13 +489,14 @@ fn discover_python_unittest(
     index: &PublishedIndex,
     commands: &mut Vec<DiscoveredCommand>,
 ) -> Result<(), CommandDiscoveryFailure> {
-    let tests = index
+    let mut tests = index
         .publication()
         .graph()
         .files()
         .iter()
         .filter(|revision| is_python_test_path(revision.path()))
         .collect::<Vec<_>>();
+    tests.sort_by(|left, right| left.path().cmp(right.path()));
     let has_python_source = index.publication().graph().files().iter().any(|revision| {
         file_name(revision.path()).ends_with(b".py") && !is_python_test_path(revision.path())
     });
@@ -506,21 +507,31 @@ fn discover_python_unittest(
         .iter()
         .map(|revision| parent_path(revision.path()).to_vec())
         .collect::<BTreeSet<_>>();
-    let mut roots = roots.iter();
-    let Some(root) = roots.next() else {
-        return Ok(());
-    };
-    if roots.next().is_some() {
-        return Ok(());
-    }
-    let arguments = if root.is_empty() {
-        strings(&["-B", "-m", "unittest", "discover"])
-    } else {
-        let Ok(root) = std::str::from_utf8(root) else {
+    let arguments = if roots.len() == 1 {
+        let Some(root) = roots.first() else {
             return Ok(());
         };
-        let mut arguments = strings(&["-B", "-m", "unittest", "discover", "-s"]);
-        arguments.push(root.to_owned());
+        if root.is_empty() {
+            strings(&["-B", "-m", "unittest", "discover"])
+        } else {
+            let Ok(root) = std::str::from_utf8(root) else {
+                return Ok(());
+            };
+            let mut arguments = strings(&["-B", "-m", "unittest", "discover", "-s"]);
+            arguments.push(root.to_owned());
+            arguments
+        }
+    } else {
+        // Discovery has one start directory, so mixed roots would otherwise make a valid
+        // manifest-free project unverifiable. Bind every exact current test path into one argv
+        // instead; unittest accepts repository-relative file paths without a shell.
+        let mut arguments = strings(&["-B", "-m", "unittest"]);
+        for test in &tests {
+            let Ok(path) = std::str::from_utf8(test.path().as_bytes()) else {
+                return Ok(());
+            };
+            arguments.push(path.to_owned());
+        }
         arguments
     };
     commands.push(DiscoveredCommand::try_new(
@@ -743,7 +754,7 @@ mod tests {
     }
 
     #[test]
-    fn manifest_free_unittest_requires_one_test_root_and_a_python_source()
+    fn manifest_free_unittest_supports_multiple_test_roots_and_requires_python_source()
     -> Result<(), Box<dyn Error>> {
         let test_a = a3_domain::FileRevision::new(
             RepositoryPath::try_from_bytes(b"tests/test_a.py".to_vec())?,
@@ -765,13 +776,20 @@ mod tests {
                 .commands()
                 .is_empty()
         );
-        let ambiguous = published_index(vec![source, test_a, test_b])?;
-        assert!(
-            DiscoverProjectCommands
-                .execute(worktree, &ambiguous)?
-                .commands()
-                .is_empty()
+        let multiple_roots = published_index(vec![source, test_a.clone(), test_b.clone()])?;
+        let catalog = DiscoverProjectCommands.execute(worktree, &multiple_roots)?;
+        assert_eq!(catalog.commands().len(), 1);
+        assert_eq!(
+            catalog.commands()[0]
+                .arguments()
+                .iter()
+                .map(|argument| argument.as_str())
+                .collect::<Vec<_>>(),
+            ["-B", "-m", "unittest", "spec/test_b.py", "tests/test_a.py"]
         );
+        assert_eq!(catalog.commands()[0].evidence().len(), 2);
+        assert_eq!(catalog.commands()[0].evidence()[0].revision(), &test_b);
+        assert_eq!(catalog.commands()[0].evidence()[1].revision(), &test_a);
         Ok(())
     }
 

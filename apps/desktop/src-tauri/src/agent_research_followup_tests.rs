@@ -1062,7 +1062,7 @@ fn empty_project_plan_and_agent_reach_a_grounded_atomic_work_plan_without_source
                 .await?
                 .ok_or("materialized ledger")?;
                 assert_eq!(stored.ledger().goal_contract(), goal.reference());
-                assert_eq!(stored.ledger().steps().count(), 6);
+                assert_eq!(stored.ledger().steps().count(), 3);
                 let active = stored
                     .ledger()
                     .steps()

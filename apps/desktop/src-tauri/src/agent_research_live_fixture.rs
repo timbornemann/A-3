@@ -160,6 +160,10 @@ impl LiveResearchModel {
             "schema_grounding":format!("{:?}",self.profile.settings().schema_grounding())})
     }
 
+    pub(super) fn execution_parts(&self) -> (Arc<dyn a3_application::ModelProvider>, ModelProfile) {
+        (Arc::clone(&self.provider), self.profile.clone())
+    }
+
     pub(super) async fn complete_source_review(
         &self,
         transcript: &[(ModelMessageRole, String)],

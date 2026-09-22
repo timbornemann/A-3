@@ -504,6 +504,14 @@ der Modellausgabe entstehen. `ExecuteAgentTurn` autorisiert selbst weiterhin nur
 `AgentReadTools`-Port für `Search` und `Inspect` und gibt beide Mutationstypen unausgeführt an den
 E7-Controller weiter.
 
+Der Desktopproduktstandard `SourceGuided` zerlegt die Erzeugung einer aktuellen V5-Aktion in
+einen nicht ausführbaren SourceWork-Entscheid, einen geschlossenen ActionChoice und die variablen
+Argumente genau dieses Arms. Bekannte Run-, Worktree-, Snapshot-, Step- und Verificationwerte
+stammen ausschließlich aus dem Core. Eine Add/Update-Verwechslung sowie erwartete Hashes werden
+gegen die aktuelle Indexrevision desselben Pfads normalisiert; danach muss der unabhängige
+V5-Decoder das vollständige Dokument akzeptieren. Alle Stufen teilen eine Deadline, ein Budget
+und höchstens einen Repair.
+
 `AgentWorkPlan` ist die begrenzte Core-Zwischenform zwischen einem geprüften Conversation-Plan und
 dem autoritativen Ledger. Sie enthält höchstens 64 geordnete `AgentWorkPlanStep`-Werte mit Ergebnis,
 Begründung, erwarteter Evidence und der geschlossenen Verifikationsabsicht `Change | Test`.
@@ -513,12 +521,13 @@ zweite atomare Operation pensioniert offene Schritte und hängt das adaptive Tod
 an. Ein Modell kann damit Bedarf und Grund melden, aber weder historische Schritte ändern noch
 seine eigene Verifikation festlegen.
 
-Die eingebetteten `agent-action-v1`- bis `agent-action-v4`-JSON-Schemas setzen auf jeder
+Die eingebetteten `agent-action-v1`- bis `agent-action-v5`-JSON-Schemas setzen auf jeder
 Objektebene `additionalProperties: false`; getrennte Runtime-Decoder prüfen das vollständige
 Dokument bis 64 KiB erneut gegen exakte Schlüssel, Version, lowercase IDs, sichere Pfade, Zahlen-,
 Text- und Patchgrößen sowie Domaininvarianten. V1 bis V3 bleiben rückwärtskompatibel decodierbar,
-während neu kompilierter Kontext ausschließlich V4 verlangt. V4 ergänzt den begrenzten
-`FunctionFlowReadRequest` nach [ADR-0045](FAST_INDEX_FLOWS.md). Der aktuelle statische Systemvertrag kostet
+während neu kompilierter Kontext ausschließlich das statusfreie V5 verlangt. V4 ergänzt den
+begrenzten `FunctionFlowReadRequest` nach [ADR-0045](FAST_INDEX_FLOWS.md); V5 entfernt nur die
+modellgenerierte öffentliche Statusnotiz. Der aktuelle statische Systemvertrag kostet
 mit der konservativen Zählung weniger als 900 Tokens und kann nur für ein ModelProfile mit live verifiziertem
 Structured Output vorbereitet werden. Profilabhängiges Schema-Grounding wiederholt bei Bedarf
 dieselbe kanonische Schemafassung. Ein ungültiges Primärergebnis erzeugt genau eine nicht clonebare,
@@ -683,6 +692,12 @@ package-lokales `WorkspaceDirectory`, direktes Executable, einzelne argv-Werte u
 aktuelle `FileRevision`- oder `EvidenceRef`-Belege. `DiscoveredCommandId` und `CommandCatalogId`
 werden domain-separiert aus diesen Feldern abgeleitet; eine relevante Manifest- oder
 Package-Manager-Änderung erzeugt deshalb eine andere Identität.
+
+Für ein manifestfreies Python-Projekt kann derselbe V1-Katalog genau einen direkten
+Standardbibliotheks-`unittest`-Command aus höchstens 16 aktuellen `test*.py`-Revisionen und einer
+Produktions-Python-Datei ableiten. Eine gemeinsame Wurzel nutzt Discovery; mehrere Wurzeln werden
+als geordnete exakte relative argv-Pfade gebunden. Test/Build tragen 120 Sekunden, Lint/Format 60
+Sekunden als unveränderliche positive Timeouts.
 
 Eine Anzeige wird bereits als `ProcessSpec` erzeugt, bleibt aber
 `ProcessPlanBinding::Unbound` und ist damit nicht automatisch ausführbar. Der Benutzer kann eine

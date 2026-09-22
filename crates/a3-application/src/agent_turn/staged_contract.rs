@@ -1,6 +1,6 @@
 //! Pure projection of the current action schema; never a tool or policy authority.
 use crate::{ModelMessage, ModelMessageRole, ModelProviderRequest, StructuredOutputSchema};
-use a3_domain::ModelPromptSchemaGrounding;
+use a3_domain::{ModelPromptSchemaGrounding, PublishedIndex, RepositoryPath};
 use serde_json::{Map, Value, json};
 
 type ChoiceDefinition = (
@@ -8,7 +8,7 @@ type ChoiceDefinition = (
     &'static str,
     Option<(&'static str, &'static str)>,
 );
-const CHOICES: [ChoiceDefinition; 16] = [
+const CHOICES: [ChoiceDefinition; 17] = [
     ("search", "search", None),
     ("inspect_file", "inspect", Some(("target", "fileTarget"))),
     (
@@ -56,6 +56,7 @@ const CHOICES: [ChoiceDefinition; 16] = [
         "applyPatch",
         Some(("operations", "patchDelete")),
     ),
+    ("patch_mixed", "applyPatch", None),
     ("run", "run", None),
 ];
 
@@ -82,6 +83,7 @@ impl ChoiceScope {
                     | "patch_update"
                     | "patch_move"
                     | "patch_delete"
+                    | "patch_mixed"
                     | "request_replan"
                     | "report_blocked"
             ),
@@ -93,7 +95,7 @@ impl ChoiceScope {
         match self {
             Self::All => CHOICE_PROMPT,
             Self::Changes => {
-                "ActionChoice V1: you selected continue_change. Choose the operation for the concrete remaining change from this enum. patch_update edits existing files; patch_add creates; patch_move renames; patch_delete removes. request_replan stays within the goal; report_blocked requires an essential missing user decision. Return only version and choice, no arguments or code. Do not repeat already applied changes."
+                "ActionChoice V1: you selected continue_change. Choose the operation for the concrete remaining change from this enum. patch_update edits existing files; patch_add creates; patch_move renames; patch_delete removes; patch_mixed is only for one coherent batch that needs different file-operation kinds. request_replan stays within the goal; report_blocked requires an essential missing user decision. Return only version and choice, no arguments or code. Do not repeat already applied changes."
             }
             Self::Evidence => {
                 "ActionChoice V1: you selected need_evidence. Choose only the read action for the specific missing evidence from this enum. Return only version and choice, no arguments, code or status. Do not repeat already supplied evidence."
@@ -175,6 +177,14 @@ impl Arguments {
         })
     }
 
+    pub(super) fn mixed_patch(base: &Value) -> Option<Self> {
+        let choice = CHOICES
+            .iter()
+            .position(|definition| definition.0 == "patch_mixed")
+            .map(Choice)?;
+        Self::new(base, choice)
+    }
+
     pub(super) fn assemble(&self, raw: &str) -> Option<String> {
         let value: Value = serde_json::from_str(raw).ok()?;
         let fields = value.as_object()?;
@@ -184,6 +194,61 @@ impl Arguments {
         let action = hydrate(&self.action, fields.get("parameters")?)?;
         Some(json!({"schema_version":5,"action":action}).to_string())
     }
+}
+
+pub(super) fn bind_current_patch_revisions(
+    raw: &str,
+    published: Option<&PublishedIndex>,
+) -> Option<String> {
+    let Some(published) = published else {
+        return Some(raw.to_owned());
+    };
+    let mut value: Value = serde_json::from_str(raw).ok()?;
+    let action = value.get_mut("action")?.as_object_mut()?;
+    if action.get("kind")?.as_str()? != "apply_patch" {
+        return Some(raw.to_owned());
+    }
+    let operations = action.get_mut("operations")?.as_array_mut()?;
+    let files = published.publication().graph().files();
+    for operation in operations {
+        let operation = operation.as_object_mut()?;
+        let path = operation.get("path")?.as_str()?;
+        let path = RepositoryPath::try_from_bytes(path.as_bytes().to_vec()).ok()?;
+        let current = files
+            .binary_search_by(|revision| revision.path().cmp(&path))
+            .ok()
+            .map(|position| &files[position]);
+        let kind = operation.get("kind")?.as_str()?;
+        match (kind, current) {
+            ("add", Some(revision)) => {
+                operation.insert("kind".to_owned(), Value::String("update".to_owned()));
+                operation.insert(
+                    "expected_hash".to_owned(),
+                    Value::String(hex_hash(revision.content_hash().as_bytes())),
+                );
+            }
+            ("update", None) => {
+                operation.insert("kind".to_owned(), Value::String("add".to_owned()));
+                operation.remove("expected_hash");
+            }
+            ("update" | "move" | "delete", Some(revision)) => {
+                operation.insert(
+                    "expected_hash".to_owned(),
+                    Value::String(hex_hash(revision.content_hash().as_bytes())),
+                );
+            }
+            ("add", None) | ("move" | "delete", None) => {}
+            _ => return None,
+        }
+    }
+    serde_json::to_string(&value).ok()
+}
+
+fn hex_hash(bytes: &[u8; 32]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
 }
 
 fn inline(schema: &Value, defs: &Value, depth: u8) -> Option<Value> {

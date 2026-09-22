@@ -25,7 +25,7 @@ mod source_guidance;
 mod staged;
 mod staged_contract;
 
-/// Explicit generation strategy. The desktop product keeps the single-call baseline.
+/// Explicit generation strategy. Product composition roots select their reviewed default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AgentActionGeneration {
     /// One complete V5 action and at most its sole repair.
@@ -35,7 +35,7 @@ pub enum AgentActionGeneration {
     SelectThenFill,
     /// Controlled comparison: guide the next work decision after an actual patch receipt.
     ReviewThenSelect,
-    /// Controlled comparison: guide work from actually delivered current originals too.
+    /// Guide work from actually delivered current originals and bounded read receipts.
     SourceGuided,
 }
 

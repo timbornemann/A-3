@@ -1,9 +1,13 @@
 //! Source-guided routing and repeat admission use typed compiler output, not prompt parsing.
 use super::*;
-use crate::{AgentSourcePage, ContextOriginalSource};
+use crate::{AgentSourcePage, ContextOriginalSource, ContextToolResult};
 use a3_domain::{
-    AgentFileStartLine, ContentHash, FileRevision, RepositoryPath, SourcePosition, SourceRange,
+    AgentFileStartLine, ContentHash, FileRevision, IndexPublication, IndexRunId, IndexRunRecord,
+    IndexRunSequence, IndexRunStatus, LinkedGraph, ModulePolicyVersion, ModuleProjection,
+    ModuleSymbolSet, PublishedIndex, RankProjection, RankingPolicyVersion, RepositoryCard,
+    RepositoryPath, SourcePosition, SourceRange,
 };
+use serde_json::json;
 
 const READ: &str = r#"{"version":1,"next":"need_evidence"}"#;
 const VERIFY: &str = r#"{"version":1,"next":"verify"}"#;
@@ -29,7 +33,7 @@ fn source(snapshot: SnapshotId, hash: u8) -> Result<ContextOriginalSource, Box<d
 }
 
 #[test]
-fn source_work_routes_without_self_verification_and_rejects_redundant_file_before_tool()
+fn source_work_routes_without_self_verification_and_redirects_redundant_reads_before_tool()
 -> Result<(), Box<dyn Error>> {
     let patch = r#"{"version":1,"choice":"patch_update"}"#;
     let patch_args = format!(
@@ -47,23 +51,17 @@ fn source_work_routes_without_self_verification_and_rejects_redundant_file_befor
             false,
             "search",
         ),
-        (vec![READ, FILE, REPEAT, OTHER], true, 1, true, "file"),
+        (vec![READ, FILE, OTHER], true, 1, false, "file"),
+        (vec![READ, FILE, REPEAT, VERIFY], true, 0, false, "run"),
         (
-            vec![READ, FILE, REPEAT, REPEAT],
-            false,
-            0,
+            vec![READ, FILE, REPEAT, CHANGE, patch, &patch_args],
             true,
-            "duplicate",
+            0,
+            false,
+            "patch",
         ),
         (
-            vec!["{}", READ, FILE, REPEAT, OTHER],
-            false,
-            0,
-            true,
-            "duplicate",
-        ),
-        (
-            vec![READ, FILE, REPEAT, SEARCH_ARGUMENTS],
+            vec![READ, FILE, REPEAT, "{}", "{}"],
             false,
             0,
             true,
@@ -114,21 +112,11 @@ fn source_work_routes_without_self_verification_and_rejects_redundant_file_befor
                 });
                 execution.charge()
             }
-            AgentTurnOutcome::Rejected(rejected) => {
-                if kind == "duplicate" {
-                    assert_eq!(
-                        rejected.reason(),
-                        AgentTurnRejectionReason::Staged(
-                            StagedActionFailure::SourceAlreadySupplied
-                        )
-                    );
-                }
-                rejected.charge()
-            }
+            AgentTurnOutcome::Rejected(rejected) => rejected.charge(),
             _ => return Err("unexpected outcome".into()),
         };
         let requests = provider.requests.lock().map_err(|_| "poison")?;
-        assert_eq!(requests.len(), raw.len().min(4));
+        assert_eq!(requests.len(), raw.len());
         assert_eq!(
             requests[0].structured_output().ok_or("schema")?.value()["title"],
             "A^3 SourceWork V1"
@@ -197,6 +185,10 @@ fn source_work_requires_actual_current_delivery_and_operational_step() -> Result
             decision::planned_verification(&fixture.input, &fixture.run, &sources).is_some(),
             expected
         );
+        assert_eq!(
+            decision::available(&fixture.input, &fixture.run, &sources),
+            delivery
+        );
         assert!(
             decision::planned_verification(
                 &fixture.input,
@@ -211,8 +203,14 @@ fn source_work_requires_actual_current_delivery_and_operational_step() -> Result
         r#"{"version":2,"next":"change"}"#,
         r#"{"version":1,"next":"verify","passed":true}"#,
     ] {
-        assert!(decision::decode(raw).is_none());
+        assert!(decision::decode(raw, true, true).is_none());
     }
+    assert!(decision::decode(READ, false, false).is_none());
+    assert_eq!(
+        decision::schema(false, false)["properties"]["next"]["enum"],
+        json!(["change"])
+    );
+    assert!(decision::prompt(false, false, true).contains("read budget"));
     let fixture = staged_fixture(&[])?;
     assert!(
         fixture
@@ -229,6 +227,331 @@ fn source_work_requires_actual_current_delivery_and_operational_step() -> Result
     );
     assert_ne!(source(snapshot(), 1)?, source(snapshot(), 2)?);
     Ok(())
+}
+
+#[test]
+fn source_work_routes_non_operational_change_steps_without_offering_verify()
+-> Result<(), Box<dyn Error>> {
+    let patch = r#"{"version":1,"choice":"patch_update"}"#;
+    let patch_args = format!(
+        r#"{{"version":1,"parameters":{{"rationale":"Implement the current requirement","operations":[{{"path":"increment.py","expected_hash":"{}","content":"value = 2\n"}}]}}}}"#,
+        "ab".repeat(32)
+    );
+    let mut fixture = staged_fixture_with_command(&[CHANGE, patch, &patch_args], None)?;
+    fixture.compiled = fixture
+        .compiled
+        .with_original_sources(vec![source(snapshot(), 0xab)?])?;
+    let compiler = RepeatStagedCompiler {
+        template: fixture.compiled,
+        calls: AtomicUsize::new(0),
+        change_after: None,
+    };
+    let provider = RecordingReplanProvider {
+        inner: ScriptedProvider {
+            provider_id: fixture.profile.provider_id().clone(),
+            responses: Mutex::new(fixture.responses),
+        },
+        requests: Mutex::new(Vec::new()),
+    };
+    let tools = CountingReadTools {
+        calls: AtomicUsize::new(0),
+    };
+    let recovery = TestRecoveryStore::default();
+
+    let result = futures::executor::block_on(
+        ExecuteAgentTurn::new(&compiler, &provider, &tools, &recovery)
+            .with_action_generation(AgentActionGeneration::SourceGuided)
+            .execute(&fixture.run, &fixture.input, timestamp(5)?, &TestControl),
+    )?;
+
+    assert!(matches!(
+        result,
+        AgentTurnOutcome::Executed(execution)
+            if matches!(execution.action(), AgentAction::ApplyPatch(_))
+    ));
+    let requests = provider.requests.lock().map_err(|_| "poison")?;
+    let first = requests.first().ok_or("source decision request")?;
+    let choices = first.structured_output().ok_or("schema")?.value()["properties"]["next"]["enum"]
+        .as_array()
+        .ok_or("choice enum")?;
+    assert_eq!(choices, &vec![json!("change"), json!("need_evidence")]);
+    assert!(first.messages().iter().any(|message| {
+        message
+            .content()
+            .contains("This step has no directly requestable command")
+    }));
+    assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[test]
+fn exhausted_reads_route_to_change_even_without_a_current_original() -> Result<(), Box<dyn Error>> {
+    let add = r#"{"version":1,"choice":"patch_add"}"#;
+    let add_args = r#"{"version":1,"parameters":{"rationale":"Implement the current requirement","operations":[{"path":"server.py","content":"print('hello')\n"}]}}"#;
+    let mut fixture = staged_fixture_with_command(&[CHANGE, add, add_args], None)?;
+    let tool_results = (1_u8..=4)
+        .map(|id| {
+            Ok(ContextToolResult::new(
+                RunEventSequence::new(u64::from(id) + 10)?,
+                ToolRunId::from_bytes([id; 32]),
+                ContextToolResultStatus::Succeeded,
+                ContextToolResultPreview::try_from_string("bounded read receipt".to_owned())?,
+                ContextToolResultDigest::from_bytes([id; 32]),
+                false,
+                snapshot(),
+                snapshot(),
+            ))
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    fixture.input = AgentContextCompileInput::new(
+        fixture.input.project().clone(),
+        fixture.input.goal_contract().clone(),
+        fixture.input.task_ledger().clone(),
+        fixture.input.current_step_id(),
+        fixture.profile.clone(),
+        None,
+        Vec::new(),
+        tool_results,
+    )?;
+    let compiler = RepeatStagedCompiler {
+        template: fixture.compiled,
+        calls: AtomicUsize::new(0),
+        change_after: None,
+    };
+    let provider = RecordingReplanProvider {
+        inner: ScriptedProvider {
+            provider_id: fixture.profile.provider_id().clone(),
+            responses: Mutex::new(fixture.responses),
+        },
+        requests: Mutex::new(Vec::new()),
+    };
+    let tools = CountingReadTools {
+        calls: AtomicUsize::new(0),
+    };
+    let recovery = TestRecoveryStore::default();
+
+    let result = futures::executor::block_on(
+        ExecuteAgentTurn::new(&compiler, &provider, &tools, &recovery)
+            .with_action_generation(AgentActionGeneration::SourceGuided)
+            .execute(&fixture.run, &fixture.input, timestamp(5)?, &TestControl),
+    )?;
+
+    assert!(matches!(
+        result,
+        AgentTurnOutcome::Executed(execution)
+            if matches!(execution.action(), AgentAction::ApplyPatch(_))
+    ));
+    let requests = provider.requests.lock().map_err(|_| "poison")?;
+    let first = requests.first().ok_or("bounded decision request")?;
+    assert_eq!(
+        first.structured_output().ok_or("schema")?.value()["properties"]["next"]["enum"],
+        json!(["change"])
+    );
+    assert!(first.messages().iter().any(|message| {
+        message
+            .content()
+            .contains("No further read may be requested in this attempt")
+    }));
+    assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[test]
+fn existing_add_is_deterministically_reconciled_to_a_current_revision_update()
+-> Result<(), Box<dyn Error>> {
+    let add = r#"{"version":1,"choice":"patch_add"}"#;
+    let add_args = r#"{"version":1,"parameters":{"rationale":"Implement the current requirement","operations":[{"path":"increment.py","content":"value = 2\n"}]}}"#;
+    let mixed_update_args = format!(
+        r#"{{"version":1,"parameters":{{"rationale":"Implement the current requirement","operations":[{{"kind":"update","path":"increment.py","expected_hash":"{}","content":"value = 2\n"}}]}}}}"#,
+        "ab".repeat(32)
+    );
+    let mut fixture =
+        staged_fixture_with_command(&[CHANGE, add, add_args, &mixed_update_args], None)?;
+    fixture.compiled = fixture
+        .compiled
+        .with_original_sources(vec![source(snapshot(), 0xab)?])?;
+    let compiler = RepeatStagedCompiler {
+        template: fixture.compiled,
+        calls: AtomicUsize::new(0),
+        change_after: None,
+    };
+    let provider = RecordingReplanProvider {
+        inner: ScriptedProvider {
+            provider_id: fixture.profile.provider_id().clone(),
+            responses: Mutex::new(fixture.responses),
+        },
+        requests: Mutex::new(Vec::new()),
+    };
+    let tools = CountingReadTools {
+        calls: AtomicUsize::new(0),
+    };
+    let recovery = TestRecoveryStore::default();
+    let published = published_with_increment()?;
+
+    let result = futures::executor::block_on(
+        ExecuteAgentTurn::new(&compiler, &provider, &tools, &recovery)
+            .with_patch_snapshot(&published)
+            .with_action_generation(AgentActionGeneration::SourceGuided)
+            .execute(&fixture.run, &fixture.input, timestamp(5)?, &TestControl),
+    )?;
+
+    let AgentTurnOutcome::Executed(execution) = result else {
+        return Err(format!("repair did not produce an update: {result:?}").into());
+    };
+    let AgentAction::ApplyPatch(patch) = execution.action() else {
+        return Err("current inventory reconciliation did not produce a patch".into());
+    };
+    assert!(matches!(
+        patch.operations(),
+        [a3_domain::PatchOperation::Update(_)]
+    ));
+    assert_eq!(execution.charge().repair(), AgentTurnRepairUsage::None);
+    let requests = provider.requests.lock().map_err(|_| "poison")?;
+    assert_eq!(requests.len(), 3);
+    assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[test]
+fn absent_update_is_deterministically_reconciled_to_an_add() -> Result<(), Box<dyn Error>> {
+    let update = r#"{"version":1,"choice":"patch_update"}"#;
+    let update_args = format!(
+        r#"{{"version":1,"parameters":{{"rationale":"Implement the current requirement","operations":[{{"path":"server.py","expected_hash":"{}","content":"print('hello')\n"}}]}}}}"#,
+        "ab".repeat(32)
+    );
+    let mixed_add_args = r#"{"version":1,"parameters":{"rationale":"Implement the current requirement","operations":[{"kind":"add","path":"server.py","content":"print('hello')\n"}]}}"#;
+    let mut fixture =
+        staged_fixture_with_command(&[CHANGE, update, &update_args, mixed_add_args], None)?;
+    fixture.compiled = fixture
+        .compiled
+        .with_original_sources(vec![source(snapshot(), 0xab)?])?;
+    let compiler = RepeatStagedCompiler {
+        template: fixture.compiled,
+        calls: AtomicUsize::new(0),
+        change_after: None,
+    };
+    let provider = RecordingReplanProvider {
+        inner: ScriptedProvider {
+            provider_id: fixture.profile.provider_id().clone(),
+            responses: Mutex::new(fixture.responses),
+        },
+        requests: Mutex::new(Vec::new()),
+    };
+    let tools = CountingReadTools {
+        calls: AtomicUsize::new(0),
+    };
+    let recovery = TestRecoveryStore::default();
+    let published = published_with_increment()?;
+
+    let result = futures::executor::block_on(
+        ExecuteAgentTurn::new(&compiler, &provider, &tools, &recovery)
+            .with_patch_snapshot(&published)
+            .with_action_generation(AgentActionGeneration::SourceGuided)
+            .execute(&fixture.run, &fixture.input, timestamp(5)?, &TestControl),
+    )?;
+
+    let AgentTurnOutcome::Executed(execution) = result else {
+        return Err(format!("repair did not produce an add: {result:?}").into());
+    };
+    let AgentAction::ApplyPatch(patch) = execution.action() else {
+        return Err("current inventory reconciliation did not produce a patch".into());
+    };
+    assert!(matches!(
+        patch.operations(),
+        [a3_domain::PatchOperation::Add(_)]
+    ));
+    assert_eq!(execution.charge().repair(), AgentTurnRepairUsage::None);
+    let requests = provider.requests.lock().map_err(|_| "poison")?;
+    assert_eq!(requests.len(), 3);
+    assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[test]
+fn staged_update_binds_the_current_index_revision_instead_of_model_hash()
+-> Result<(), Box<dyn Error>> {
+    let update = r#"{"version":1,"choice":"patch_update"}"#;
+    let update_args = format!(
+        r#"{{"version":1,"parameters":{{"rationale":"Implement the current requirement","operations":[{{"path":"increment.py","expected_hash":"{}","content":"value = 2\n"}}]}}}}"#,
+        "cd".repeat(32)
+    );
+    let mut fixture = staged_fixture_with_command(&[CHANGE, update, &update_args], None)?;
+    fixture.compiled = fixture
+        .compiled
+        .with_original_sources(vec![source(snapshot(), 0xab)?])?;
+    let compiler = RepeatStagedCompiler {
+        template: fixture.compiled,
+        calls: AtomicUsize::new(0),
+        change_after: None,
+    };
+    let provider = ScriptedProvider {
+        provider_id: fixture.profile.provider_id().clone(),
+        responses: Mutex::new(fixture.responses),
+    };
+    let tools = CountingReadTools {
+        calls: AtomicUsize::new(0),
+    };
+    let recovery = TestRecoveryStore::default();
+    let published = published_with_increment()?;
+
+    let result = futures::executor::block_on(
+        ExecuteAgentTurn::new(&compiler, &provider, &tools, &recovery)
+            .with_patch_snapshot(&published)
+            .with_action_generation(AgentActionGeneration::SourceGuided)
+            .execute(&fixture.run, &fixture.input, timestamp(5)?, &TestControl),
+    )?;
+
+    let AgentTurnOutcome::Executed(execution) = result else {
+        return Err(format!("current revision binding rejected the update: {result:?}").into());
+    };
+    let AgentAction::ApplyPatch(patch) = execution.action() else {
+        return Err("current revision binding did not produce a patch".into());
+    };
+    let a3_domain::PatchOperation::Update(update) = &patch.operations()[0] else {
+        return Err("current revision binding did not retain update".into());
+    };
+    assert_eq!(
+        update.expected().content_hash(),
+        ContentHash::from_bytes([0xab; 32])
+    );
+    assert_eq!(execution.charge().repair(), AgentTurnRepairUsage::None);
+    assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+fn published_with_increment() -> Result<PublishedIndex, Box<dyn Error>> {
+    let revision = FileRevision::new(
+        RepositoryPath::try_from_bytes(b"increment.py".to_vec())?,
+        ContentHash::from_bytes([0xab; 32]),
+    );
+    let graph = LinkedGraph::new(
+        snapshot(),
+        vec![revision],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    )?;
+    let ranking = RankProjection::new(snapshot(), RankingPolicyVersion::v1(), Vec::new())?;
+    let policy = ModulePolicyVersion::v1();
+    let card = RepositoryCard::new(
+        snapshot(),
+        policy,
+        Vec::new(),
+        Vec::new(),
+        ModuleSymbolSet::empty(),
+        1,
+        0,
+    )?;
+    let modules = ModuleProjection::new(snapshot(), policy, Vec::new(), Vec::new(), card)?;
+    let publication = IndexPublication::new(graph, ranking, Vec::new(), modules)?;
+    let run = IndexRunRecord::new(
+        IndexRunId::from_bytes([12; 32]),
+        snapshot(),
+        RankingPolicyVersion::v1(),
+        IndexRunSequence::new(1)?,
+        IndexRunStatus::Published,
+    );
+    Ok(PublishedIndex::new(run, publication)?)
 }
 
 #[test]

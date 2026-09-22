@@ -597,7 +597,10 @@ Recherchebudget oder fachliche Autorität.
 4. Der Application-Kern ruft den neutralen `ModelProvider` mit Gesamttimeout und Cancellation auf;
    der konkrete Adapter übersetzt den begrenzten Stream in `ProviderEvent`s.
 5. Das Modellresultat wird erst nach einem terminalen Provider-Event als vollständige Ausgabe
-   behandelt und liefert anschließend eine streng validierte Aktion.
+   behandelt. Der Desktopstandard `SourceGuided` wählt aus aktuellen Originalen zunächst nur
+   Änderung, geplante Verifikation oder fehlende Evidence, danach den geschlossenen Aktionsarm und
+   schließlich dessen variable Argumente. Der Core bindet alle bekannten Anker und dekodiert die
+   zusammengesetzte V5-Aktion erneut unabhängig.
 6. Jede typisierte Action durchläuft genau einmal den zentralen `EvaluateActionPolicy`-Use-Case.
    Aktionsklasse und Risiko werden aus der Action abgeleitet; die feste Systempolicy wird nur durch
    restriktivere Workspace-Regeln überlagert. Ergebnis ist eine begründete `PolicyDecision` mit
@@ -687,13 +690,24 @@ enthält vollständige Bytezähler und Digests, aber nur secret-geprüfte begren
 weder Verification-Klassifikation aus E6 noch die controllerweite Mutationsserialisierung und
 Evidence-Invalidierung aus E7 vorweg.
 
+Entdeckte Test-/Build-Specs laufen höchstens 120 Sekunden, Lint-/Format-Specs höchstens 60
+Sekunden. Liefert der Runner danach ein normalisiertes `TimedOut`, ist der gesamte Prozessbaum
+bereits beendet. E7 publiziert vor weiterer Modellarbeit einen vollständigen frischen Index und
+öffnet den normalen fehlgeschlagenen-Verifikations-Replan; Cancellation oder ein nicht sicher
+eingesammelter Prozess bleiben im Recovery-Vertrag reconciliation-pflichtig.
+
 M7/E5 liest keine Manifestdatei erneut und vertraut keinem Repositorytext als Instruktion. Der
-Application-Use-Case `DiscoverProjectCommands` konsumiert ausschließlich `manifest_files` und
-`Manifest`-Relationen eines atomar publizierten `PublishedIndex`. Rust-Befehle verwenden direkte
+Application-Use-Case `DiscoverProjectCommands` konsumiert ausschließlich `manifest_files`,
+`Manifest`-Relationen und die geschlossene Dateirevisionsmenge eines atomar publizierten
+`PublishedIndex`. Rust-Befehle verwenden direkte
 Cargo-argv mit `--offline` und für Test, Build und Clippy zusätzlich `--locked`. Node-Befehle werden
 nur für explizite test-, build-, lint- oder format-Skriptnamen und genau einen durch aktuellen
-pnpm-, npm- oder Yarn-Marker belegten Package Manager erzeugt. Python-Befehle entstehen nur aus
-belegten Build-, pytest-, Ruff-, Black- oder Mypy-Relationen. Package-Eltern bestimmen das
+pnpm-, npm- oder Yarn-Marker belegten Package Manager erzeugt. Python-Befehle entstehen aus
+belegten Build-, pytest-, Ruff-, Black- oder Mypy-Relationen. Ohne Python-Manifest erzeugt eine
+geschlossene Standardbibliotheks-Fallbackregel genau einen `unittest`-Command aus höchstens 16
+aktuellen `test*.py`-Revisionen und mindestens einer Produktions-Python-Datei. Bei einer
+Testwurzel nutzt sie `discover`; bei mehreren Wurzeln bindet sie alle exakten relativen Testpfade
+als getrennte argv-Werte. Package-Eltern bestimmen das
 `WorkspaceDirectory`; mehrdeutige Node-Package-Manager und alle Install-/Lifecycle-Skripte liefern
 kein Kommando.
 
@@ -724,6 +738,12 @@ Dieser Application-Use-Case komponiert die bereits vorhandenen schmalen Ports un
 vom Composition Root injizierten `WorktreeMutationCoordinator`-Lease. Damit kann pro Worktree
 controllerweit nur eine Patch- oder Process-Mutation gleichzeitig laufen, ohne einen globalen
 Singleton oder einen Mutex-Guard über asynchrone Adapteraufrufe zu halten.
+
+Der Desktop-Composition-Root erzeugt diese V5-Aktion mit `SourceGuided`: SourceWork, geschlossene
+Aktionswahl und armspezifische Argumente sind einzeln nicht ausführbar. Bekannte Controlleranker
+werden vom Core ergänzt; Add/Update und erwartete Hashes werden nur gegen dieselbe aktuelle
+Indexrevision normalisiert. Erst die vollständig zusammengesetzte Aktion durchläuft erneut den
+unabhängigen Decoder und anschließend den unveränderten Policy-/Approvalpfad.
 
 Die Reihenfolge ist fest: Action-/Ledger-/Snapshotanker prüfen, Worktree-Lease erwerben,
 Patchvorschau gegebenenfalls bilden, zentrale Policyentscheidung samt Approvalzustand

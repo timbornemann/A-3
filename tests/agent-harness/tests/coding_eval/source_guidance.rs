@@ -2,20 +2,19 @@
 use super::*;
 use a3_application::{
     AgentActionGeneration, AgentContextCompileInput, AgentContextCompiler, AgentTurnOutcome,
-    AgentTurnRejectionReason, ExecuteAgentTurn, ModelFinishReason, ModelOperationControl,
-    ModelOutputChunk, ModelProvider, ModelProviderCompletion, ModelProviderFuture,
-    ModelProviderRequest, ModelProviderUsage, ModelRequestTimeout, ProviderEvent,
-    StagedActionFailure,
+    ExecuteAgentTurn, ModelFinishReason, ModelOperationControl, ModelOutputChunk, ModelProvider,
+    ModelProviderCompletion, ModelProviderFuture, ModelProviderRequest, ModelProviderUsage,
+    ModelRequestTimeout, ProviderEvent,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug)]
-struct RepeatedReadProvider {
+struct RedundantReadProvider {
     provider_id: ModelProviderId,
     calls: AtomicUsize,
 }
 
-impl ModelProvider for RepeatedReadProvider {
+impl ModelProvider for RedundantReadProvider {
     fn provider_id(&self) -> &ModelProviderId {
         &self.provider_id
     }
@@ -27,13 +26,14 @@ impl ModelProvider for RepeatedReadProvider {
         _: &'a dyn ModelOperationControl,
     ) -> ModelProviderFuture<'a> {
         Box::pin(async move {
-            self.calls.fetch_add(1, Ordering::SeqCst);
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
             let title = request
                 .structured_output()
                 .and_then(|s| s.value().get("title"))
                 .and_then(|t| t.as_str());
             let raw = match title {
-                Some("A^3 SourceWork V1") => r#"{"version":1,"next":"need_evidence"}"#,
+                Some("A^3 SourceWork V1") if call == 0 => r#"{"version":1,"next":"need_evidence"}"#,
+                Some("A^3 SourceWork V1") => r#"{"version":1,"next":"verify"}"#,
                 Some("A^3 ActionChoice V1") => r#"{"version":1,"choice":"inspect_file"}"#,
                 Some("A^3 ActionArguments V1") => {
                     r#"{"version":1,"parameters":{"target":{"path":"increment.py","start_line":1,"line_count":64}}}"#
@@ -56,7 +56,7 @@ impl ModelProvider for RepeatedReadProvider {
 }
 
 #[test]
-fn real_source_guided_pack_rejects_an_already_delivered_file_before_tool_execution()
+fn real_source_guided_pack_redirects_an_already_delivered_file_before_tool_execution()
 -> Result<(), Box<dyn Error>> {
     run_libsql_test(async {
         let case = small_local_bugfix();
@@ -121,7 +121,7 @@ fn real_source_guided_pack_rejects_an_already_delivered_file_before_tool_executi
                 .await?
                 .original_sources()
         );
-        let provider = RepeatedReadProvider {
+        let provider = RedundantReadProvider {
             provider_id: durable.profile.provider_id().clone(),
             calls: AtomicUsize::new(0),
         };
@@ -136,20 +136,17 @@ fn real_source_guided_pack_rejects_an_already_delivered_file_before_tool_executi
             .with_action_generation(AgentActionGeneration::SourceGuided)
             .execute(&durable.run, &input, timestamp(15)?, &ActiveControl)
             .await?;
-        let AgentTurnOutcome::Rejected(rejected) = outcome else {
+        let AgentTurnOutcome::Executed(execution) = outcome else {
             return Err(test_error(
-                "already delivered read crossed the tool boundary",
+                "redundant read did not reach planned verification",
             ));
         };
+        assert!(matches!(execution.action(), a3_domain::AgentAction::Run(_)));
         assert_eq!(
-            rejected.reason(),
-            AgentTurnRejectionReason::Staged(StagedActionFailure::SourceAlreadySupplied)
+            execution.charge().repair(),
+            a3_domain::AgentTurnRepairUsage::None
         );
-        assert_eq!(
-            rejected.charge().repair(),
-            a3_domain::AgentTurnRepairUsage::One
-        );
-        assert_eq!(rejected.charge().prompt_tokens().get(), 400);
+        assert_eq!(execution.charge().prompt_tokens().get(), 400);
         assert_eq!(provider.calls.load(Ordering::SeqCst), 4);
         assert_eq!(
             durable.ledger.step(step_id).map(|s| s.status()),

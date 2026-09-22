@@ -13,7 +13,11 @@ pub(super) type Generated = (
 
 enum Stage {
     AfterChange(a3_domain::AgentRunAction),
-    SourceWork(a3_domain::AgentRunAction),
+    SourceWork {
+        verification: Option<a3_domain::AgentRunAction>,
+        evidence_allowed: bool,
+        source_supplied: bool,
+    },
     Choose(contract::ChoiceScope),
     Arguments(contract::Arguments),
 }
@@ -22,7 +26,18 @@ impl Stage {
     fn request_contract(&self) -> (serde_json::Value, &str) {
         match self {
             Self::AfterChange(_) => (after_change::schema(), after_change::PROMPT),
-            Self::SourceWork(_) => (source_guidance::schema(), source_guidance::PROMPT),
+            Self::SourceWork {
+                verification,
+                evidence_allowed,
+                source_supplied,
+            } => (
+                source_guidance::schema(verification.is_some(), *evidence_allowed),
+                source_guidance::prompt(
+                    verification.is_some(),
+                    *evidence_allowed,
+                    *source_supplied,
+                ),
+            ),
             Self::Choose(contract::ChoiceScope::All) => {
                 (contract::choice_schema(), contract::CHOICE_PROMPT)
             }
@@ -119,19 +134,21 @@ where
         || executor.generation == AgentActionGeneration::ReviewThenSelect)
         .then(|| after_change::planned_verification(input, run))
         .flatten();
+    let source_work = source_guided && source_guidance::available(input, run, sources);
     let mut stage = verification
         .map(Stage::AfterChange)
         .or_else(|| {
-            source_guided
-                .then(|| source_guidance::planned_verification(input, run, sources))
-                .flatten()
-                .map(Stage::SourceWork)
+            source_work.then(|| Stage::SourceWork {
+                verification: source_guidance::planned_verification(input, run, sources),
+                evidence_allowed: input.tool_results().len() < source_guidance::MAX_READS_PER_STEP,
+                source_supplied: source_guidance::has_current_source(run, sources),
+            })
         })
         .unwrap_or(Stage::Choose(contract::ChoiceScope::All));
-    let max_calls = if matches!(stage, Stage::AfterChange(_) | Stage::SourceWork(_)) {
-        4
+    let max_calls = if matches!(stage, Stage::AfterChange(_) | Stage::SourceWork { .. }) {
+        7
     } else {
-        3
+        4
     };
     let mut repair: Option<String> = None;
     let step = input
@@ -241,17 +258,40 @@ where
         if let Some(reason) = completion.rejection_reason() {
             return Ok(Err(usage.reject(snapshot, reason)));
         }
-        let (failure, instruction) = if let Stage::AfterChange(verification)
-        | Stage::SourceWork(verification) = &stage
-        {
-            let source_work = matches!(stage, Stage::SourceWork(_));
+        let (failure, instruction) = if matches!(
+            stage,
+            Stage::AfterChange(_) | Stage::SourceWork { .. }
+        ) {
+            let source_work = matches!(stage, Stage::SourceWork { .. });
+            let (verification, evidence_allowed) = match &stage {
+                Stage::AfterChange(verification) => (Some(verification), true),
+                Stage::SourceWork {
+                    verification,
+                    evidence_allowed,
+                    ..
+                } => (verification.as_ref(), *evidence_allowed),
+                Stage::Choose(_) | Stage::Arguments(_) => {
+                    return Ok(Err(usage.reject(
+                        snapshot,
+                        AgentTurnRejectionReason::Staged(StagedActionFailure::Contract),
+                    )));
+                }
+            };
             let decision = if source_work {
-                source_guidance::decode(&completion.raw)
+                source_guidance::decode(&completion.raw, verification.is_some(), evidence_allowed)
             } else {
                 after_change::decode(&completion.raw)
             };
             match decision {
                 Some(after_change::NextWork::Verify) => {
+                    let Some(verification) = verification else {
+                        return Ok(Err(usage.reject(
+                            snapshot,
+                            AgentTurnRejectionReason::Staged(
+                                StagedActionFailure::InvalidSourceWork,
+                            ),
+                        )));
+                    };
                     let raw = after_change::verification_wire(verification);
                     let AgentActionPrimaryOutcome::Accepted(action) = decoder.decode_primary_in_snapshot(&raw, executor.patch_snapshot) else {
                         return Ok(Err(usage.reject(snapshot, AgentTurnRejectionReason::Staged(StagedActionFailure::Contract))));
@@ -266,23 +306,69 @@ where
                     stage = Stage::Choose(contract::ChoiceScope::Evidence);
                     continue;
                 }
-                None if source_work => (StagedActionFailure::InvalidSourceWork, "Invalid SourceWork V1 decision. This is the only repair shared by all stages. Return exactly version=1 and next=change, verify or need_evidence. No action, code, IDs, success status or extra fields.".to_owned()),
+                None if source_work => (StagedActionFailure::InvalidSourceWork, match (verification.is_some(), evidence_allowed) {
+                    (true, true) => "Invalid SourceWork V1 decision. This is the only repair shared by all stages. Return exactly version=1 and next=change, verify or need_evidence. No action, code, IDs, success status or extra fields.",
+                    (false, true) => "Invalid SourceWork V1 decision. This is the only repair shared by all stages. Return exactly version=1 and next=change or need_evidence. No action, code, IDs, success status or extra fields.",
+                    (true, false) => "Invalid SourceWork V1 decision. The evidence-read budget is exhausted. This is the only repair shared by all stages. Return exactly version=1 and next=change or verify. No action, code, IDs, success status or extra fields.",
+                    (false, false) => "Invalid SourceWork V1 decision. The evidence-read budget is exhausted and this step has no direct command. This is the only repair shared by all stages. Return exactly version=1 and next=change. No action, code, IDs, success status or extra fields.",
+                }.to_owned()),
                 None => (StagedActionFailure::InvalidAfterChange, "Invalid AfterChange V1 decision. This is the only repair shared by all stages. Return exactly version=1 and next=verify, continue_change or need_evidence. No action, code, IDs, success status or extra fields.".to_owned()),
             }
         } else if let Stage::Arguments(args) = &stage {
-            let raw = args.assemble(&completion.raw);
+            let raw = args.assemble(&completion.raw).and_then(|raw| {
+                contract::bind_current_patch_revisions(&raw, executor.patch_snapshot)
+            });
             match raw.as_deref().map(|raw|decoder.decode_primary_in_snapshot(raw, executor.patch_snapshot)) {
                 Some(AgentActionPrimaryOutcome::Accepted(action)) if source_guided
-                    && source_guidance::already_supplied(action.action(), snapshot, sources) => (
-                    StagedActionFailure::SourceAlreadySupplied,
-                    "This complete file range is already delivered in the current ORIGINAL_SOURCE blocks. This is the only shared repair. For the same locked inspect_file choice, request only genuinely missing lines or another needed file, not the supplied range. Do not invent a path or change action kind.".to_owned(),
-                ),
+                    && source_guidance::already_supplied(action.action(), snapshot, sources) => {
+                    stage = Stage::SourceWork {
+                        verification: source_guidance::planned_verification(input, run, sources),
+                        evidence_allowed: false,
+                        source_supplied: true,
+                    };
+                    continue;
+                }
                 Some(AgentActionPrimaryOutcome::Accepted(action)) => {
                     return Ok(Ok(finish(action, &usage, exchange_digest)));
                 }
                 Some(AgentActionPrimaryOutcome::RepairRequired(rejected)) => (
-                    StagedActionFailure::InvalidAction(rejected.rejection()),
-                    format!("Arguments were rejected with code {}. This is the only repair. Return corrected ActionArguments V1 for the same locked choice and schema, not an AgentAction. Recheck current paths, hashes and field values. Do not change the selected operation.", rejected.repair_code()),
+                    {
+                        let rejection = rejected.rejection();
+                        if matches!(
+                            rejection,
+                            crate::AgentActionDecodeError::PatchConflict(
+                                crate::PatchConflictKind::TargetAlreadyExists
+                                    | crate::PatchConflictKind::SourceNotIndexed
+                            ) | crate::AgentActionDecodeError::InvalidPatchOperation(
+                                a3_domain::PatchOperationError::SameMovePath
+                            )
+                        ) {
+                            let Some(arguments) = contract::Arguments::mixed_patch(&bound_schema)
+                            else {
+                                return Ok(Err(usage.reject(
+                                    snapshot,
+                                    AgentTurnRejectionReason::Staged(
+                                        StagedActionFailure::Contract,
+                                    ),
+                                )));
+                            };
+                            stage = Stage::Arguments(arguments);
+                        }
+                        StagedActionFailure::InvalidAction(rejection)
+                    },
+                    if matches!(
+                        rejected.rejection(),
+                        crate::AgentActionDecodeError::PatchConflict(
+                            crate::PatchConflictKind::TargetAlreadyExists
+                                | crate::PatchConflictKind::SourceNotIndexed
+                        ) | crate::AgentActionDecodeError::InvalidPatchOperation(
+                            a3_domain::PatchOperationError::SameMovePath
+                        )
+                    ) {
+                        format!("Arguments were rejected with code {}. This is the only repair. Return corrected ActionArguments V1 using the supplied mixed patch schema and an explicit operation kind for every file. An existing destination must be updated rather than added; a source absent from the current index must be added rather than updated; an in-place edit must use update rather than move. Keep the batch limited to the concrete remaining change and return no AgentAction or prose.", rejected.repair_code())
+                    } else {
+                        format!("Arguments were rejected with code {}. This is the only repair. Return corrected ActionArguments V1 for the same locked choice and schema, not an AgentAction. Recheck current paths, hashes and field values. Do not change the selected operation.", rejected.repair_code())
+                    },
                 ),
                 None => (StagedActionFailure::InvalidArguments, "Invalid argument envelope or unexpected fields. This is the only repair. Return only version=1 and parameters for the same locked choice and schema; no action kind, fixed IDs or additional fields.".to_owned()),
             }

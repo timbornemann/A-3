@@ -57,12 +57,15 @@ impl AgentSourceReader for Source {
                 .take(usize::from(request.line_count().get()))
                 .map(|line| format!("{line}\n"))
                 .collect::<String>();
+            let returned_lines = u32::try_from(text.lines().count())
+                .map_err(|_| AgentSourceReadFailure::InvalidPage)?;
+            let has_more = self.text.lines().count() > usize::from(request.line_count().get());
             let start = request.start_line().get() - 1;
             let range = SourceRange::new(
                 0,
                 text.len() + usize::from(self.invalid_range),
                 SourcePosition::new(start, 0),
-                SourcePosition::new(start + text.lines().count() as u32, 0),
+                SourcePosition::new(start + returned_lines, 0),
             )
             .map_err(|_| AgentSourceReadFailure::InvalidPage)?;
             AgentSourcePage::new(
@@ -70,8 +73,11 @@ impl AgentSourceReader for Source {
                 range,
                 request.start_line(),
                 text,
-                None,
-                false,
+                has_more
+                    .then(|| AgentFileStartLine::new(start + returned_lines + 1))
+                    .transpose()
+                    .map_err(|_| AgentSourceReadFailure::InvalidPage)?,
+                has_more,
             )
             .map_err(|_| AgentSourceReadFailure::InvalidPage)
         })
@@ -149,7 +155,7 @@ fn originals_are_current_counted_deterministic_and_not_duplicated_by_lens_metada
         &AgentFileInspection::new(
             path("src/context.rs")?,
             AgentFileStartLine::new(1)?,
-            a3_domain::AgentFileLineCount::new(64)?,
+            a3_domain::AgentFileLineCount::new(1)?,
         )
     ));
     let text = pack(&first);
@@ -230,6 +236,90 @@ fn oversized_page_is_not_partially_injected_or_replaced_by_old_preview()
     assert!(compiled.truncated());
     assert_counted(&compiled)?;
     Ok(())
+}
+
+#[test]
+fn oversized_multiline_original_is_retried_as_a_smaller_complete_page() -> Result<(), Box<dyn Error>>
+{
+    let base = input(Fixture::new()?.snapshot_id)?;
+    let body = (0..80)
+        .map(|line| format!("line_{line:02}_{}\n", "x".repeat(90)))
+        .collect::<String>();
+    let recorded_page = AgentSourcePage::new(
+        FileRevision::new(path("src/context.rs")?, ContentHash::from_bytes([10; 32])),
+        SourceRange::new(
+            0,
+            body.len(),
+            SourcePosition::new(0, 0),
+            SourcePosition::new(80, 0),
+        )?,
+        AgentFileStartLine::new(1)?,
+        body.clone(),
+        None,
+        false,
+    )?;
+    let input = AgentContextCompileInput::new(
+        base.project().clone(),
+        base.goal_contract().clone(),
+        base.task_ledger().clone(),
+        base.current_step_id(),
+        profile_with_limits(13_000, 2_048)?,
+        None,
+        Vec::new(),
+        vec![recorded_original(&base, recorded_page)?],
+    )?;
+    let source = Source::new(&body);
+
+    let compiled = compile(&source, &input)?;
+    let calls = source.calls.lock().map_err(|_| "lock")?;
+
+    assert!(
+        calls.len() > 1,
+        "the 64-line page should exceed its allowance: {calls:?}"
+    );
+    assert_eq!(calls[0].2, 64);
+    assert!(calls.last().ok_or("source call")?.2 < 64);
+    assert_eq!(compiled.original_sources().len(), 1);
+    assert!(compiled.truncated());
+    assert!(pack(&compiled).contains("line_00_"));
+    assert!(!pack(&compiled).contains("line_79_"));
+    assert_counted(&compiled)?;
+    Ok(())
+}
+
+fn recorded_original(
+    input: &AgentContextCompileInput,
+    page: AgentSourcePage,
+) -> Result<ContextToolResult, Box<dyn Error>> {
+    let snapshot = Fixture::new()?.snapshot_id;
+    let (mut run, _) = AgentRun::start(
+        AgentRunId::from_bytes([71; 32]),
+        input.goal_contract().reference(),
+        input.task_ledger().revision(),
+        input.model_profile().reference(),
+        snapshot,
+        RunEventId::from_bytes([72; 32]),
+        AgentRunTimestamp::from_unix_millis(1)?,
+    )?;
+    let result = AgentReadResult::new(
+        ToolRunId::from_bytes([73; 32]),
+        ContextToolResultStatus::Succeeded,
+        ContextToolResultPreview::try_from_string("bounded original result".to_owned())?,
+        ContextToolResultDigest::from_bytes([74; 32]),
+        false,
+        snapshot,
+        AgentToolEvidenceSet::new(snapshot, vec![page.evidence()])?,
+        u64::try_from(page.text().len())?,
+    )?
+    .with_original_page(page)?;
+    Ok(result
+        .record(
+            &mut run,
+            RunEventId::from_bytes([75; 32]),
+            AgentRunTimestamp::from_unix_millis(2)?,
+        )?
+        .into_parts()
+        .1)
 }
 
 #[test]

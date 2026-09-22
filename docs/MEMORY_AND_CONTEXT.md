@@ -1,5 +1,25 @@
 # Memory System und Context Compiler
 
+## Produktstandard: quellengelenkte Aktionsarbeit
+
+[ADR-0115](adrs/0115-ausfuehrbarer-plananker-im-modellkontext.md) übernimmt den zuvor nur
+kontrolliert verglichenen Staged-Pfad als Desktop-Produktstandard `SourceGuided`. Ein normaler
+Agentturn entscheidet aus tatsächlich gelieferten aktuellen `ORIGINAL_SOURCE`-Seiten oder nach
+dem festen Vier-Read-Limit zuerst ausschließlich zwischen konkreter Änderung, der bereits
+geplanten Verifikation und noch fehlender Evidence. Danach wählt er einen geschlossenen
+AgentAction-V5-Arm und füllt nur dessen variable Argumente. Der Core bindet bekannte IDs,
+revalidiert Add/Update und erwartete Hashes gegen den aktuellen Index und dekodiert die
+zusammengesetzte Aktion unabhängig ein zweites Mal. Höchstens sieben Modellaufrufe teilen
+dieselbe Frist, das Runbudget und genau einen Repair; kein Zwischenentscheid autorisiert ein Tool
+oder behauptet Erfolg.
+
+Ein redundanter Read einer bereits vollständig gelieferten Dateiseite wird vor dem Toolaufruf
+deterministisch auf denselben Arbeitsentscheid zurückgeführt und verbraucht weder Read noch
+Repair. Nach vier echten Reads ist `need_evidence` nicht mehr darstellbar. Im Replan genügt eine
+tatsächlich erfolgreich gelieferte aktuelle Originalseite, um die getrennte Lokalisierungsanalyse
+zu verlassen und in SourceGuided weiterzuarbeiten; Such-, Symbol- und Graphmetadaten allein tun
+dies nicht.
+
 ## Kontrollierter Vergleich: Auswahl vor Argumenten
 
 [ADR-0095](adrs/0095-gefuehrte-nachentscheidung-nach-angewendeten-aenderungen.md)
@@ -37,9 +57,10 @@ Fehlt gemeldete Promptnutzung, zählt der Versuch auch das Formatfeldschema.
 
 Das öffentliche Live-Coding-Fixture akzeptiert testseitig
 `A3_LIVE_AGENT_GENERATION=baseline|staged` (Standard `baseline`) und misst
-inhaltsfrei echte Aufrufe, Provider-Usage und Laufzeit. Die App hat keinen neuen
-Schalter und bleibt auf der bisherigen Methode. Ask, Plan und Replan werden
-nicht umgestellt. Selbstbewertungen des Modells sind kein Verifikationsnachweis.
+inhaltsfrei echte Aufrufe, Provider-Usage und Laufzeit. Dieser Fixture-Standard ist eine
+historische Vergleichsbasis und nicht der Composition-Root-Standard. Die App exponiert weiterhin
+keinen Generation-Schalter; Ask und Plan bleiben unverändert. Selbstbewertungen des Modells sind
+kein Verifikationsnachweis.
 
 ## Ergänzung: Originalquellen im normalen Agententurn
 
@@ -445,7 +466,7 @@ unverändert; neue Replan-Reads verwenden ebenfalls statusfreies V5 nach
 [ADR-0091](adrs/0091-statusfreie-replan-lokalisierung.md). Die davon getrennte
 Replan-Analyse verwendet den oben beschriebenen eingeschränkten V7-Vertrag.
 
-`ContextCompilerPolicyVersion::V5` behält den vollständigen kompakten L0-Repository-Anchor aus V2
+`ContextCompilerPolicyVersion::V9` behält den vollständigen kompakten L0-Repository-Anchor aus V2
 vor allen optionalen gerankten L1-/L2-Einträgen. Package- und Entrypointmengen erscheinen in L0 als
 Anzahlen; konkrete IDs werden nicht dort und später erneut bezahlt, sondern bleiben in den
 evidenzgebundenen Modul- und Symboleinträgen. Die relative Retrievalreihenfolge innerhalb der
@@ -456,6 +477,12 @@ Goal/Ledger. V4 übernimmt außerdem höchstens 64 eindeutige Pfade aus einem ty
 Snapshot-Anker mit der aktuellen Task Lens übereinstimmen; nach einer Indexänderung werden nur
 weiterhin exakt passende `FileRevision`s an einen neuen Handoff gebunden. V4 besitzt dafür eine
 eigene Digest-Domäne, die Indexanker, Pfade und Content-Hashes der Übergabe bindet.
+V5 reserviert das konfigurierte Outputlimit und passt vollständige Pflichtbereiche ein, V6
+ergänzt dauerhafte Ausführungsquittungen, V7 aktuelle Originale und V8 deren Vorrang vor optionalen
+Metadaten. V9 hält vom Research-Handoff nur Warnung sowie IDs und Status der Pflichtfragen
+untrunkierbar. Vollständige Outcomes und Resultate bleiben frisch/evidencegebunden, werden aber
+optional gerankt, damit sie Goal, aktuellen Schritt und Verifikation in kleinen Kontextfenstern
+nicht verdrängen.
 
 Packregeln:
 
@@ -985,16 +1012,17 @@ Sie darf weder den Status setzen noch aus Ergebnissen verifizierte Fakten machen
 Quellenknöpfe verwenden ausschließlich die bestehenden geschützten Preview-Capabilities.
 
 Der Agent-Handoff überträgt die Teilfragen und zugelassenen Ergebnisse zusätzlich zu den
-Revisionen. Alle Pflichtüberschriften werden vor optionalen Ergebnistexten im Kontextbudget
-reserviert. Erst die freigegebene Planrevision materialisiert je konkretem Arbeitsergebnis ein
-Umsetzungskriterium. Rechercheabschluss erfüllt keine Änderungs- oder Testverifikation.
+Revisionen. V9 reserviert die Handoff-Warnung sowie IDs und Status aller Pflichtfragen vor
+optionalen Ergebnistexten im Kontextbudget. Erst die freigegebene Planrevision materialisiert die
+konkreten Arbeitsergebnisse als Ledger-Schritte und genau ein zielweites Muss-Kriterium;
+Rechercheabschluss erfüllt keine Änderungs- oder Testverifikation.
 Bei automatischem Replan wird kein künstliches Recherche-Todo mit kopierter Änderungsverifikation
 mehr angelegt. Vor der nächsten Mutation erlaubt die bestehende Execute-Phase höchstens vier
 reine Search-/Inspect-Turns zur Lokalisierung. Prompt, Schema, Decoder und der einzelne Repair
 bleiben dabei read-only; echte Reads und Modellaufrufe werden normal journalisiert/abgerechnet.
-Erst eine zugelassene V5-Interpretation der Replan-Ursache mit aktuellem Originalanker beendet
-diese eingeschränkte Phase. Ein Originalread allein, Such-, Symbol- und Graphmetadaten reichen
-nicht. Der gemeinsame ResearchWorkState-Unterauftrag ist in Knowledge V37 dauerhaft an Run,
+Eine zugelassene V5-Interpretation der Replan-Ursache oder eine tatsächlich erfolgreich
+gelieferte aktuelle Original-Dateiseite beendet diese eingeschränkte Phase. Such-, Symbol- und
+Graphmetadaten reichen nicht. Der gemeinsame ResearchWorkState-Unterauftrag ist in Knowledge V37 dauerhaft an Run,
 Schritt und Snapshot gebunden. Ein sicheres Originalfenster muss nicht die gesamte Datei enthalten. Derselbe
 Arbeitsschritt mit unveränderten Kriterien und demselben Snapshot darf innerhalb des Runs keine
 erneute automatische Replan-Kette eröffnen; der Core prüft dafür die dauerhaften Ledger-Events

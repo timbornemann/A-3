@@ -5,17 +5,17 @@ use crate::{
     AgentInspectionSink, AgentInspectionSinkFailure, AgentMutationResultRecord,
     AgentProcessInspectionKind, AgentRecoveryStore, AgentRecoveryStoreFailure, AppendRunEvent,
     ContextCompileControl, ContextCompileFailure, ContextToolResult, ContextToolResultDigest,
-    EvaluateActionPolicy, EvaluateActionPolicyError, EvaluateStepVerification,
-    EvaluateStepVerificationError, MutationActionFingerprint, MutationActionFingerprintError,
-    MutationFailureClass, MutationProgressDecision, PatchApplyFailure, PatchAuthorizationError,
-    PatchPreviewFailure, PersistPolicyEvaluation, PolicyEvaluationContext, PolicyStore,
-    PolicyStoreFailure, PrepareDiscoveredCommand, ProcessAuthorizationError, ProcessEventSink,
-    ProcessRunControl, ProcessRunFailure, ProcessRunner, RefreshRepositoryIndex,
-    RefreshRepositoryIndexError, RepositoryChangeBatch, RepositoryChangeBatchError,
-    RepositoryIndexCompiler, RepositoryIndexControl, RunJournalStore, RunJournalStoreFailure,
-    StoredProjectCommandAllowlist, TaskLedgerStoreVersion, VerificationEvidenceStore,
-    VerificationEvidenceStoreFailure, WorkspacePatchControl, WorkspacePatchTool,
-    WorktreeMutationBusy, WorktreeMutationCoordinator,
+    DiscoverProjectCommands, EvaluateActionPolicy, EvaluateActionPolicyError,
+    EvaluateStepVerification, EvaluateStepVerificationError, MutationActionFingerprint,
+    MutationActionFingerprintError, MutationFailureClass, MutationProgressDecision,
+    PatchApplyFailure, PatchAuthorizationError, PatchPreviewFailure, PersistPolicyEvaluation,
+    PolicyEvaluationContext, PolicyStore, PolicyStoreFailure, PrepareDiscoveredCommand,
+    ProcessAuthorizationError, ProcessEventSink, ProcessRunControl, ProcessRunFailure,
+    ProcessRunner, RefreshRepositoryIndex, RefreshRepositoryIndexError, RepositoryChangeBatch,
+    RepositoryChangeBatchError, RepositoryIndexCompiler, RepositoryIndexControl, RunJournalStore,
+    RunJournalStoreFailure, StoredProjectCommandAllowlist, TaskLedgerStoreVersion,
+    VerificationEvidenceStore, VerificationEvidenceStoreFailure, WorkspacePatchControl,
+    WorkspacePatchTool, WorktreeMutationBusy, WorktreeMutationCoordinator,
 };
 use a3_domain::{
     ActionClass, AgentAction, AgentControllerState, AgentMutationDisposition, AgentMutationKind,
@@ -1230,6 +1230,26 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                 )
                 .await;
         }
+        if !deferred_command_is_available_after(
+            ledger,
+            step_id,
+            project.worktree().id(),
+            &current_index,
+        )? {
+            lease.record_success();
+            return self
+                .request_next_execution(
+                    project,
+                    run,
+                    ledger,
+                    step_id,
+                    ids,
+                    observed_at,
+                    context_seed,
+                    control,
+                )
+                .await;
+        }
         let dependencies = VerificationDependencies::from_patch_change_set(&changes)
             .map_err(|_| MutationControllerFailure::InvalidToolResult)?;
         let evidence = VerificationEvidence::Diff(
@@ -1343,10 +1363,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             .observed_bytes()
             .saturating_add(result.stderr().observed_bytes());
         let truncated = result.stdout().truncated() || result.stderr().truncated();
-        if matches!(
-            result.termination(),
-            ProcessTermination::TimedOut | ProcessTermination::Cancelled
-        ) {
+        if process_termination_requires_reconciliation(result.termination()) {
             self.observe_process_result(
                 project,
                 run,
@@ -1362,12 +1379,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                     project,
                     ids.tool_run_id,
                     attempt,
-                    match result.termination() {
-                        ProcessTermination::Cancelled => AgentToolAttemptStatus::Cancelled,
-                        ProcessTermination::TimedOut | ProcessTermination::Exited(_) => {
-                            AgentToolAttemptStatus::Failed
-                        }
-                    },
+                    AgentToolAttemptStatus::Cancelled,
                     AgentMutationDisposition::Unknown(MutationReconciliation::Required),
                     observed_at,
                 )
@@ -1452,6 +1464,49 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             snapshot_id,
             &result,
         );
+        if result.termination() == ProcessTermination::TimedOut {
+            self.recovery
+                .finish_agent_mutation_attempt(
+                    project,
+                    ids.tool_run_id,
+                    attempt,
+                    AgentToolAttemptStatus::Failed,
+                    AgentMutationDisposition::Applied,
+                    observed_at,
+                )
+                .await
+                .map_err(MutationControllerFailure::MutationResultStore)?;
+            self.record_tool_event(
+                project,
+                run,
+                ids.tool_event_id,
+                ids.tool_run_id,
+                snapshot_id,
+                false,
+                Some(RunEventRedaction::new(
+                    RunEventRedactionSource::ToolOutput,
+                    observed_bytes,
+                    truncated,
+                )),
+                observed_at,
+            )
+            .await?;
+            return self
+                .resolve_unverified_failure(
+                    project,
+                    run,
+                    ledger,
+                    ledger_version,
+                    action.step_id(),
+                    ids,
+                    observed_at,
+                    context_seed,
+                    control,
+                    lease,
+                    MutationFailureClass::TimedOut,
+                )
+                .await;
+        }
         self.record_successful_mutation_event(
             project,
             run,
@@ -2155,6 +2210,40 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
     }
 }
 
+fn deferred_command_is_available_after(
+    ledger: &TaskLedger,
+    step_id: TaskStepId,
+    worktree_id: a3_domain::WorktreeId,
+    current_index: &PublishedIndex,
+) -> Result<bool, MutationControllerFailure> {
+    let deferred = ledger.steps().find_map(|step| {
+        (step.is_active_plan_step()
+            && step.status() == TaskStepStatus::Ready
+            && step
+                .definition()
+                .dependencies()
+                .iter()
+                .any(|dependency| dependency.prerequisite() == step_id))
+        .then(|| step.definition().verification_spec().target())
+        .and_then(|target| match target {
+            VerificationTarget::DeferredCommand(deferred) => Some(deferred),
+            _ => None,
+        })
+    });
+    let Some(deferred) = deferred else {
+        return Ok(true);
+    };
+    let catalog = DiscoverProjectCommands
+        .execute(worktree_id, current_index)
+        .map_err(|_| MutationControllerFailure::InvalidToolResult)?;
+    Ok(deferred.preferred_kinds().iter().any(|kind| {
+        catalog
+            .commands()
+            .iter()
+            .any(|command| command.kind() == *kind)
+    }))
+}
+
 fn prepare_action(
     project: &ProjectIdentity,
     run: &AgentRun,
@@ -2372,6 +2461,10 @@ fn process_result_record(result: &ProcessRunResult) -> AgentMutationResultRecord
         result.stdout().truncated() || result.stderr().truncated(),
         observed_output_bytes,
     )
+}
+
+const fn process_termination_requires_reconciliation(termination: ProcessTermination) -> bool {
+    matches!(termination, ProcessTermination::Cancelled)
 }
 
 fn hash_process_stream(digest: &mut blake3::Hasher, stream: &a3_domain::ProcessOutputCapture) {
@@ -2692,6 +2785,16 @@ mod tests {
         TestCaseSelector, VerificationRequirement, VerificationScope, VerificationSpecId,
     };
     use std::error::Error;
+
+    #[test]
+    fn a_clean_timeout_can_reindex_and_replan_but_cancellation_requires_reconciliation() {
+        assert!(!process_termination_requires_reconciliation(
+            ProcessTermination::TimedOut
+        ));
+        assert!(process_termination_requires_reconciliation(
+            ProcessTermination::Cancelled
+        ));
+    }
 
     #[test]
     fn builtin_python_unittest_adapter_emits_bounded_structured_cases() -> Result<(), Box<dyn Error>>

@@ -49,8 +49,8 @@ impl DiscoveredCommandKind {
 
     const fn timeout_millis(self) -> u64 {
         match self {
-            Self::Test | Self::Build => 10 * 60 * 1_000,
-            Self::Lint | Self::Format => 5 * 60 * 1_000,
+            Self::Test | Self::Build => 2 * 60 * 1_000,
+            Self::Lint | Self::Format => 60 * 1_000,
         }
     }
 }
@@ -744,6 +744,14 @@ fn hash_bytes(hasher: &mut blake3::Hasher, bytes: &[u8]) {
 mod tests {
     use super::*;
     use crate::{ContentHash, RepositoryPath};
+
+    #[test]
+    fn discovered_command_timeouts_leave_room_for_agent_recovery() {
+        assert_eq!(DiscoveredCommandKind::Test.timeout_millis(), 120_000);
+        assert_eq!(DiscoveredCommandKind::Build.timeout_millis(), 120_000);
+        assert_eq!(DiscoveredCommandKind::Lint.timeout_millis(), 60_000);
+        assert_eq!(DiscoveredCommandKind::Format.timeout_millis(), 60_000);
+    }
 
     #[test]
     fn preview_is_not_automatic_until_exact_catalog_is_confirmed_and_bound()

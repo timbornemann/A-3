@@ -305,20 +305,14 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
                 .await?;
         }
 
-        let patch = serde_json::json!({
-            "schema_version": 5,
-            "action": {
-                "kind": "apply_patch",
-                "run_id": hex(run_id.as_bytes()),
-                "worktree_id": hex(project.worktree().id().as_bytes()),
-                "snapshot_id": hex(indexed.published_index().run().snapshot_id().as_bytes()),
-                "step_id": hex(change_id.as_bytes()),
-                "verification_spec_id": hex(VerificationSpecId::from_bytes([6; 32]).as_bytes()),
+        let patch_arguments = serde_json::json!({
+            "version": 1,
+            "parameters": {
                 "rationale": "create the requested server and executable regression tests",
                 "operations": [
-                    {"kind":"add", "path":"server.py", "content":SERVER},
-                    {"kind":"add", "path":"tests/__init__.py", "content":"# test package\n"},
-                    {"kind":"add", "path":"tests/test_server.py", "content":TESTS}
+                    {"path":"server.py", "content":SERVER},
+                    {"path":"tests/__init__.py", "content":"# test package\n"},
+                    {"path":"tests/test_server.py", "content":TESTS}
                 ]
             }
         })
@@ -326,8 +320,9 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
         let provider = Arc::new(ScriptedGreenfieldProvider {
             provider_id: profile.provider_id().clone(),
             responses: Mutex::new(VecDeque::from([
-                patch,
-                serde_json::json!({"schema_version":5,"action":{"kind":"finish"}}).to_string(),
+                serde_json::json!({"version":1,"choice":"patch_add"}).to_string(),
+                patch_arguments,
+                serde_json::json!({"version":1,"next":"verify"}).to_string(),
             ])),
             calls: AtomicUsize::new(0),
         });
@@ -441,7 +436,7 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
             .await?
             .ok_or("final ledger")?;
         assert_eq!(final_run.state(), AgentControllerState::Done);
-        assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
         assert!(
             final_ledger
                 .ledger()
@@ -534,10 +529,6 @@ fn now() -> Result<AgentRunTimestamp, Box<dyn Error>> {
             .as_millis()
             .try_into()?,
     )?)
-}
-
-fn hex(bytes: &[u8; 32]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[derive(Debug)]

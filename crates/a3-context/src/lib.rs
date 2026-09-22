@@ -108,13 +108,12 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
                 a3_application::ExecutedAgentMutation::PatchApplied => "patch_applied",
                 a3_application::ExecutedAgentMutation::ProcessObserved => "process_result_observed",
             };
-            anchor.push_str("[EXECUTION_CHECKPOINT] Core execution metadata; not source evidence or test success.\n");
+            anchor.push_str("[EXECUTION_CHECKPOINT] not verification\n");
             push_line(
                 &mut anchor,
                 format_args!(
-                    "last_confirmed_run_action={action} event={} tool={} snapshot={}",
+                    "mutation={action} event={} snapshot={}",
                     checkpoint.event_sequence().get(),
-                    checkpoint.tool_run_id(),
                     checkpoint.snapshot_id()
                 ),
             );
@@ -124,8 +123,10 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
                     .last()
                     .and_then(|attempt| attempt.verification())
                     .is_some_and(|verification| verification.passed());
-            push_line(&mut anchor, format_args!("step_verified={verified}"));
-            anchor.push_str("Continue only missing work; when implementation is ready, request the planned verification. Do not repeat an already applied patch.\n");
+            push_line(
+                &mut anchor,
+                format_args!("step_verified={verified} continue_missing_work=true"),
+            );
         }
         if let Some(reason) = input.replan_localization() {
             anchor.push_str(&format!(
@@ -244,8 +245,7 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
             &lens,
             budget_plan
                 .allowance(ContextSection::CodeAndEvidence)
-                .saturating_sub(mandatory_evidence_tokens)
-                / 2,
+                .saturating_sub(mandatory_evidence_tokens),
             control,
         )
         .await?;
@@ -652,10 +652,9 @@ fn research_handoff_contract(work: &a3_domain::ResearchWorkState) -> String {
         .filter(|q| q.definition().priority == a3_domain::ResearchQuestionPriority::Required)
     {
         text.push_str(&format!(
-            "Q{} {:?}: {}\n",
+            "Q{} {:?}\n",
             question.id().get(),
-            question.status(),
-            question.definition().outcome
+            question.status()
         ));
     }
     text
@@ -1063,13 +1062,8 @@ fn pack_ranked_context(
         code_tokens = next;
     }
 
-    let (tool_results, tool_tokens, tool_truncated) = pack_tool_results(
-        tool_results,
-        lens.snapshot_id(),
-        profile,
-        budget,
-        originals.replan,
-    )?;
+    let (tool_results, tool_tokens, tool_truncated) =
+        pack_tool_results(tool_results, lens.snapshot_id(), profile, budget, originals)?;
     truncated |= tool_truncated;
     let pack_state = render_pack_state(lens, truncated);
     let actual_framing = count(profile, CONTEXT_PACK_HEADER)?
@@ -1096,7 +1090,7 @@ fn pack_tool_results(
     snapshot_id: SnapshotId,
     profile: &ModelProfile,
     budget: ContextBudgetPlan,
-    replan: bool,
+    originals: &originals::PackedOriginals,
 ) -> Result<(String, u32, bool), ContextCompileFailure> {
     let header = String::from("[TOOL_RESULTS]\n");
     let header_tokens = count(profile, &header)?;
@@ -1107,12 +1101,14 @@ fn pack_tool_results(
     let mut selected = Vec::new();
     let mut tokens = header_tokens;
     let mut truncated = false;
+    let mut selected_latest_current = false;
     for result in results.iter().rev() {
         if result.snapshot_before() != snapshot_id || result.snapshot_after() != snapshot_id {
             truncated = true;
             continue;
         }
-        let rendered = if !replan && result.original_source().is_some() {
+        let omit_original = !originals.replan && result.original_source().is_some();
+        let mut rendered = if omit_original {
             format!(
                 "tool sequence={} id={} status={} digest={} original_preview=omitted; only ORIGINAL_SOURCE contains freshly delivered source\n",
                 result.sequence().get(),
@@ -1125,15 +1121,27 @@ fn pack_tool_results(
         };
         reject_secret_candidate(&rendered)?;
         let cost = count(profile, &rendered)?;
-        let next = tokens
+        let mut next = tokens
             .checked_add(cost)
             .ok_or(ContextCompileFailure::InvalidPack)?;
+        if !selected_latest_current && next > allowance {
+            rendered = render_compact_latest_tool_result(result, omit_original);
+            reject_secret_candidate(&rendered)?;
+            let compact_cost = count(profile, &rendered)?;
+            next = tokens
+                .checked_add(compact_cost)
+                .ok_or(ContextCompileFailure::InvalidPack)?;
+        }
         if next > allowance {
+            if !selected_latest_current {
+                return Err(ContextCompileFailure::InvalidPack);
+            }
             truncated = true;
             continue;
         }
         selected.push(rendered);
         tokens = next;
+        selected_latest_current = true;
     }
     selected.reverse();
     let mut text = header;
@@ -1141,6 +1149,31 @@ fn pack_tool_results(
         text.push_str(&item);
     }
     Ok((text, tokens, truncated))
+}
+
+fn render_compact_latest_tool_result(result: &ContextToolResult, omit_original: bool) -> String {
+    let preview = if omit_original && result.original_source().is_some() {
+        "original-preview-omitted"
+    } else {
+        bounded_utf8_prefix(result.preview().as_str(), 128)
+    };
+    format!(
+        "LATEST_TOOL_RESULT sequence={} status={} preview={}\n",
+        result.sequence().get(),
+        tool_status(result.status()),
+        preview
+    )
+}
+
+fn bounded_utf8_prefix(value: &str, maximum_bytes: usize) -> &str {
+    if value.len() <= maximum_bytes {
+        return value;
+    }
+    let mut boundary = maximum_bytes;
+    while !value.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    &value[..boundary]
 }
 
 fn render_lens_entry(entry: &TaskLensEntry) -> String {

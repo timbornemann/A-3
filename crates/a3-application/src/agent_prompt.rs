@@ -553,6 +553,9 @@ impl AgentActionRepair {
             ) => {
                 " The destination already exists. add creates a new file; move needs an unused destination. For an intended content edit, use update with the supplied current path and expected_hash. Otherwise inspect first; do not delete a file to bypass this conflict."
             }
+            AgentActionDecodeError::PatchConflict(crate::PatchConflictKind::SourceNotIndexed) => {
+                " The source is absent from the current index. A new file must use add, not update, move or delete. Otherwise inspect the exact current path first; do not invent a revision."
+            }
             AgentActionDecodeError::InvalidPatchOperation(
                 a3_domain::PatchOperationError::SameMovePath,
             ) => {

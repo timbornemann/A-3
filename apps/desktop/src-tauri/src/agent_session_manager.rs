@@ -131,33 +131,29 @@ impl AgentTaskMaterializer {
         let task_id = TaskId::from_bytes(random_id()?);
         let base = now_millis()?;
         let work_plan = AgentWorkPlan::from_reviewed_markdown(reviewed_plan)
-            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
-        let criteria = work_plan
-            .steps()
-            .iter()
-            .enumerate()
-            .map(|(index, step)| {
-                Ok(AcceptanceCriterion::new(
-                    AcceptanceCriterionId::from_bytes(random_id()?),
-                    AcceptanceCriterionStatement::try_from_string(format!(
-                        "{}. {}",
-                        index + 1,
-                        step.outcome()
-                    ))
-                    .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
-                ))
+            .and_then(|plan| {
+                if published.publication().graph().files().is_empty() {
+                    plan.into_greenfield_execution()
+                } else {
+                    Ok(plan)
+                }
             })
-            .collect::<Result<Vec<_>, AgentSessionManagerFailure>>()?;
-        let criterion_ids = criteria
-            .iter()
-            .map(AcceptanceCriterion::id)
-            .collect::<Vec<_>>();
+            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+        let criterion = AcceptanceCriterion::new(
+            AcceptanceCriterionId::from_bytes(random_id()?),
+            AcceptanceCriterionStatement::try_from_string(
+                "Der unveränderte Nutzerauftrag ist gemäß dem freigegebenen Plan vollständig umgesetzt; alle aktiven Planschritte sind abgeschlossen und die abschließende typisierte Verifikation ist auf dem aktuellen Projektstand bestanden."
+                    .to_owned(),
+            )
+            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
+        );
+        let criterion_id = criterion.id();
         let goal = GoalContract::initial(
             task_id,
             GoalContractDraft::new(
                 GoalObjective::try_from_string(bounded_text(objective, 8 * 1024))
                     .map_err(|_| AgentSessionManagerFailure::InvalidInput)?,
-                criteria,
+                vec![criterion],
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
@@ -211,11 +207,19 @@ impl AgentTaskMaterializer {
                     VerificationScope::Workspace,
                 ),
                 (None, AgentWorkPlanVerificationIntent::Change) => {
+                    let prepares_deferred_command = work_plan
+                        .steps()
+                        .get(index.saturating_add(1))
+                        .is_some_and(|next| {
+                            next.verification_intent() == AgentWorkPlanVerificationIntent::Test
+                        });
                     VerificationSpec::diff_invariant(
                         spec_id,
-                        verification_requirement(
-                            "Der exakt freigegebene Änderungsschritt verändert mindestens einen Pfad vollständig und wird anschließend neu indiziert.",
-                        )?,
+                        verification_requirement(if prepares_deferred_command {
+                            "Der exakt freigegebene Testartefakt-Schritt verändert mindestens einen Pfad vollständig; im anschließend veröffentlichten Index muss dadurch ein bevorzugter lokaler Prüfcommand deterministisch entdeckbar sein. Reine Quellcode- oder Dokumentationsänderungen genügen nicht."
+                        } else {
+                            "Der exakt freigegebene Änderungsschritt verändert mindestens einen Pfad vollständig und wird anschließend neu indiziert."
+                        })?,
                         DiffInvariantVerification::new(
                             DiffInvariantMode::NonEmptyChanges,
                             Vec::new(),
@@ -255,7 +259,15 @@ impl AgentTaskMaterializer {
                 ],
                 verification,
             )
-            .and_then(|step| step.with_acceptance_criteria(vec![criterion_ids[index]]))
+            .and_then(|step| {
+                let criteria =
+                    final_step_acceptance_criteria(index, work_plan.steps().len(), criterion_id);
+                if criteria.is_empty() {
+                    Ok(step)
+                } else {
+                    step.with_acceptance_criteria(criteria)
+                }
+            })
             .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
             definitions.push(definition);
         }
@@ -402,6 +414,18 @@ impl AgentTaskMaterializer {
             ),
             request: AgentRunExecutionRequest::new(task_id, ledger.revision(), stored.version()),
         })
+    }
+}
+
+fn final_step_acceptance_criteria(
+    index: usize,
+    step_count: usize,
+    criterion_id: AcceptanceCriterionId,
+) -> Vec<AcceptanceCriterionId> {
+    if index.checked_add(1) == Some(step_count) {
+        vec![criterion_id]
+    } else {
+        Vec::new()
     }
 }
 
@@ -7981,13 +8005,13 @@ mod tests {
         ConversationTerminal, PlanConversationResponse, QueueDispatchTrigger, ResearchStopReason,
         ResolvedQueryTarget, agent_run_blocks_plan_start, answer_requires_deeper_research,
         awaiting_continuation, cited_plan_halt, classify_plan_response,
-        command_clarification_question, command_message, implement_plan_accepts,
-        index_path_matches_request, is_transient_conversation_failure, model_safe_path,
-        parse_working_change_paths, plan_session_outcome, presentation_can_be_hidden,
-        query_path_candidates, queue_dispatch_allows_state, read_bounded_process_output,
-        reserve_research_repair_decision, resolve_next_message_mode, response_requires_citations,
-        restore_command_profile, safe_failure_message, settle_unfinished_conversation,
-        verification_command_order, visible_research_query,
+        command_clarification_question, command_message, final_step_acceptance_criteria,
+        implement_plan_accepts, index_path_matches_request, is_transient_conversation_failure,
+        model_safe_path, parse_working_change_paths, plan_session_outcome,
+        presentation_can_be_hidden, query_path_candidates, queue_dispatch_allows_state,
+        read_bounded_process_output, reserve_research_repair_decision, resolve_next_message_mode,
+        response_requires_citations, restore_command_profile, safe_failure_message,
+        settle_unfinished_conversation, verification_command_order, visible_research_query,
     };
     use a3_application::{
         AgentSessionCommandPresentation, AgentSessionDetail, AgentSessionListQuery,
@@ -7997,14 +8021,14 @@ mod tests {
     };
     use a3_application::{AskResearchEvidenceStatus, AskResearchSource, AskResearchTurn};
     use a3_domain::{
-        AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId, AgentSessionMode,
-        AgentSessionRevision, AgentSessionSequence, AgentSessionState, AgentSessionText,
-        AgentSessionTimestamp, AgentSessionTitle, AskResearchSelectionReason, AskResearchSourceId,
-        AskResearchSourceKind, AskResearchState, ContentHash, DiscoveredCommandKind, FileRevision,
-        IndexRunId, JobId, JobOwner, Progress, ProjectIdentity, RepositoryId, RepositoryIdentity,
-        RepositoryPath, SlashCommand, SlashCommandCatalogVersion, SlashCommandLens,
-        SlashCommandVerificationProfile, SnapshotId, WorktreeAnchorId, WorktreeId,
-        WorktreeIdentity,
+        AcceptanceCriterionId, AgentSession, AgentSessionEntry, AgentSessionEntryKind,
+        AgentSessionId, AgentSessionMode, AgentSessionRevision, AgentSessionSequence,
+        AgentSessionState, AgentSessionText, AgentSessionTimestamp, AgentSessionTitle,
+        AskResearchSelectionReason, AskResearchSourceId, AskResearchSourceKind, AskResearchState,
+        ContentHash, DiscoveredCommandKind, FileRevision, IndexRunId, JobId, JobOwner, Progress,
+        ProjectIdentity, RepositoryId, RepositoryIdentity, RepositoryPath, SlashCommand,
+        SlashCommandCatalogVersion, SlashCommandLens, SlashCommandVerificationProfile, SnapshotId,
+        WorktreeAnchorId, WorktreeId, WorktreeIdentity,
     };
     use futures::executor::block_on;
     use std::io::Cursor;
@@ -8200,6 +8224,17 @@ mod tests {
         );
         assert_eq!(compiled.steps()[2].outcome(), "Run tests");
         Ok(())
+    }
+
+    #[test]
+    fn only_the_final_current_verification_carries_plan_acceptance() {
+        let criterion = AcceptanceCriterionId::from_bytes([91; 32]);
+        assert!(final_step_acceptance_criteria(0, 3, criterion).is_empty());
+        assert!(final_step_acceptance_criteria(1, 3, criterion).is_empty());
+        assert_eq!(
+            final_step_acceptance_criteria(2, 3, criterion),
+            vec![criterion]
+        );
     }
 
     #[test]

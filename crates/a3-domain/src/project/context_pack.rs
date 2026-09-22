@@ -38,13 +38,16 @@ impl ContextCompilerPolicyVersion {
     pub const V6: Self = Self(6);
 
     /// Policy emitted by the current deterministic compiler implementation.
-    pub const CURRENT: Self = Self::V8;
+    pub const CURRENT: Self = Self::V9;
 
     /// ADR-0093 materializes bounded current originals before optional context.
     pub const V7: Self = Self(7);
 
     /// ADR-0096 prioritizes bounded current evidence over optional metadata after fitting anchors.
     pub const V8: Self = Self(8);
+
+    /// ADR-0115 keeps only handoff identity/status mandatory; detailed outcomes remain optional.
+    pub const V9: Self = Self(9);
 
     /// Returns the stable persisted integer.
     #[must_use]
@@ -520,10 +523,11 @@ mod tests {
     }
 
     #[test]
-    fn sixteen_k_budget_keeps_v5_allocation_under_v6_rendering() -> Result<(), Box<dyn Error>> {
+    fn sixteen_k_budget_keeps_reference_allocation_under_current_rendering()
+    -> Result<(), Box<dyn Error>> {
         assert_eq!(
             ContextCompilerPolicyVersion::CURRENT,
-            ContextCompilerPolicyVersion::V8
+            ContextCompilerPolicyVersion::V9
         );
         let plan = ContextBudgetPlan::for_profile(&profile(16_384, 4_096)?)?;
         assert_eq!(plan.allowance(ContextSection::SystemAndTools), 900);

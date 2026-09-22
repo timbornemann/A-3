@@ -3,6 +3,7 @@ use std::fmt;
 
 /// Maximum number of independently verifiable steps materialized from one reviewed plan.
 pub const MAX_AGENT_WORK_PLAN_STEPS: usize = 64;
+const GREENFIELD_SLICE_MAX_BYTES: usize = 1_536;
 
 /// Closed verification intent selected by the deterministic plan compiler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +76,41 @@ impl AgentWorkPlan {
         )
     }
 
+    /// Compiles an empty-repository plan into bounded mutation slices, explicit local test
+    /// implementation, and one final operational verification. The original ordered outcomes
+    /// remain present in the resulting slices.
+    pub fn into_greenfield_execution(self) -> Result<Self, AgentWorkPlanError> {
+        let (changes, tests): (Vec<_>, Vec<_>) = self
+            .steps
+            .into_iter()
+            .partition(|step| step.verification_intent == AgentWorkPlanVerificationIntent::Change);
+        let mut steps = batched_steps(
+            changes.into_iter().map(|step| step.outcome),
+            "Setze diesen freigegebenen Greenfield-Änderungsslice vollständig um:",
+            "Setzt zusammengehörige Ergebnisse des freigegebenen Greenfield-Plans in einem begrenzten Patch um.",
+            "Aktuelle Änderungsevidence für alle im Slice genannten Ergebnisse",
+        );
+        steps.extend(batched_steps(
+            tests.into_iter().map(|step| step.outcome),
+            "Implementiere lokale automatisierte Tests für diese freigegebenen Szenarien:",
+            "Erzeugt vor der Ausführung eine repository-lokale Testsuite aus dem freigegebenen Testplan.",
+            "Aktuelle Änderungsevidence für die genannten automatisierten Testszenarien",
+        ));
+        steps.push(AgentWorkPlanStep {
+            outcome: "Führe die repository-lokale automatisierte Testsuite aus und belege, dass alle freigegebenen Szenarien bestehen."
+                .to_owned(),
+            rationale: "Prüft das vollständige Greenfield-Ergebnis erst nach Quell- und Teständerungen operational."
+                .to_owned(),
+            expected_evidence: "Aktuelles strukturiertes Testergebnis für die vollständige lokale Testsuite"
+                .to_owned(),
+            verification_intent: AgentWorkPlanVerificationIntent::Test,
+        });
+        if steps.len() > MAX_AGENT_WORK_PLAN_STEPS {
+            return Err(AgentWorkPlanError::TooManySteps(steps.len()));
+        }
+        Ok(Self { steps })
+    }
+
     fn from_items(changes: Vec<String>, tests: Vec<String>) -> Result<Self, AgentWorkPlanError> {
         if changes.is_empty() {
             return Err(AgentWorkPlanError::MissingImplementationSteps);
@@ -123,6 +159,55 @@ impl AgentWorkPlan {
     pub fn steps(&self) -> &[AgentWorkPlanStep] {
         &self.steps
     }
+}
+
+fn batched_steps(
+    outcomes: impl IntoIterator<Item = String>,
+    prefix: &str,
+    rationale: &str,
+    expected_evidence: &str,
+) -> Vec<AgentWorkPlanStep> {
+    let mut groups = Vec::<Vec<String>>::new();
+    for outcome in outcomes {
+        let numbered_len = outcome.len().saturating_add(8);
+        let fits = groups.last().is_some_and(|group| {
+            prefix
+                .len()
+                .saturating_add(1)
+                .saturating_add(
+                    group
+                        .iter()
+                        .map(|item| item.len().saturating_add(8))
+                        .sum::<usize>(),
+                )
+                .saturating_add(numbered_len)
+                <= GREENFIELD_SLICE_MAX_BYTES
+        });
+        if fits {
+            if let Some(group) = groups.last_mut() {
+                group.push(outcome);
+            }
+        } else {
+            groups.push(vec![outcome]);
+        }
+    }
+    groups
+        .into_iter()
+        .map(|group| AgentWorkPlanStep {
+            outcome: format!(
+                "{prefix} {}",
+                group
+                    .iter()
+                    .enumerate()
+                    .map(|(index, item)| format!("{}. {item}", index + 1))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ),
+            rationale: rationale.to_owned(),
+            expected_evidence: expected_evidence.to_owned(),
+            verification_intent: AgentWorkPlanVerificationIntent::Change,
+        })
+        .collect()
 }
 
 fn push_unique(steps: &mut Vec<AgentWorkPlanStep>, candidate: AgentWorkPlanStep) {
@@ -384,5 +469,37 @@ mod tests {
             AgentWorkPlan::from_reviewed_markdown(&plan),
             Err(AgentWorkPlanError::TooManySteps(65))
         );
+    }
+
+    #[test]
+    fn greenfield_execution_batches_changes_builds_tests_then_runs_once()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let plan = AgentWorkPlan::from_reviewed_markdown(
+            "## Implementation Changes\n1. server.py anlegen\n2. Fehlerantworten ergänzen\n## Test Plan\n1. GET prüfen\n2. POST prüfen",
+        )?
+        .into_greenfield_execution()?;
+
+        assert_eq!(plan.steps().len(), 3);
+        assert!(plan.steps()[0].outcome().contains("server.py anlegen"));
+        assert!(
+            plan.steps()[0]
+                .outcome()
+                .contains("Fehlerantworten ergänzen")
+        );
+        assert_eq!(
+            plan.steps()[0].verification_intent(),
+            AgentWorkPlanVerificationIntent::Change
+        );
+        assert!(plan.steps()[1].outcome().contains("GET prüfen"));
+        assert!(plan.steps()[1].outcome().contains("POST prüfen"));
+        assert_eq!(
+            plan.steps()[1].verification_intent(),
+            AgentWorkPlanVerificationIntent::Change
+        );
+        assert_eq!(
+            plan.steps()[2].verification_intent(),
+            AgentWorkPlanVerificationIntent::Test
+        );
+        Ok(())
     }
 }

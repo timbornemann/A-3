@@ -8,11 +8,12 @@ mod originals;
 
 use a3_application::{
     AgentContextCompileInput, AgentContextCompiler, CompileTaskLens, ContextCompileControl,
-    ContextCompileFailure, ContextCompilePhase, KnowledgeSearchControl, KnowledgeSearchFailure,
-    KnowledgeSearchFuture, KnowledgeSearchStore, ModelMessageRole, ResearchHandoff,
-    TaskLensClaimLimit, TaskLensClaimReadFuture, TaskLensClaimResult, TaskLensClaimStore,
-    TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl, TaskLensControlError,
-    TaskLensIndexStore, TaskLensIndexStoreFuture,
+    ContextCompileFailure, ContextCompilePhase, ContextToolResult, ContextToolResultDigest,
+    ContextToolResultPreview, ContextToolResultStatus, KnowledgeSearchControl,
+    KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore, ModelMessageRole,
+    ResearchHandoff, TaskLensClaimLimit, TaskLensClaimReadFuture, TaskLensClaimResult,
+    TaskLensClaimStore, TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl,
+    TaskLensControlError, TaskLensIndexStore, TaskLensIndexStoreFuture,
 };
 use a3_context::DeterministicAgentContextCompiler;
 use a3_domain::{
@@ -41,9 +42,10 @@ use a3_domain::{
     StepVerificationOutcome, SymbolId, SymbolKind, SymbolName, SymbolRank, SymbolRankSignals,
     TaskEvidenceId, TaskId, TaskLedger, TaskLedgerTimestamp, TaskLensClaim, TaskStepDefinition,
     TaskStepId, TaskStepOutcome, TaskStepRationale, TaskStepResultSummary, TestCaseSelector,
-    TraversalQuery, VerificationFailureSummary, VerificationMethod, VerificationRequirement,
-    VerificationScope, VerificationSpec, VerificationSpecId, VerifiedClaimKind,
-    VerifiedClaimStatus, WorktreeAnchorId, WorktreeId, WorktreeIdentity, parse_slash_command,
+    ToolRunId, TraversalQuery, VerificationFailureSummary, VerificationMethod,
+    VerificationRequirement, VerificationScope, VerificationSpec, VerificationSpecId,
+    VerifiedClaimKind, VerifiedClaimStatus, WorktreeAnchorId, WorktreeId, WorktreeIdentity,
+    parse_slash_command,
 };
 use futures::executor::block_on;
 use std::error::Error;
@@ -64,6 +66,63 @@ impl a3_application::AgentSourceReader for UnavailableSource {
     ) -> a3_application::AgentSourceReaderFuture<'a> {
         Box::pin(async { Err(a3_application::AgentSourceReadFailure::Unavailable) })
     }
+}
+
+#[test]
+fn newest_current_tool_observation_survives_a_tight_tool_section() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let calls = Mutex::new(Vec::new());
+    let store = StubStore {
+        published: fixture.published.clone(),
+        symbol_id: fixture.symbol_id,
+        module_id: fixture.module_id,
+        calls: &calls,
+    };
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(&store, &store, &store),
+        &UnavailableSource,
+    );
+    let base = input(fixture.snapshot_id)?;
+    let preview = format!(
+        "FILE_ABSENT path=README.md action_hint=create-with-apply-patch {}",
+        "x".repeat(8_000)
+    );
+    let tool_result = ContextToolResult::new(
+        RunEventSequence::new(1)?,
+        ToolRunId::from_bytes([121; 32]),
+        ContextToolResultStatus::Succeeded,
+        ContextToolResultPreview::try_from_string(preview)?,
+        ContextToolResultDigest::from_bytes([122; 32]),
+        false,
+        fixture.snapshot_id,
+        fixture.snapshot_id,
+    );
+    let compiled = block_on(compiler.compile(
+        &AgentContextCompileInput::new(
+            base.project().clone(),
+            base.goal_contract().clone(),
+            base.task_ledger().clone(),
+            base.current_step_id(),
+            base.model_profile().clone(),
+            base.run_memory().cloned(),
+            base.supplemental_seeds().to_vec(),
+            vec![tool_result],
+        )?,
+        &RecordingControl::default(),
+    ))?;
+    let prompt = compiled
+        .request()
+        .messages()
+        .iter()
+        .map(|message| message.content())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(prompt.contains("LATEST_TOOL_RESULT"));
+    assert!(prompt.contains("FILE_ABSENT path=README.md"));
+    assert!(prompt.contains("action_hint=create-with-apply-patch"));
+    assert!(!prompt.contains(&"x".repeat(1_000)));
+    Ok(())
 }
 
 #[test]
@@ -640,7 +699,7 @@ fn context_pack_is_fresh_bounded_and_deterministic() -> Result<(), Box<dyn Error
 
     assert_eq!(first.digest(), second.digest());
     assert_eq!(first.request(), second.request());
-    assert_eq!(first.policy_version(), ContextCompilerPolicyVersion::V8);
+    assert_eq!(first.policy_version(), ContextCompilerPolicyVersion::V9);
     assert_eq!(first.snapshot_id(), fixture.snapshot_id);
     assert_eq!(first.excluded_stale_claims(), 1);
     assert_eq!(first.budget_plan().context_limit(), 16_384);
@@ -781,8 +840,10 @@ fn research_handoff_is_digest_bound_and_rejected_after_anchor_change() -> Result
         .with_research_handoff(handoff.clone().with_work_state(work.clone()));
     let compiled = block_on(compiler.compile(&research_input, &RecordingControl::default()))?;
     let pack = compiled.request().messages()[1].content();
-    assert!(pack.contains("Q1 Answered: Existing storage contract"));
-    assert!(pack.contains("Q2 Answered: New CLI design"));
+    assert!(pack.contains("Q1 Answered"));
+    assert!(pack.contains("Q2 Answered"));
+    assert!(pack.contains("Existing storage contract"));
+    assert!(pack.contains("New CLI design"));
     assert!(pack.contains("Original storage interpretation"));
     assert!(pack.contains("Proposed CLI, not implemented"));
     assert!(pack.contains("bytes=0..1"));
@@ -792,7 +853,7 @@ fn research_handoff_is_digest_bound_and_rejected_after_anchor_change() -> Result
         input(fixture.snapshot_id)?.with_research_handoff(handoff.clone().with_work_state(work));
     let stale_work = block_on(compiler.compile(&stale_work_input, &RecordingControl::default()))?;
     let stale_pack = stale_work.request().messages()[1].content();
-    assert!(stale_pack.contains("Q1 Stale: Existing storage contract"));
+    assert!(stale_pack.contains("Q1 Stale"));
     assert!(!stale_pack.contains("Original storage interpretation"));
     assert!(!stale_pack.contains("Proposed CLI, not implemented"));
     assert_ne!(compiled.digest(), stale_work.digest());

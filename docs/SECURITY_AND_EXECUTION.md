@@ -313,6 +313,10 @@ Shellmodus ist eine eigene hochriskante Aktion und immer freigabepflichtig.
   Discovery-Ausgabe.
 - Rust Test, Build und Clippy verwenden `--offline --locked`; eine fehlende Lockdatei oder ein
   fehlender lokaler Cache führt zu einem Fehler statt zu Auflösung oder Download. Format prüft nur.
+- Manifestfreie Python-Projekte erhalten nur dann einen Standardbibliotheks-`unittest`-Command,
+  wenn der aktuelle Index mindestens eine Produktions-Python-Datei und höchstens 16 exakt
+  gebundene `test*.py`-Revisionen enthält. Mehrere Testwurzeln werden als getrennte direkte
+  argv-Pfade gebunden; daraus entsteht weder Shell- noch Paketinstallationsautorität.
 - Node-Skripte werden ausschließlich als direkte `pnpm|npm|yarn run <script-name>`-argv gezeigt,
   wenn ein eindeutiger aktueller Manager-Marker am Package oder einem Vorfahren belegt ist. Der
   Package Manager kann das ausdrücklich bestätigte Repositoryskript intern interpretieren; A^3
@@ -539,7 +543,10 @@ E8 speichert vor jeder Patch- oder Prozessgrenze atomar einen Mutationsversuch m
 fail-closed Disposition `Unknown`. Konflikt, Ablehnung, Cancellation vor Prozessstart und
 Spawnfehler werden nur dann `NotApplied`, wenn der jeweilige Adaptervertrag eine sichtbare Wirkung
 ausschließt. Vollständige oder partielle Patchresultate und terminal beobachtete Prozess-Exits
-werden `Applied`; Timeout, Cancellation nach Prozessstart, Reap-/Outputverlust oder ein Ausfall des
+werden `Applied`. Ein vom Runner normalisiert zurückgegebener Timeout bestätigt zuvor die
+Beendigung des gesamten besessenen Prozessbaums; der Controller veröffentlicht danach einen
+vollständigen frischen Index und schließt den fehlgeschlagenen Versuch als `Applied`, bevor er
+replant. Cancellation nach Prozessstart, Reap-/Outputverlust oder ein Ausfall des
 Resultat-/Journal-Commits bleiben `Unknown`. Ein unbekannter Versuch darf weder erneut ausgeführt
 noch automatisch zurückgesetzt werden. Reconciliation hält denselben Worktree-Lease, publiziert
 einen vollständigen aktuellen Index einschließlich fremder Änderungen und erlaubt erst nach einem
@@ -563,7 +570,9 @@ und `TMPDIR`; der Composition Root stellt vorhandene Werte explizit bereit. Nach
 `TEMP`-/`TMP`-/`TMPDIR`-Werte auch im Kindprozess abwesend; andere verlangte fehlende Werte
 bleiben `Denied`. Es werden keine Ersatzwerte erzeugt oder Umgebungsrechte erweitert. So können unter
 anderem Compiler temporäre Dateien auch unter Windows außerhalb geschützter Systemverzeichnisse
-anlegen. Timeout und
+anlegen. Entdeckte Test-/Build-Commands sind auf 120 Sekunden, Lint-/Format-Commands auf 60
+Sekunden begrenzt, damit innerhalb des Agentenbudgets ein evidenzgebundener Reparaturpfad bleibt.
+Timeout und
 wakebare Cancellation beenden nicht nur den direkten Prozess, sondern dessen gesamte
 Prozessgruppe: auf Unix über eine eigene Process Group und auf Windows über ein Job Object mit
 Kill-on-Close. Prozess, stdout-/stderr-Reader und alle Channels besitzen einen Owner und werden vor
@@ -609,14 +618,22 @@ Run-Memory-Checkpoint verhindert außerdem den Abschluss mit einer offenen aktue
 taskbezogenen Hypothesis. Diese Entscheidungen sind content-freie Rust-Resultate; weder WebView,
 LLM noch Storageadapter können den Success-Bool liefern.
 
-E7 lässt bei neuen Turns nur das geschlossene `AgentAction`-V4-Schema über die Modellgrenze.
-V4 ergänzt ausschließlich einen begrenzten, quellengebundenen Ablauf-Read nach
+E7 lässt bei neuen Turns nur das geschlossene statusfreie `AgentAction`-V5-Schema über die
+Modellgrenze. V5 behält die ausführbare Autorität von V4 unverändert. V4 ergänzt ausschließlich
+einen begrenzten, quellengebundenen Ablauf-Read nach
 [ADR-0045](FAST_INDEX_FLOWS.md), ohne Ausführungsautorität. V3 ergänzte neben der
 unverändert typisierten Aktion ausschließlich eine begrenzte öffentliche Arbeitsnotiz ohne
 Ausführungsautorität. `ApplyPatch` enthält
 sämtliche bestehenden E3-Anker und vollständige Inhalte; `Run` enthält ausschließlich Step- und
 aktuelle kataloggebundene Command-ID. Rohe argv, Shell, Git, Netzwerk, Install und Publishing sind
 im Modellvertrag nicht darstellbar. Der Model-Turn besitzt selbst keine mutierende Capability.
+
+Der Desktop-Composition-Root verwendet nach ADR-0115 die SourceGuided-Projektion des aktuellen
+statusfreien V5-Vertrags. SourceWork-, Choice- und Arguments-Dokumente sind nicht ausführbar. Der
+Core gleicht eine modellseitige Add/Update-Wahl mit der tatsächlichen Pfadexistenz ab und ersetzt
+erwartete Hashes ausschließlich durch die aktuelle Indexrevision desselben Pfads; neue Pfade,
+Inhalte oder Scopes werden dadurch nicht erfunden. Erst die vollständig rekonstruierte V5-Aktion
+durchläuft Decoder, Policy, Approval und Toolgrenze.
 
 `ExecuteMutatingAgentAction` hält den einzigen injizierten Worktree-Lease, bevor eine Policy-
 Entscheidung entsteht. Approval-Request beziehungsweise exakter One-time-Verbrauch sind durable,

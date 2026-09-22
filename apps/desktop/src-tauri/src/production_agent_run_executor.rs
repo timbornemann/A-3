@@ -23,12 +23,13 @@ use a3_application::{
 use a3_context::{DeterministicAgentContextCompiler, DeterministicAgentReadTools};
 use a3_domain::{
     AgentAction, AgentControllerState, AgentRun, AgentRunTimestamp, AgentToolEvidenceSet,
-    ApprovalGrant, ApprovalRequestId, DiscoveredCommand, MinimumTestCaseCount, PolicyDecisionId,
+    ApprovalGrant, ApprovalRequestId, DiffInvariantMode, DiffInvariantVerification,
+    DiscoveredCommand, ExpectedTaskEvidence, MinimumTestCaseCount, PolicyDecisionId,
     ProcessEnvironmentVariable, ProcessEvent, Progress, ProjectIdentity, RunEventId,
-    RunMemoryCheckpoint, StepDependency, StepVerificationId, TaskId, TaskLedger,
-    TaskLedgerTimestamp, TaskReplanReason, TaskStepBlockingReason, TaskStepDefinition, TaskStepId,
-    TaskStepRationale, TaskStepStatus, TestCaseSelector, ToolRunId, VerificationRunId,
-    VerificationSpec, VerificationSpecId, VerificationTarget, WorkspacePolicy,
+    RunMemoryCheckpoint, StepDependency, StepVerificationId, TaskId, TaskLedger, TaskReplanReason,
+    TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale, TaskStepStatus,
+    TestCaseSelector, ToolRunId, VerificationRequirement, VerificationRunId, VerificationSpec,
+    VerificationSpecId, VerificationTarget, WorkspacePolicy,
 };
 use a3_repo_index::{
     Blake3IndexRunIdFactory, Blake3RepositorySnapshotBuilder, BuiltinIncrementalIndexCompiler,
@@ -55,6 +56,7 @@ enum AgentAttemptHaltReason {
     InvalidState,
     ProgressUnavailable,
     RuntimeUnavailable,
+    ContextCapacityExceeded,
     InvalidModelAction,
     ModelUnavailable,
     ModelRejected,
@@ -92,8 +94,9 @@ pub(crate) struct ProductionAgentRunExecutor {
     coordinator: WorktreeMutationCoordinator,
     pending_mutations: Mutex<BTreeMap<TaskId, AgentAction>>,
     process_environment: ProcessHostEnvironment,
+    action_generation: a3_application::AgentActionGeneration,
     #[cfg(test)]
-    generation_probe: Option<a3_application::AgentActionGeneration>,
+    generation_probe: bool,
 }
 
 impl ProductionAgentRunExecutor {
@@ -123,8 +126,9 @@ impl ProductionAgentRunExecutor {
             coordinator: WorktreeMutationCoordinator::new(),
             pending_mutations: Mutex::new(BTreeMap::new()),
             process_environment,
+            action_generation: a3_application::AgentActionGeneration::SourceGuided,
             #[cfg(test)]
-            generation_probe: None,
+            generation_probe: false,
         })
     }
 
@@ -133,7 +137,8 @@ impl ProductionAgentRunExecutor {
         mut self,
         generation: a3_application::AgentActionGeneration,
     ) -> Self {
-        self.generation_probe = Some(generation);
+        self.action_generation = generation;
+        self.generation_probe = true;
         self
     }
 
@@ -190,7 +195,7 @@ impl ProductionAgentRunExecutor {
             .await
             .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
         #[cfg(test)]
-        let provider = generation_probe::observe(provider, self.generation_probe.is_some());
+        let provider = generation_probe::observe(provider, self.generation_probe);
         #[cfg(test)]
         let mut read_probe = generation_probe::ReadProbe::default();
         let initial_research_handoff = match &self.ports.research {
@@ -257,11 +262,7 @@ impl ProductionAgentRunExecutor {
         let mut context_results = Vec::new();
         let mut read_evidence: Option<AgentToolEvidenceSet> = None;
         let mut pending_replan_reason: Option<TaskReplanReason> = None;
-        let mut localization_reason = ledger
-            .replans()
-            .last()
-            .filter(|replan| replan.added_step_ids().contains(&step_id))
-            .map(|replan| replan.reason().clone());
+        let mut localization_reason = replan_localization_reason(&ledger, step_id);
         let mut replan_research = if let Some(reason) = &localization_reason {
             let restored = self
                 .ports
@@ -507,18 +508,16 @@ impl ProductionAgentRunExecutor {
                 &read_tools,
                 self.ports.recovery.as_ref(),
             )
-            .with_patch_snapshot(&turn_index);
-            #[cfg(test)]
-            let turn = turn.with_action_generation(self.generation_probe.unwrap_or_default());
+            .with_patch_snapshot(&turn_index)
+            .with_action_generation(self.action_generation);
             let turn_outcome = turn
                 .execute(&run, &input, observed_at, &attempt_control)
                 .await
                 .map_err(|error| {
-                    // Test-only neutral classifications; never log provider payloads or source text.
+                    *halt_reason = halt_reason_for_turn_failure(&error);
                     #[cfg(test)]
-                    eprintln!("A3_AGENT_TURN_FAILURE {error:?}");
-                    let _classification = error;
-                    AgentRunExecutionFailure::Unavailable
+                    eprintln!("A3_AGENT_TURN_HALT {halt_reason:?}");
+                    execution_failure_for_turn_failure(&error)
                 })?;
             let expected_sequence = run.last_event_sequence();
             let event = turn_outcome
@@ -564,12 +563,16 @@ impl ProductionAgentRunExecutor {
             }
             let mut execution = match turn_outcome {
                 AgentTurnOutcome::Researched(research) => {
-                    let context = replan_research
-                        .as_mut()
-                        .ok_or(AgentRunExecutionFailure::InvalidState)?;
-                    context.checkpoint = research.checkpoint;
-                    if context.checkpoint.work.ready_to_finish() {
+                    let ready_to_execute = {
+                        let context = replan_research
+                            .as_mut()
+                            .ok_or(AgentRunExecutionFailure::InvalidState)?;
+                        context.checkpoint = research.checkpoint;
+                        context.checkpoint.work.ready_to_finish()
+                    };
+                    if ready_to_execute {
                         localization_reason = None;
+                        replan_research = None;
                     }
                     continue;
                 }
@@ -636,6 +639,8 @@ impl ProductionAgentRunExecutor {
                     let mut result = execution
                         .take_tool_result()
                         .ok_or(AgentRunExecutionFailure::Unavailable)?;
+                    let localized_original =
+                        replan_research.is_some() && replan_original_delivered(&action, &result);
                     if let Some(context) = replan_research
                         .as_mut()
                         .filter(|r| !r.checkpoint.work.ready_to_finish())
@@ -669,7 +674,7 @@ impl ProductionAgentRunExecutor {
                     }
                     context_results.push(recorded.context_result().clone());
                     #[cfg(test)]
-                    if self.generation_probe.is_some()
+                    if self.generation_probe
                         && let Some(observation) =
                             read_probe.record(&action, recorded.context_result())
                     {
@@ -680,6 +685,10 @@ impl ProductionAgentRunExecutor {
                         .execute(project, expected_sequence, &run, &recorded)
                         .await
                         .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+                    if localized_original {
+                        localization_reason = None;
+                        replan_research = None;
+                    }
                 }
                 AgentAction::ApplyPatch(_) | AgentAction::Run(_) => {
                     let published =
@@ -780,6 +789,7 @@ impl ProductionAgentRunExecutor {
                 }
             }
         }
+        *halt_reason = Some(AgentAttemptHaltReason::AttemptBudgetExhausted);
         Err(AgentRunExecutionFailure::Unavailable)
     }
 
@@ -833,35 +843,8 @@ impl ProductionAgentRunExecutor {
                     .await
                     .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
             } else {
-                let started = ContinueVerifiedAgentPlan::new(self.ports.actions.as_ref())
-                    .execute(
-                        project,
-                        *ledger_version,
-                        run,
-                        ledger,
-                        run_event_id()?,
-                        timestamp()?,
-                        control,
-                    )
-                    .await
-                    .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
-                let ContinueVerifiedAgentPlanOutcome::StepStarted {
-                    step_id,
-                    ledger_version: next_version,
-                } = started
-                else {
-                    return Err(AgentRunExecutionFailure::InvalidState);
-                };
-                *ledger_version = next_version;
-                self.block_missing_deferred_command(
-                    project,
-                    run,
-                    ledger,
-                    ledger_version,
-                    step_id,
-                    control,
-                )
-                .await?;
+                self.request_missing_deferred_command_replan(project, run, control)
+                    .await?;
                 return Ok(None);
             }
         }
@@ -889,57 +872,28 @@ impl ProductionAgentRunExecutor {
         }
     }
 
-    async fn block_missing_deferred_command(
+    async fn request_missing_deferred_command_replan(
         &self,
         project: &ProjectIdentity,
         run: &mut AgentRun,
-        ledger: &mut TaskLedger,
-        ledger_version: &mut a3_application::TaskLedgerStoreVersion,
-        step_id: TaskStepId,
         control: &AgentAttemptControl<'_>,
     ) -> Result<(), AgentRunExecutionFailure> {
         let observed_at = timestamp()?;
-        let mut next_ledger = ledger.clone();
-        next_ledger
-            .block_step(
-                step_id,
-                run.id(),
-                TaskStepBlockingReason::try_from_string(
-                    "Für die geplante Verifikation wurde im aktuellen Projektstand noch kein unterstützter lokaler Prüfcommand gefunden."
-                        .to_owned(),
-                )
-                .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
-                TaskLedgerTimestamp::from_unix_millis(observed_at.unix_millis())
-                    .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
-            )
-            .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
         let expected_sequence = run.last_event_sequence();
-        let mut next_run = run.clone();
         let advance = AdvanceAgentController
             .execute(
-                &mut next_run,
-                AgentControllerSignal::FatalFailure,
+                run,
+                AgentControllerSignal::VerificationNeedsReplan,
                 run_event_id()?,
                 run.current_snapshot_id(),
                 observed_at,
                 control.context.cancellation_token().is_cancelled(),
             )
             .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
-        *ledger_version = self
-            .ports
-            .actions
-            .commit_ledger_action(
-                project,
-                *ledger_version,
-                expected_sequence,
-                &next_ledger,
-                &next_run,
-                advance.event(),
-            )
+        AppendRunEvent::new(self.ports.journal.as_ref())
+            .execute(project, expected_sequence, run, advance.event())
             .await
             .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
-        *ledger = next_ledger;
-        *run = next_run;
         Ok(())
     }
 
@@ -1161,16 +1115,7 @@ impl ProductionAgentRunExecutor {
                 control,
             )
             .await
-            .map_err(|error| {
-                #[cfg(test)]
-                eprintln!("A3_AGENT_MUTATION_FAILURE {error}");
-                #[cfg(test)]
-                if let a3_application::MutationControllerFailure::PatchPreview(reason) = &error {
-                    eprintln!("A3_AGENT_PATCH_PREVIEW {reason:?}");
-                }
-                let _classification = error;
-                AgentRunExecutionFailure::Unavailable
-            })
+            .map_err(|_| AgentRunExecutionFailure::Unavailable)
     }
 
     fn handle_mutation_outcome(
@@ -1437,6 +1382,106 @@ fn halt_reason_for_rejected_turn(
     }
 }
 
+fn halt_reason_for_turn_failure(
+    failure: &a3_application::ExecuteAgentTurnFailure,
+) -> Option<AgentAttemptHaltReason> {
+    use a3_application::{
+        AgentControllerPreflightFailure, AgentReadToolFailure, ContextCompileFailure,
+        ExecuteAgentTurnFailure, ModelProviderFailure,
+    };
+
+    match failure {
+        ExecuteAgentTurnFailure::Preflight(AgentControllerPreflightFailure::Cancelled)
+        | ExecuteAgentTurnFailure::Context(ContextCompileFailure::Cancelled)
+        | ExecuteAgentTurnFailure::Model(ModelProviderFailure::Cancelled)
+        | ExecuteAgentTurnFailure::Read(AgentReadToolFailure::Cancelled)
+        | ExecuteAgentTurnFailure::Cancelled => None,
+        ExecuteAgentTurnFailure::Preflight(AgentControllerPreflightFailure::BudgetExhausted(_)) => {
+            Some(AgentAttemptHaltReason::AttemptBudgetExhausted)
+        }
+        ExecuteAgentTurnFailure::Preflight(
+            AgentControllerPreflightFailure::InvalidState(_)
+            | AgentControllerPreflightFailure::BudgetEvaluation(_),
+        )
+        | ExecuteAgentTurnFailure::InvalidToolIdentity => {
+            Some(AgentAttemptHaltReason::InvalidState)
+        }
+        ExecuteAgentTurnFailure::InputMismatch
+        | ExecuteAgentTurnFailure::ContextMismatch
+        | ExecuteAgentTurnFailure::Context(ContextCompileFailure::StaleOrMismatchedInput)
+        | ExecuteAgentTurnFailure::ProviderMismatch => Some(AgentAttemptHaltReason::AnchorsChanged),
+        ExecuteAgentTurnFailure::Context(
+            ContextCompileFailure::Budget(_) | ContextCompileFailure::AnchorTooLarge,
+        ) => Some(AgentAttemptHaltReason::ContextCapacityExceeded),
+        ExecuteAgentTurnFailure::Context(ContextCompileFailure::SecretCandidate)
+        | ExecuteAgentTurnFailure::Read(AgentReadToolFailure::Denied) => {
+            Some(AgentAttemptHaltReason::PolicyDenied)
+        }
+        ExecuteAgentTurnFailure::Context(ContextCompileFailure::TimedOut)
+        | ExecuteAgentTurnFailure::Read(AgentReadToolFailure::TimedOut) => {
+            Some(AgentAttemptHaltReason::ToolTimedOut)
+        }
+        ExecuteAgentTurnFailure::Context(ContextCompileFailure::ProgressUnavailable) => {
+            Some(AgentAttemptHaltReason::ProgressUnavailable)
+        }
+        ExecuteAgentTurnFailure::Context(
+            ContextCompileFailure::IndexUnavailable | ContextCompileFailure::RetrievalFailed,
+        )
+        | ExecuteAgentTurnFailure::Read(
+            AgentReadToolFailure::Unavailable | AgentReadToolFailure::InvalidResult,
+        ) => Some(AgentAttemptHaltReason::ToolFailed),
+        ExecuteAgentTurnFailure::Model(
+            ModelProviderFailure::Unavailable | ModelProviderFailure::EndpointDenied,
+        ) => Some(AgentAttemptHaltReason::ModelUnavailable),
+        ExecuteAgentTurnFailure::Model(ModelProviderFailure::Rejected) => {
+            Some(AgentAttemptHaltReason::ModelRejected)
+        }
+        ExecuteAgentTurnFailure::Model(ModelProviderFailure::TimedOut) => {
+            Some(AgentAttemptHaltReason::ModelTimedOut)
+        }
+        ExecuteAgentTurnFailure::Model(ModelProviderFailure::InvalidResponse)
+        | ExecuteAgentTurnFailure::InvalidProviderStream
+        | ExecuteAgentTurnFailure::OutputTooLarge
+        | ExecuteAgentTurnFailure::TokenOverflow
+        | ExecuteAgentTurnFailure::RepairMessage(_)
+        | ExecuteAgentTurnFailure::RepairRequest(_)
+        | ExecuteAgentTurnFailure::TokenCount(_) => {
+            Some(AgentAttemptHaltReason::InvalidModelAction)
+        }
+        ExecuteAgentTurnFailure::Context(
+            ContextCompileFailure::PromptUnavailable | ContextCompileFailure::InvalidPack,
+        )
+        | ExecuteAgentTurnFailure::ToolLifecycle(_) => {
+            Some(AgentAttemptHaltReason::RuntimeUnavailable)
+        }
+    }
+}
+
+fn execution_failure_for_turn_failure(
+    failure: &a3_application::ExecuteAgentTurnFailure,
+) -> AgentRunExecutionFailure {
+    match halt_reason_for_turn_failure(failure) {
+        Some(AgentAttemptHaltReason::AnchorsChanged) => AgentRunExecutionFailure::AnchorsChanged,
+        Some(AgentAttemptHaltReason::InvalidState) => AgentRunExecutionFailure::InvalidState,
+        Some(AgentAttemptHaltReason::ProgressUnavailable) => {
+            AgentRunExecutionFailure::ProgressUnavailable
+        }
+        Some(
+            AgentAttemptHaltReason::RuntimeUnavailable
+            | AgentAttemptHaltReason::ContextCapacityExceeded
+            | AgentAttemptHaltReason::InvalidModelAction
+            | AgentAttemptHaltReason::ModelUnavailable
+            | AgentAttemptHaltReason::ModelRejected
+            | AgentAttemptHaltReason::ModelTimedOut
+            | AgentAttemptHaltReason::ToolFailed
+            | AgentAttemptHaltReason::ToolTimedOut
+            | AgentAttemptHaltReason::PolicyDenied
+            | AgentAttemptHaltReason::AttemptBudgetExhausted,
+        )
+        | None => AgentRunExecutionFailure::Unavailable,
+    }
+}
+
 const fn halt_reason_for_execution_failure(
     failure: AgentRunExecutionFailure,
 ) -> AgentAttemptHaltReason {
@@ -1463,6 +1508,9 @@ const fn halt_message(reason: AgentAttemptHaltReason) -> &'static str {
         }
         AgentAttemptHaltReason::RuntimeUnavailable => {
             "Eine benötigte lokale Modell-, Speicher- oder Werkzeugfähigkeit war nicht verfügbar. Es wurde kein unbestätigter Erfolg angenommen."
+        }
+        AgentAttemptHaltReason::ContextCapacityExceeded => {
+            "Der vollständige Pflichtkontext aus Ziel, aktuellem Schritt und Evidenz passt nicht in das konfigurierte Modellfenster. A^3 hat vor dem Modellturn sicher angehalten."
         }
         AgentAttemptHaltReason::InvalidModelAction => {
             "Das Modell hat auch nach der einmaligen Korrektur keine gültige ausführbare Aktion geliefert. A^3 hat ohne weitere Änderung angehalten."
@@ -1593,7 +1641,6 @@ async fn validate_replan_originals(
     Ok(())
 }
 
-#[cfg(test)]
 fn replan_original_delivered(action: &AgentAction, read: &a3_application::AgentReadResult) -> bool {
     let AgentAction::Inspect(inspect) = action else {
         return false;
@@ -1627,6 +1674,7 @@ fn repeated_replan_revisions(ledger: &TaskLedger) -> BTreeSet<a3_domain::TaskLed
     ledger
         .replans()
         .iter()
+        .filter(|replan| !is_deferred_verification_binding(ledger, replan))
         .filter(|replan| {
             replan.retired_step_ids().iter().any(|id| {
                 ledger.step(*id).is_some_and(|step| {
@@ -1638,6 +1686,54 @@ fn repeated_replan_revisions(ledger: &TaskLedger) -> BTreeSet<a3_domain::TaskLed
         })
         .map(|replan| replan.revision())
         .collect()
+}
+
+fn replan_localization_reason(
+    ledger: &TaskLedger,
+    step_id: TaskStepId,
+) -> Option<TaskReplanReason> {
+    let step = ledger.step(step_id)?;
+    ledger.replans().iter().rev().find_map(|replan| {
+        if !replan.added_step_ids().contains(&step_id)
+            || is_deferred_verification_binding(ledger, replan)
+            || step
+                .definition()
+                .dependencies()
+                .iter()
+                .any(|dependency| replan.added_step_ids().contains(&dependency.prerequisite()))
+        {
+            return None;
+        }
+        Some(replan.reason().clone())
+    })
+}
+
+fn is_deferred_verification_binding(
+    ledger: &TaskLedger,
+    replan: &a3_domain::TaskLedgerReplan,
+) -> bool {
+    replan.retired_step_ids().iter().any(|retired_id| {
+        let Some(retired) = ledger.step(*retired_id) else {
+            return false;
+        };
+        if !matches!(
+            retired.definition().verification_spec().target(),
+            VerificationTarget::DeferredCommand(_)
+        ) {
+            return false;
+        }
+        replan.added_step_ids().iter().any(|added_id| {
+            ledger.step(*added_id).is_some_and(|added| {
+                added.definition().intended_outcome() == retired.definition().intended_outcome()
+                    && added.definition().acceptance_criteria()
+                        == retired.definition().acceptance_criteria()
+                    && matches!(
+                        added.definition().verification_spec().target(),
+                        VerificationTarget::Command { .. } | VerificationTarget::Test { .. }
+                    )
+            })
+        })
+    })
 }
 
 fn automatic_replan_steps(
@@ -1684,6 +1780,85 @@ fn automatic_replan_steps(
             .map(|parent| replacement_ids.get(&parent).copied().unwrap_or(parent));
         let dependencies =
             remap_dependencies(definition.dependencies(), &replacement_ids, &retire_set)?;
+        let needs_preparation = matches!(
+            definition.verification_spec().target(),
+            VerificationTarget::DeferredCommand(_)
+        ) || (matches!(
+            old.status(),
+            TaskStepStatus::Blocked | TaskStepStatus::Failed
+        ) && matches!(
+            definition.verification_spec().target(),
+            VerificationTarget::Command { .. } | VerificationTarget::Test { .. }
+        ));
+        if needs_preparation {
+            let preparation_id = TaskStepId::from_bytes(random_id()?);
+            additions.push(
+                TaskStepDefinition::new(
+                    preparation_id,
+                    parent_step_id,
+                    TaskStepOutcome::try_from_string(bounded_utf8(
+                        &format!(
+                            "Erstelle oder repariere die lokalen Test- oder Manifestartefakte, bis ein bevorzugter lokaler Prüfcommand deterministisch entdeckbar ist, für: {}",
+                            definition.intended_outcome().as_str()
+                        ),
+                        8 * 1_024,
+                    ))
+                    .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
+                    TaskStepRationale::try_from_string(bounded_utf8(
+                        &format!(
+                            "Planrevision nach Befund: {}. Vor der erneuten lokalen Prüfung muss der aktuelle Index einen passenden lokalen Prüfcommand aus Test-, Lint- oder Build-Artefakten ableiten können; reine Quellcode- oder Dokumentationsänderungen erfüllen diesen Vorbereitungsschritt nicht.",
+                            reason.as_str(),
+                        ),
+                        8 * 1_024,
+                    ))
+                    .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
+                    dependencies,
+                    vec![
+                        ExpectedTaskEvidence::try_from_string(
+                            "Ein lokales Test- oder Manifestartefakt wurde vollständig geändert, neu indiziert und macht den geplanten Prüfcommand deterministisch entdeckbar."
+                                .to_owned(),
+                        )
+                        .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
+                    ],
+                    VerificationSpec::diff_invariant(
+                        VerificationSpecId::from_bytes(random_id()?),
+                        VerificationRequirement::try_from_string(
+                            "Der Vorbereitungsschritt verändert mindestens einen vollständigen lokalen Pfad und bleibt aktiv, bis der abhängige Prüfcommand im aktuellen Index entdeckbar ist."
+                                .to_owned(),
+                        )
+                        .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
+                        DiffInvariantVerification::new(DiffInvariantMode::NonEmptyChanges, Vec::new())
+                            .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
+                    ),
+                )
+                .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
+            );
+            let replacement = attach_acceptance_criteria(
+                TaskStepDefinition::new(
+                    replacement_id,
+                    parent_step_id,
+                    definition.intended_outcome().clone(),
+                    TaskStepRationale::try_from_string(bounded_utf8(
+                        &format!(
+                            "Planrevision nach Befund: {}. {}",
+                            reason.as_str(),
+                            definition.rationale().as_str()
+                        ),
+                        8 * 1_024,
+                    ))
+                    .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
+                    vec![StepDependency::new(preparation_id)],
+                    definition.expected_evidence().to_vec(),
+                    definition
+                        .verification_spec()
+                        .reidentified(VerificationSpecId::from_bytes(random_id()?)),
+                ),
+                definition.acceptance_criteria(),
+            )
+            .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+            additions.push(replacement);
+            continue;
+        }
         let replacement = attach_acceptance_criteria(
             TaskStepDefinition::new(
                 replacement_id,
@@ -2162,15 +2337,17 @@ mod greenfield_tests;
 
 #[cfg(test)]
 mod tests {
-    use super::repeated_replan_revisions;
     use super::{
         AgentAttemptControl, automatic_replan_steps, deferred_binding_steps,
-        halt_reason_for_execution_failure, halt_reason_for_rejected_turn, session_outcome_for_run,
+        execution_failure_for_turn_failure, halt_reason_for_execution_failure,
+        halt_reason_for_rejected_turn, halt_reason_for_turn_failure, session_outcome_for_run,
     };
+    use super::{repeated_replan_revisions, replan_localization_reason};
     use a3_application::{
         AgentRunExecutionFailure, AgentTurnRejectionReason, ContextCompileControl,
-        ContextCompilePhase, JobClock, JobCompletion, JobContext, JobEventKind, JobScheduler,
-        JobSchedulerConfig, JobTimestamp, RepositoryIndexControl, WorkspacePatchControl,
+        ContextCompileFailure, ContextCompilePhase, ExecuteAgentTurnFailure, JobClock,
+        JobCompletion, JobContext, JobEventKind, JobScheduler, JobSchedulerConfig, JobTimestamp,
+        RepositoryIndexControl, WorkspacePatchControl,
     };
     use a3_domain::{
         AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentRunId,
@@ -2179,10 +2356,10 @@ mod tests {
         GoalContractTimestamp, GoalObjective, JobId, JobOwner, Progress, RepositoryPath,
         StepDependency, StepVerification, StepVerificationId, StepVerificationOutcome,
         SuccessVerification, TaskEvidenceId, TaskId, TaskLedger, TaskLedgerTimestamp,
-        TaskReplanReason, TaskStepBlockingReason, TaskStepDefinition, TaskStepId, TaskStepOutcome,
-        TaskStepRationale, TaskStepStatus, VerificationMethod, VerificationRequirement,
-        VerificationScope, VerificationSpec, VerificationSpecId, VerificationTarget,
-        WorkspaceDirectory,
+        TaskReplanReason, TaskStepBlockingReason, TaskStepDefinition, TaskStepFailureReason,
+        TaskStepId, TaskStepOutcome, TaskStepRationale, TaskStepStatus, VerificationMethod,
+        VerificationRequirement, VerificationScope, VerificationSpec, VerificationSpecId,
+        VerificationTarget, WorkspaceDirectory,
     };
     use std::collections::BTreeSet;
     use std::sync::Arc;
@@ -2450,6 +2627,200 @@ mod tests {
     }
 
     #[test]
+    fn missing_deferred_command_replans_a_preparation_step_before_retrying_verification()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let criterion = AcceptanceCriterionId::from_bytes([72; 32]);
+        let goal = GoalContract::initial(
+            TaskId::from_bytes([71; 32]),
+            GoalContractDraft::new(
+                GoalObjective::try_from_string("create a verified project".to_owned())?,
+                vec![AcceptanceCriterion::new(
+                    criterion,
+                    AcceptanceCriterionStatement::try_from_string(
+                        "the current project passes its local verification".to_owned(),
+                    )?,
+                )],
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                SuccessVerification::try_from_string("current local test evidence".to_owned())?,
+            )?,
+            GoalContractTimestamp::from_unix_millis(1)?,
+        );
+        let deferred_id = TaskStepId::from_bytes([73; 32]);
+        let deferred = TaskStepDefinition::new(
+            deferred_id,
+            None,
+            TaskStepOutcome::try_from_string("run the project tests".to_owned())?,
+            TaskStepRationale::try_from_string("prove the implementation".to_owned())?,
+            Vec::new(),
+            vec![ExpectedTaskEvidence::try_from_string(
+                "the local tests pass".to_owned(),
+            )?],
+            VerificationSpec::deferred_command(
+                VerificationSpecId::from_bytes([74; 32]),
+                VerificationRequirement::try_from_string(
+                    "a discovered local test command passes".to_owned(),
+                )?,
+                DeferredCommandVerification::new(
+                    vec![DiscoveredCommandKind::Test],
+                    VerificationScope::Workspace,
+                )?,
+            ),
+        )?
+        .with_acceptance_criteria(vec![criterion])?;
+        let ledger = TaskLedger::new(
+            goal.reference(),
+            vec![deferred],
+            TaskLedgerTimestamp::from_unix_millis(2)?,
+        )?;
+        let reason = TaskReplanReason::try_from_string(
+            "no deterministic local verification command was discovered".to_owned(),
+        )?;
+
+        let (retired, additions) = automatic_replan_steps(&ledger, &reason)?;
+
+        assert_eq!(retired, vec![deferred_id]);
+        assert_eq!(additions.len(), 2);
+        assert!(matches!(
+            additions[0].verification_spec().target(),
+            VerificationTarget::DiffInvariant(_)
+        ));
+        assert!(additions[0].acceptance_criteria().is_empty());
+        assert_eq!(
+            additions[1].dependencies(),
+            &[StepDependency::new(additions[0].id())]
+        );
+        assert!(matches!(
+            additions[1].verification_spec().target(),
+            VerificationTarget::DeferredCommand(_)
+        ));
+        assert_eq!(additions[1].acceptance_criteria(), &[criterion]);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_bound_test_gets_a_repair_step_without_consuming_the_replan_guard()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let criterion = AcceptanceCriterionId::from_bytes([82; 32]);
+        let goal = GoalContract::initial(
+            TaskId::from_bytes([81; 32]),
+            GoalContractDraft::new(
+                GoalObjective::try_from_string("create a verified project".to_owned())?,
+                vec![AcceptanceCriterion::new(
+                    criterion,
+                    AcceptanceCriterionStatement::try_from_string(
+                        "the current project passes its local verification".to_owned(),
+                    )?,
+                )],
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                SuccessVerification::try_from_string("current local test evidence".to_owned())?,
+            )?,
+            GoalContractTimestamp::from_unix_millis(1)?,
+        );
+        let deferred_id = TaskStepId::from_bytes([83; 32]);
+        let deferred = TaskStepDefinition::new(
+            deferred_id,
+            None,
+            TaskStepOutcome::try_from_string("run the project tests".to_owned())?,
+            TaskStepRationale::try_from_string("prove the implementation".to_owned())?,
+            Vec::new(),
+            vec![ExpectedTaskEvidence::try_from_string(
+                "the local tests pass".to_owned(),
+            )?],
+            VerificationSpec::deferred_command(
+                VerificationSpecId::from_bytes([84; 32]),
+                VerificationRequirement::try_from_string(
+                    "a discovered local test command passes".to_owned(),
+                )?,
+                DeferredCommandVerification::new(
+                    vec![DiscoveredCommandKind::Test],
+                    VerificationScope::Workspace,
+                )?,
+            ),
+        )?
+        .with_acceptance_criteria(vec![criterion])?;
+        let mut ledger = TaskLedger::new(
+            goal.reference(),
+            vec![deferred],
+            TaskLedgerTimestamp::from_unix_millis(2)?,
+        )?;
+        let command = DiscoveredCommand::try_new(
+            DiscoveredCommandKind::Test,
+            WorkspaceDirectory::Root,
+            "python".to_owned(),
+            vec!["-m".to_owned(), "unittest".to_owned()],
+            vec![CommandDiscoveryEvidence::File(FileRevision::new(
+                RepositoryPath::try_from_bytes(b"tests/test_server.py".to_vec())?,
+                ContentHash::from_bytes([85; 32]),
+            ))],
+        )?;
+        let (retired, additions) = deferred_binding_steps(&ledger, deferred_id, &command)?;
+        let bound_id = additions
+            .iter()
+            .find(|step| {
+                matches!(
+                    step.verification_spec().target(),
+                    VerificationTarget::Test { .. }
+                )
+            })
+            .map(TaskStepDefinition::id)
+            .ok_or("bound test step")?;
+        ledger.replan(
+            retired,
+            additions,
+            TaskReplanReason::try_from_string(
+                "the deferred verification was bound to the discovered command".to_owned(),
+            )?,
+            TaskLedgerTimestamp::from_unix_millis(3)?,
+        )?;
+        assert!(replan_localization_reason(&ledger, bound_id).is_none());
+        let run_id = AgentRunId::from_bytes([86; 32]);
+        ledger.start_step(bound_id, run_id, TaskLedgerTimestamp::from_unix_millis(4)?)?;
+        ledger.fail_step(
+            bound_id,
+            run_id,
+            TaskStepFailureReason::try_from_string("the local tests failed".to_owned())?,
+            TaskLedgerTimestamp::from_unix_millis(5)?,
+        )?;
+
+        assert!(repeated_replan_revisions(&ledger).is_empty());
+        let reason = TaskReplanReason::try_from_string(
+            "the implementation must be repaired before retrying the tests".to_owned(),
+        )?;
+        let (retired, additions) = automatic_replan_steps(&ledger, &reason)?;
+        assert_eq!(retired, vec![bound_id]);
+        assert_eq!(additions.len(), 2);
+        assert!(matches!(
+            additions[0].verification_spec().target(),
+            VerificationTarget::DiffInvariant(_)
+        ));
+        assert!(additions[0].acceptance_criteria().is_empty());
+        assert_eq!(
+            additions[1].dependencies(),
+            &[StepDependency::new(additions[0].id())]
+        );
+        assert!(matches!(
+            additions[1].verification_spec().target(),
+            VerificationTarget::Test { .. }
+        ));
+        assert_eq!(additions[1].acceptance_criteria(), &[criterion]);
+        let preparation_id = additions[0].id();
+        let retry_id = additions[1].id();
+        ledger.replan(
+            retired,
+            additions,
+            reason,
+            TaskLedgerTimestamp::from_unix_millis(6)?,
+        )?;
+        assert!(replan_localization_reason(&ledger, preparation_id).is_some());
+        assert!(replan_localization_reason(&ledger, retry_id).is_none());
+        Ok(())
+    }
+
+    #[test]
     fn directional_blocker_becomes_a_user_question_instead_of_a_false_runtime_error() {
         let (state, message) = session_outcome_for_run(
             Some(a3_domain::AgentControllerState::Failed),
@@ -2490,6 +2861,29 @@ mod tests {
         assert_eq!(state, a3_domain::AgentSessionState::Failed);
         assert!(message.contains("keine gültige ausführbare Aktion"));
         assert!(!message.contains("Inspector"));
+    }
+
+    #[test]
+    fn context_capacity_failure_keeps_its_safe_specific_chat_reason() {
+        let failure = ExecuteAgentTurnFailure::Context(ContextCompileFailure::Budget(
+            a3_domain::ContextBudgetError::AllocationOverflow,
+        ));
+        let reason = halt_reason_for_turn_failure(&failure);
+        let (state, message) = session_outcome_for_run(
+            Some(a3_domain::AgentControllerState::Execute),
+            None,
+            reason,
+            false,
+        );
+
+        assert_eq!(state, a3_domain::AgentSessionState::Failed);
+        assert!(message.contains("Pflichtkontext"));
+        assert!(message.contains("Modellfenster"));
+        assert!(!message.contains("Speicher- oder Werkzeugfähigkeit"));
+        assert_eq!(
+            execution_failure_for_turn_failure(&failure),
+            AgentRunExecutionFailure::Unavailable
+        );
     }
 
     #[test]

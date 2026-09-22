@@ -149,9 +149,16 @@ UTF-8 darf in lückenlose Stream-Events oder das Resultat gelangen; Bytezahl und
 umfassen dennoch den vollständigen Stream. `Denied` bleibt eine Policy-Klassifikation und behauptet
 keine OS-Netzwerksandbox.
 
-Sieben Domain-/Policy-Tests, zwei Application-Autorisierungstests und sechs öffentliche
+Entdeckte Test-/Build-Commands besitzen seit ADR-0115 eine feste 120-Sekunden-Grenze,
+Lint-/Format-Commands 60 Sekunden. Ein normalisiert zurückgegebener Timeout belegt die vorherige
+Beendigung des gesamten Prozessbaums; nach vollständigem Reindex darf der Controller deshalb
+evidenzgebunden reparieren. Der Windows-Vertrag prüft neben Cancellation auch beim Timeout einen
+wirklich beendeten Kindprozess.
+
+Sieben Domain-/Policy-Tests, zwei Application-Autorisierungstests und acht öffentliche
 Workspace-Contracts prüfen Shell-Metazeichen als ein Argument, CWD-/Executable- und Env-Policy,
-Timeout, Kindprozess-Cancellation, 2-MiB-Overflow bei 1-KiB-Retention, Secret-Redaction,
+Timeout einschließlich Kindprozessbeendigung, Kindprozess-Cancellation, 2-MiB-Overflow bei
+1-KiB-Retention, Secret-Redaction,
 Eventsequenz und Event-Sink-Abbruch. Dieselbe Suite ist unter Windows und im vollständigen
 Linux-`quality`-Job grün. Der gemeinsame Unix-Pfad und Vertrag sind in der CI-Plattformmatrix für
 macOS ARM64 und x86_64 verdrahtet; das übergeordnete Drei-OS-Prozessbaumgate bleibt bis zu diesen
@@ -165,7 +172,7 @@ Sammelläufe erreichten ausschließlich wegen der unveränderten nativen libSQL-
 `index_run_lifecycle_serializes_mutation_and_never_false_publishes` beziehungsweise
 `verified_module_cards_publish_atomically_with_evidence_and_search_projection` keinen grünen
 Gesamtstatus; beide endeten mit `0xc0000005` und bestanden anschließend isoliert mit
-Abschlussmarker. Die vollständige `a3-workspace`-Suite mit allen sechs E4-Contracts ist separat
+Abschlussmarker. Die vollständige `a3-workspace`-Suite mit allen acht E4-Contracts ist separat
 grün.
 
 ## E5 Command Discovery

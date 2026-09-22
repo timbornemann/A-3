@@ -126,6 +126,32 @@ fn endless_process_group_is_killed_at_timeout() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn timeout_kills_the_spawned_child_process() -> Result<(), Box<dyn Error>> {
+    let fixture = ProcessFixture::new()?;
+    let runner = WorkspaceProcessRunner::new(fixture.environment()?);
+    let pid_file = fixture.root().join("timeout-child.pid");
+    let pid_argument = pid_file.to_str().ok_or("pid path is not UTF-8")?;
+    let (result, events) = fixture.run(
+        &runner,
+        vec!["spawn-child", pid_argument],
+        WorkspaceDirectory::Root,
+        Vec::new(),
+        1_000,
+        1_024,
+        &ActiveControl,
+    )?;
+    assert_eq!(result.termination(), ProcessTermination::TimedOut);
+    let pid: u32 = fs::read_to_string(&pid_file)?.trim().parse()?;
+    assert_process_stopped(pid)?;
+    assert_event_contract(
+        &events,
+        result.specification_id(),
+        ProcessTerminationKind::TimedOut,
+    )?;
+    Ok(())
+}
+
+#[test]
 fn portable_temp_variables_may_be_absent_without_inheriting_other_values()
 -> Result<(), Box<dyn Error>> {
     let fixture = ProcessFixture::new()?;

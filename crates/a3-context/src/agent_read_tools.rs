@@ -179,8 +179,14 @@ impl<'a> DeterministicAgentReadTools<'a> {
                             KnowledgeIndexFailure::TimedOut,
                         ) => AgentReadToolFailure::TimedOut,
                         _ => AgentReadToolFailure::Unavailable,
-                    })?
-                    .ok_or(AgentReadToolFailure::Unavailable)?;
+                    })?;
+                let Some(document) = document else {
+                    return absent_inventory_result(
+                        "FUNCTION_FLOW_ABSENT",
+                        snapshot_id,
+                        published.run().id(),
+                    );
+                };
                 let mut evidence = EvidenceCollector::default();
                 let mut output = String::new();
                 // Put all dependent revisions before the bounded analysis, so preview truncation
@@ -213,10 +219,25 @@ impl<'a> DeterministicAgentReadTools<'a> {
             }
             AgentInspectTarget::File(request) => {
                 let graph = published.publication().graph();
-                let position = graph
+                let position = match graph
                     .files()
                     .binary_search_by(|revision| revision.path().cmp(request.path()))
-                    .map_err(|_| AgentReadToolFailure::Unavailable)?;
+                {
+                    Ok(position) => position,
+                    Err(_) => {
+                        let output = format!(
+                            "FILE_ABSENT path={} snapshot={} index_run={} source=published-index action_hint=create-with-apply-patch\n",
+                            path_text(request.path()),
+                            snapshot_id,
+                            published.run().id()
+                        );
+                        return Ok(RenderedToolResult::new(
+                            output,
+                            EvidenceCollector::default(),
+                            false,
+                        ));
+                    }
+                };
                 let revision = &graph.files()[position];
                 let page = self
                     .source
@@ -248,7 +269,17 @@ impl<'a> DeterministicAgentReadTools<'a> {
                 Ok(result)
             }
             AgentInspectTarget::Symbol(symbol_id) => {
-                let symbol = current_symbol(&published, *symbol_id)?;
+                let symbol = match current_symbol(&published, *symbol_id) {
+                    Ok(symbol) => symbol,
+                    Err(AgentReadToolFailure::Unavailable) => {
+                        return absent_inventory_result(
+                            "SYMBOL_ABSENT",
+                            snapshot_id,
+                            published.run().id(),
+                        );
+                    }
+                    Err(error) => return Err(error),
+                };
                 let mut output = String::new();
                 let mut evidence = EvidenceCollector::default();
                 render_symbol(&mut output, symbol, &mut evidence)?;
@@ -300,8 +331,14 @@ impl<'a> DeterministicAgentReadTools<'a> {
                     .claims
                     .load_claim(project, &published, *claim_id, deadline)
                     .await
-                    .map_err(map_claim_failure)?
-                    .ok_or(AgentReadToolFailure::Unavailable)?;
+                    .map_err(map_claim_failure)?;
+                let Some(claim) = claim else {
+                    return absent_inventory_result(
+                        "CLAIM_ABSENT",
+                        snapshot_id,
+                        published.run().id(),
+                    );
+                };
                 let mut output = String::new();
                 let mut evidence = EvidenceCollector::default();
                 render_claim(&mut output, &claim, &mut evidence)?;
@@ -356,6 +393,20 @@ impl<'a> DeterministicAgentReadTools<'a> {
         }
         Ok(published)
     }
+}
+
+fn absent_inventory_result(
+    kind: &str,
+    snapshot_id: SnapshotId,
+    index_run_id: a3_domain::IndexRunId,
+) -> Result<RenderedToolResult, AgentReadToolFailure> {
+    Ok(RenderedToolResult::new(
+        format!(
+            "{kind} snapshot={snapshot_id} index_run={index_run_id} source=published-index action_hint=choose-indexed-target-or-change\n"
+        ),
+        EvidenceCollector::default(),
+        false,
+    ))
 }
 
 impl AgentReadTools for DeterministicAgentReadTools<'_> {
@@ -1154,6 +1205,70 @@ mod tests {
     }
 
     #[test]
+    fn absent_file_is_a_snapshot_bound_inventory_observation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let snapshot_id = SnapshotId::from_bytes([18; 32]);
+        let published = Arc::new(empty_index(snapshot_id)?);
+        let index_run_id = published.run().id();
+        let index = MemoryIndex { published };
+        let search = EmptySearch {
+            index_run_id,
+            snapshot_id,
+            exact_calls: AtomicUsize::new(0),
+            lexical_calls: AtomicUsize::new(0),
+        };
+        let source = FixedSource {
+            calls: AtomicUsize::new(0),
+        };
+        let tools = DeterministicAgentReadTools::new(&index, &search, &EmptyClaims, &source);
+        let action = AgentReadAction::Inspect(AgentInspectAction::new(AgentInspectTarget::File(
+            AgentFileInspection::new(
+                RepositoryPath::try_from_bytes(b"README.md".to_vec())?,
+                AgentFileStartLine::new(1)?,
+                AgentFileLineCount::new(20)?,
+            ),
+        )));
+
+        let result = futures::executor::block_on(tools.execute(
+            &project()?,
+            snapshot_id,
+            ToolRunId::from_bytes([19; 32]),
+            &action,
+            AgentReadTimeout::DEFAULT,
+            &Active,
+        ))?;
+
+        assert_eq!(result.status(), ContextToolResultStatus::Succeeded);
+        assert!(
+            result
+                .preview()
+                .as_str()
+                .contains("FILE_ABSENT path=README.md")
+        );
+        assert!(
+            result
+                .preview()
+                .as_str()
+                .contains(&format!("snapshot={snapshot_id}"))
+        );
+        assert!(
+            result
+                .preview()
+                .as_str()
+                .contains(&format!("index_run={index_run_id}"))
+        );
+        assert!(
+            result
+                .preview()
+                .as_str()
+                .contains("create-with-apply-patch")
+        );
+        assert!(result.evidence().is_empty());
+        assert_eq!(source.calls.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    #[test]
     fn stale_snapshot_is_rejected_before_workspace_read() -> Result<(), Box<dyn std::error::Error>>
     {
         let published_snapshot = SnapshotId::from_bytes([6; 32]);
@@ -1196,7 +1311,7 @@ mod tests {
     }
 
     #[test]
-    fn claim_inspection_uses_exact_lookup_instead_of_a_leading_page()
+    fn absent_claim_is_a_snapshot_bound_inventory_observation_without_a_leading_page()
     -> Result<(), Box<dyn std::error::Error>> {
         let snapshot_id = SnapshotId::from_bytes([13; 32]);
         let index = MemoryIndex {
@@ -1220,17 +1335,17 @@ mod tests {
             a3_domain::ModuleCardClaimId::from_bytes([14; 32]),
         )));
 
-        assert_eq!(
-            futures::executor::block_on(tools.execute(
-                &project()?,
-                snapshot_id,
-                ToolRunId::from_bytes([15; 32]),
-                &action,
-                AgentReadTimeout::DEFAULT,
-                &Active,
-            )),
-            Err(AgentReadToolFailure::Unavailable)
-        );
+        let result = futures::executor::block_on(tools.execute(
+            &project()?,
+            snapshot_id,
+            ToolRunId::from_bytes([15; 32]),
+            &action,
+            AgentReadTimeout::DEFAULT,
+            &Active,
+        ))?;
+        assert_eq!(result.status(), ContextToolResultStatus::Succeeded);
+        assert!(result.preview().as_str().contains("CLAIM_ABSENT"));
+        assert!(result.preview().as_str().contains("source=published-index"));
         assert_eq!(claims.exact_calls.load(Ordering::SeqCst), 1);
         assert_eq!(claims.page_calls.load(Ordering::SeqCst), 0);
         Ok(())

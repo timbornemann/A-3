@@ -195,7 +195,7 @@ fn staged_every_advertised_choice_has_a_projectable_arguments_contract()
         .pointer("/properties/choice/enum")
         .and_then(serde_json::Value::as_array)
         .ok_or("choices")?;
-    assert_eq!(choices.len(), 16);
+    assert_eq!(choices.len(), 17);
     for choice in choices {
         let choice = decode_choice(&serde_json::json!({"version":1,"choice":choice}).to_string())
             .ok_or("advertised choice cannot be decoded")?;

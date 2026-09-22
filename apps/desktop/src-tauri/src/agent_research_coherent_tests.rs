@@ -949,6 +949,555 @@ fn research_configured_model_empty_project_agent_smoke() -> Result<(), Box<dyn E
     )
 }
 
+fn run_combined_agent_attempt(
+    executor: Arc<crate::ProductionAgentRunExecutor>,
+    project: a3_domain::ProjectIdentity,
+    request: a3_application::AgentRunExecutionRequest,
+) -> Result<a3_application::AgentRunExecutionOutcome, Box<dyn Error>> {
+    let (scheduler, events) = a3_application::JobScheduler::new(
+        a3_application::JobSchedulerConfig::new(1, 2, 32)?,
+        Arc::new(FixtureClock),
+    )?;
+    let (send, receive) = std::sync::mpsc::sync_channel(1);
+    let job_id = a3_domain::JobId::new(1);
+    scheduler.submit(
+        job_id,
+        a3_domain::JobOwner::new(1),
+        move |control: a3_application::JobContext| {
+            let result = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|_| a3_application::AgentRunExecutionFailure::Unavailable)
+                .and_then(|runtime| {
+                    runtime.block_on(a3_application::AgentRunExecutor::execute(
+                        executor.as_ref(),
+                        &project,
+                        request,
+                        &control,
+                    ))
+                });
+            let succeeded = result.is_ok();
+            let _sent = send.send(result);
+            if succeeded {
+                a3_application::JobCompletion::Succeeded
+            } else {
+                a3_application::JobCompletion::Failed
+            }
+        },
+    )?;
+    let started = std::time::Instant::now();
+    loop {
+        if started.elapsed() >= Duration::from_secs(180) {
+            scheduler.cancel(job_id)?;
+            return Err("combined Agent attempt timed out".into());
+        }
+        if let Some(event) = events.next_timeout(Duration::from_millis(100))?
+            && matches!(
+                event.kind(),
+                a3_application::JobEventKind::Succeeded
+                    | a3_application::JobEventKind::Failed
+                    | a3_application::JobEventKind::Cancelled
+            )
+        {
+            break;
+        }
+    }
+    Ok(receive.recv_timeout(Duration::from_secs(1))??)
+}
+
+#[derive(Debug)]
+struct CombinedWorkspaceControl;
+
+impl a3_application::TaskLensWorkspaceControl for CombinedWorkspaceControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+}
+
+fn validate_combined_approval(
+    action: &a3_application::AgentApprovalAction,
+) -> Result<(), Box<dyn Error>> {
+    match action {
+        a3_application::AgentApprovalAction::Patch(patch) => {
+            const ALLOWED: [&str; 5] = [
+                "server.py",
+                "README.md",
+                "test_server.py",
+                "tests/__init__.py",
+                "tests/test_server.py",
+            ];
+            if patch.files().is_empty() || patch.files().len() > ALLOWED.len() {
+                return Err("combined fixture rejected an empty or oversized patch".into());
+            }
+            for file in patch.files() {
+                let source = file
+                    .source_path()
+                    .and_then(|path| std::str::from_utf8(path.as_bytes()).ok());
+                let target = file
+                    .target_path()
+                    .and_then(|path| std::str::from_utf8(path.as_bytes()).ok());
+                let allowed = match file.operation() {
+                    a3_application::AgentApprovalFileOperation::Add => {
+                        source.is_none() && target.is_some_and(|path| ALLOWED.contains(&path))
+                    }
+                    a3_application::AgentApprovalFileOperation::Update => {
+                        source == target && target.is_some_and(|path| ALLOWED.contains(&path))
+                    }
+                    a3_application::AgentApprovalFileOperation::Move
+                    | a3_application::AgentApprovalFileOperation::Delete => false,
+                };
+                if !allowed {
+                    return Err(
+                        "combined fixture rejected a patch outside the reviewed paths".into(),
+                    );
+                }
+            }
+            Ok(())
+        }
+        a3_application::AgentApprovalAction::Process(process) => {
+            let arguments = process
+                .arguments()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            let allowed_arguments = arguments == ["-B", "-m", "unittest", "discover"]
+                || arguments == ["-B", "-m", "unittest", "discover", "-s", "tests"];
+            if process.executable() == "python"
+                && allowed_arguments
+                && process.working_directory()
+                    == &a3_application::AgentApprovalWorkingDirectory::Root
+                && process.execution_mode() == a3_domain::ProcessExecutionMode::KnownSafe
+                && process.network() == a3_application::AgentApprovalNetworkScope::Denied
+            {
+                Ok(())
+            } else {
+                Err("combined fixture rejected a process outside the closed unittest scope".into())
+            }
+        }
+    }
+}
+
+fn run_combined_locked_tests(
+    root: &std::path::Path,
+    test_root: Option<&str>,
+) -> Result<bool, Box<dyn Error>> {
+    let mut command = std::process::Command::new("python");
+    command.args(["-B", "-m", "unittest", "discover"]);
+    if let Some(test_root) = test_root {
+        command.args(["-s", test_root]);
+    }
+    command.current_dir(root);
+    run_combined_check(&mut command)
+}
+
+const COMBINED_HTTP_ORACLE: &str = r#"
+import http.client
+import http.server
+import importlib.util
+import pathlib
+import sys
+import threading
+
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("a3_greenfield_server", root / "server.py")
+if spec is None or spec.loader is None:
+    raise SystemExit(2)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+handlers = [
+    value for value in vars(module).values()
+    if isinstance(value, type)
+    and value is not http.server.BaseHTTPRequestHandler
+    and issubclass(value, http.server.BaseHTTPRequestHandler)
+]
+if not handlers:
+    raise SystemExit(3)
+server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handlers[0])
+thread = threading.Thread(target=server.serve_forever, daemon=True)
+thread.start()
+try:
+    port = server.server_address[1]
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    connection.request("GET", "/")
+    response = connection.getresponse()
+    body = response.read().decode("utf-8")
+    assert response.status == 200
+    assert "text/html" in response.getheader("Content-Type", "").lower()
+    assert "hello" in body.lower() and "world" in body.lower()
+    connection.close()
+
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    connection.request("GET", "/a3-missing")
+    response = connection.getresponse()
+    response.read()
+    assert response.status == 404
+    connection.close()
+
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    connection.request("POST", "/")
+    response = connection.getresponse()
+    response.read()
+    assert response.status == 405
+    assert response.getheader("Allow") == "GET"
+    connection.close()
+finally:
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+"#;
+
+fn run_combined_http_oracle(root: &std::path::Path) -> Result<bool, Box<dyn Error>> {
+    run_combined_check(
+        std::process::Command::new("python")
+            .args(["-I", "-B", "-c", COMBINED_HTTP_ORACLE])
+            .arg(root)
+            .current_dir(root),
+    )
+}
+
+fn run_combined_check(command: &mut std::process::Command) -> Result<bool, Box<dyn Error>> {
+    let mut child = command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status.success()),
+            Ok(None) => {}
+            Err(error) => {
+                let _killed = child.kill();
+                let _joined = child.wait();
+                return Err(error.into());
+            }
+        }
+        if started.elapsed() >= Duration::from_secs(30) {
+            let _killed = child.kill();
+            let _joined = child.wait();
+            return Err("combined physical check timed out".into());
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[test]
+#[ignore = "Requires explicit approval for the configured provider and A3_CONFIGURED_RESEARCH_CATALOG"]
+fn configured_model_empty_project_research_handoff_completes_verified_project()
+-> Result<(), Box<dyn Error>> {
+    if std::env::var_os("A3_CONFIGURED_RESEARCH_CATALOG").is_none() {
+        return Err("configured catalog opt-in missing".into());
+    }
+    support::run_libsql_test_selected(
+        async {
+            let repository = support::TempDirectory::new()?;
+            repository.git(["init", "--initial-branch=main"])?;
+            let project = RepositoryInspector::new().inspect(repository.path())?;
+            let data = support::TempDirectory::new()?;
+            let store = Arc::new(
+                LibsqlKnowledgeStore::open(&StorageLayout::prepare(data.path().join("data"))?)
+                    .await?,
+            );
+            store.record_opened_project(&project).await?;
+            RefreshRepositoryIndex::new(
+                Arc::new(Blake3RepositorySnapshotBuilder::new()),
+                store.clone(),
+                Arc::new(Blake3IndexRunIdFactory),
+            )
+            .execute(
+                &project,
+                &RepositoryChangeBatch::full_rescan(
+                    Vec::new(),
+                    RepositoryRescanReason::InitialObservation,
+                )?,
+                &mut BuiltinIncrementalIndexCompiler::new(ParserPoolSize::new(1)?)?,
+                &FixtureControl,
+            )
+            .await?;
+            let live = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?
+                .block_on(live_fixture::LiveResearchModel::probe())?;
+            let (provider, profile) = live.execution_parts();
+            let mode = AgentSessionMode::Agent;
+            let budget = live.evidence_budget(mode)?;
+            let model = Arc::new(CoherentModel {
+                live: Some(live),
+                fault: WorkFault::None,
+                work_contract: true,
+                budget,
+                calls: AtomicUsize::new(0),
+                diagrams: AtomicUsize::new(0),
+                truncated_packet: std::sync::Mutex::new(None),
+                command_packet: std::sync::Mutex::new(None),
+                oversized_transcript: std::sync::Mutex::new(None),
+            });
+            let session_id = AgentSessionId::from_bytes([91; 32]);
+            let time = timestamp()?;
+            let objective = "erstelle einen kleinen python server mit einer hello world webseite";
+            let session = AgentSession::from_parts(
+                session_id,
+                AgentSessionRevision::new(1)?,
+                AgentSessionTitle::try_from_string("Full greenfield handoff".to_owned())?,
+                mode,
+                AgentSessionState::Running,
+                time,
+                time,
+                Some(AgentSessionSequence::FIRST),
+                None,
+                None,
+                false,
+            );
+            let user = AgentSessionEntry::try_new(
+                session_id,
+                AgentSessionSequence::FIRST,
+                AgentSessionEntryKind::UserMessage,
+                AgentSessionText::try_from_string(objective.to_owned())?,
+                time,
+                None,
+                None,
+                None,
+            )?;
+            store
+                .create_session(&project, &session, Some(&user), None)
+                .await?;
+            let researcher =
+                AgentAskResearcher::new(store.clone(), store.clone(), store.clone(), store.clone());
+            let worker_model = Arc::clone(&model);
+            let worker_project = project.clone();
+            let (send, receive) = std::sync::mpsc::sync_channel(1);
+            recovery_contract::owned_with_timeout(Duration::from_secs(420), move |control, _| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                send.send(runtime.block_on(researcher.research(
+                    worker_model.as_ref(),
+                    &worker_project,
+                    session_id,
+                    AgentSessionSequence::FIRST,
+                    mode,
+                    AgentResearchDepth::Standard,
+                    objective,
+                    &[(ModelMessageRole::User, objective.to_owned())],
+                    None,
+                    &control,
+                )))?;
+                Ok(())
+            })?;
+            let result = receive.recv_timeout(Duration::from_secs(1))??;
+            assert!(!result.awaiting_continuation);
+            assert!(result.has_plan_grounding());
+
+            let materializer = AgentTaskMaterializer::new(
+                store.clone(),
+                store.clone(),
+                store.clone(),
+                store.clone(),
+            );
+            let task = materializer
+                .materialize(AgentTaskMaterialization {
+                    project: &project,
+                    objective,
+                    reviewed_plan: &result.markdown,
+                    profile: profile.clone(),
+                    research_handoff: Some(&result.handoff),
+                    verification_profile: None,
+                    control: &FixtureControl,
+                })
+                .await?;
+            let task_id = task.work_item.task_id();
+            let plan_sequence = AgentSessionSequence::FIRST.next()?;
+            let completed_at = timestamp()?;
+            let published_session = successor(
+                &session,
+                SessionSuccessor {
+                    title: session.title().as_str().to_owned(),
+                    mode,
+                    state: cited_plan_halt(mode),
+                    updated_at: completed_at,
+                    latest_sequence: Some(plan_sequence),
+                    active_work_item: Some(task.work_item),
+                    plan_revision: Some(1),
+                    presentation_deleted: false,
+                },
+            )?;
+            let plan_entry = AgentSessionEntry::try_new(
+                session_id,
+                plan_sequence,
+                AgentSessionEntryKind::Plan,
+                AgentSessionText::try_from_string(result.markdown.clone())?,
+                completed_at,
+                Some(task.work_item.id()),
+                Some(task_id),
+                Some(1),
+            )?;
+            store
+                .complete_turn(
+                    &project,
+                    session.revision(),
+                    &published_session,
+                    &plan_entry,
+                    &result.terminal_event,
+                    &result.citations,
+                    &result.diagrams,
+                )
+                .await?;
+            let runtime = AgentConversationRuntime::new(
+                store.clone(),
+                Arc::new(a3_credentials::NativeProviderCredentialStore::new()),
+            )
+            .with_execution_override(provider, profile);
+            let inspection = Arc::new(a3_application::AgentInspectionBuffer::new());
+            inspection.activate_project(&project);
+            let approval = Arc::new(a3_application::AgentApprovalBuffer::new());
+            approval.activate_project(&project);
+            let executor = Arc::new(crate::ProductionAgentRunExecutor::new(
+                crate::ProductionAgentRunPorts {
+                    workspace: store.clone(),
+                    journal: store.clone(),
+                    actions: store.clone(),
+                    recovery: store.clone(),
+                    policy: store.clone(),
+                    evidence: store.clone(),
+                    index: store.clone(),
+                    lens_index: store.clone(),
+                    search: store.clone(),
+                    claims: store.clone(),
+                    allowlist: store.clone(),
+                    research: Some(store.clone()),
+                },
+                runtime,
+                inspection,
+                approval.clone(),
+                None,
+            )?);
+            let query = a3_application::GetAgentApprovalCenter::new(
+                store.clone(),
+                store.clone(),
+                store.clone(),
+                approval.clone(),
+            );
+            let approve = a3_application::ControlAgentApproval::new(
+                store.clone(),
+                store.clone(),
+                store.clone(),
+                store.clone(),
+                approval,
+            );
+            let mut request = task.request;
+            let mut run_id = None;
+            for attempt in 0..12_u8 {
+                run_combined_agent_attempt(Arc::clone(&executor), project.clone(), request)?;
+                let stored = store
+                    .load_task_ledger(&project, task_id)
+                    .await?
+                    .ok_or("task ledger")?;
+                if run_id.is_none() {
+                    run_id = stored
+                        .ledger()
+                        .steps()
+                        .filter_map(|step| step.attempts().last())
+                        .map(a3_domain::TaskStepAttempt::run_id)
+                        .next();
+                }
+                let current_run_id = run_id.ok_or("agent run id")?;
+                let run = store
+                    .load_agent_run(&project, current_run_id)
+                    .await?
+                    .ok_or("agent run")?;
+                if run.state() == a3_domain::AgentControllerState::Done {
+                    break;
+                }
+                if run.state() == a3_domain::AgentControllerState::Failed {
+                    return Err("combined research-to-agent run reached Failed".into());
+                }
+                assert_eq!(run.state(), a3_domain::AgentControllerState::AwaitApproval);
+                let observed_at = agent_timestamp(now_millis()?)?;
+                let a3_application::AgentApprovalLoadResult::Available(center) = query
+                    .execute(&project, task_id, observed_at, &CombinedWorkspaceControl)
+                    .await?
+                else {
+                    return Err("combined run stopped without exact approval".into());
+                };
+                validate_combined_approval(center.presentation().action())?;
+                assert!(center.can_allow_once());
+                let approval_id = a3_domain::ApprovalId::from_bytes([100 + attempt; 32]);
+                let result = approve
+                    .execute(
+                        &project,
+                        task_id,
+                        center.presentation().revision(),
+                        center.ledger_revision(),
+                        center.ledger_store_version(),
+                        a3_application::AgentApprovalControlAction::AllowOnce,
+                        a3_application::AgentApprovalControlMetadata::new(
+                            approval_id,
+                            a3_domain::RunEventId::from_bytes([120 + attempt; 32]),
+                            observed_at,
+                        ),
+                        &CombinedWorkspaceControl,
+                    )
+                    .await?;
+                assert!(matches!(
+                    result,
+                    a3_application::AgentApprovalControlResult::Applied(
+                        a3_application::AgentApprovalControlOutcome::GrantStored { .. }
+                    )
+                ));
+                let updated = store
+                    .load_task_ledger(&project, task_id)
+                    .await?
+                    .ok_or("updated task ledger")?;
+                request = a3_application::AgentRunExecutionRequest::after_approval(
+                    task_id,
+                    updated.ledger().revision(),
+                    updated.version(),
+                    approval_id,
+                );
+            }
+            let current_run_id = run_id.ok_or("final agent run id")?;
+            let run = store
+                .load_agent_run(&project, current_run_id)
+                .await?
+                .ok_or("final agent run")?;
+            let stored = store
+                .load_task_ledger(&project, task_id)
+                .await?
+                .ok_or("final task ledger")?;
+            assert_eq!(run.state(), a3_domain::AgentControllerState::Done);
+            assert!(
+                stored
+                    .ledger()
+                    .steps()
+                    .filter(|step| step.is_active_plan_step())
+                    .all(|step| {
+                        step.status() == a3_domain::TaskStepStatus::Completed
+                            && step
+                                .attempts()
+                                .last()
+                                .and_then(a3_domain::TaskStepAttempt::verification)
+                                .is_some_and(|verification| {
+                                    verification.passed() && !verification.evidence_ids().is_empty()
+                                })
+                    })
+            );
+            assert!(repository.path().join("server.py").is_file());
+            let test_root = if repository.path().join("tests/test_server.py").is_file() {
+                Some("tests")
+            } else if repository.path().join("test_server.py").is_file() {
+                None
+            } else {
+                return Err("combined run did not create a discoverable test_server.py".into());
+            };
+            assert!(run_combined_locked_tests(repository.path(), test_root)?);
+            assert!(run_combined_http_oracle(repository.path())?);
+            Ok(())
+        },
+        true,
+    )
+}
+
 #[test]
 fn research_v5_unresolved_repeated_reads_end_honestly_without_legacy_recovery_or_false_success()
 -> Result<(), Box<dyn Error>> {

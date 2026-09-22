@@ -186,9 +186,9 @@ fn execution_receipt_is_mandatory_counted_deterministic_and_not_verification()
                         .section(a3_domain::ContextSection::GoalAndLedger)
                 );
             }
-            assert!(text.contains(&format!("last_confirmed_run_action={label}")));
+            assert!(text.contains(&format!("mutation={label}")));
             assert!(text.contains("step_verified=false"));
-            assert!(text.contains("not source evidence or test success"));
+            assert!(text.contains("not verification"));
             assert!(!text.contains("step_verified=true"));
             assert_eq!(request.task_ledger(), base.task_ledger());
         }
