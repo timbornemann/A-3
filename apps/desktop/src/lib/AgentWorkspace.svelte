@@ -47,6 +47,8 @@
     AgentInspectionStreamV1,
   } from './agent-inspection';
   import type { GlobalRunStatus } from './global-status';
+  import AgentDetailDialog from './AgentDetailDialog.svelte';
+  import AgentPlanCard from './AgentPlanCard.svelte';
   import AgentApprovalCenter from './AgentApprovalCenter.svelte';
   import AgentInspectionPanel from './AgentInspectionPanel.svelte';
   import AgentAskResearch from './AgentAskResearch.svelte';
@@ -195,7 +197,8 @@
   let workPlan = $state<TaskLensTaskResponseV1['result'] | null>(null);
   let workPlanLoading = $state(false);
   let workPlanRefreshFailed = $state(false);
-  let inspectionOpen = $state(false);
+  let executionDetail = $state<'steps' | 'activity' | 'evidence' | null>(null);
+  let writingInsteadOfApproval = $state(false);
   let executionRefresh = $state(0);
   let observedProject = false;
   let sessionRequest = 0;
@@ -252,6 +255,23 @@
       : researchDepth,
   );
   const activeTaskId = $derived(selectedSession?.activeTaskId ?? null);
+  const approvalDockKey = $derived(
+    selectedSummary?.state === 'awaitingApproval' && activeTaskId
+      ? `${selectedSummary.sessionId}:${activeTaskId}`
+      : null,
+  );
+  $effect(() => {
+    void approvalDockKey;
+    untrack(() => (writingInsteadOfApproval = false));
+  });
+  async function switchComposer(writing: boolean): Promise<void> {
+    writingInsteadOfApproval = writing;
+    await tick();
+    workspaceElement
+      ?.querySelector<HTMLElement>(writing ? '.composer-box textarea' : '.approval-dock button')
+      ?.focus({ preventScroll: true });
+  }
+
   const latestResearchSequence = $derived(
     selectedSession ? latestUserSequence(selectedSession.entries) : null,
   );
@@ -380,7 +400,7 @@
     workPlanRefreshFailed = false;
     activityLoading = false;
     workPlanLoading = false;
-    inspectionOpen = false;
+    executionDetail = null;
     if (taskId) untrack(() => void Promise.all([loadActivity(taskId), loadWorkPlan(taskId)]));
   });
 
@@ -445,28 +465,8 @@
   }
 
   function scrollConversationToEnd(viewport: HTMLDivElement): void {
-    const execution = viewport.querySelector<HTMLElement>('.execution-card');
-    const tail = execution
-      ? (execution.querySelector<HTMLElement>('.confirm-decision') ??
-        execution.querySelector<HTMLElement>('.execution-focus') ??
-        execution)
-      : viewport.querySelector<HTMLElement>(
-          '.conversation-turn:last-child .ask-research[data-live="true"][open] .research-steps li:last-child',
-        );
-    const maximum = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
-    // Keep the latest *work*, not the source-list footer, visible in small windows.
-    const end = tail
-      ? Math.max(
-          0,
-          Math.min(
-            maximum,
-            viewport.scrollTop +
-              tail.getBoundingClientRect().bottom -
-              viewport.getBoundingClientRect().bottom +
-              12,
-          ),
-        )
-      : maximum;
+    // Reattaching at the bottom must never snap back to an earlier work item.
+    const end = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
     if (Math.abs(viewport.scrollTop - end) > 1) viewport.scrollTop = end;
     previousScrollTop = viewport.scrollTop;
   }
@@ -503,7 +503,26 @@
   }
 
   function handleConversationWheel(event: WheelEvent): void {
-    if (event.deltaY !== 0) pauseConversationFollow();
+    if (event.deltaY === 0) return;
+    const viewport = event.currentTarget as HTMLDivElement;
+    let target = event.target instanceof Element ? event.target : null;
+    let readingDetails = Boolean(target?.closest('dialog'));
+    while (target && target !== viewport && !readingDetails) {
+      readingDetails =
+        target.scrollHeight > target.clientHeight &&
+        ['auto', 'scroll'].includes(window.getComputedStyle(target).overflowY);
+      target = target.parentElement;
+    }
+    // A downward gesture at the end produces no native scroll event. Keep
+    // following there, while a nested detail reader still owns its position.
+    if (
+      event.deltaY > 0 &&
+      !readingDetails &&
+      viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <=
+        CONVERSATION_END_TOLERANCE_PX
+    )
+      resumeConversationFollow();
+    else pauseConversationFollow();
   }
 
   function pauseConversationFollow(): void {
@@ -1751,7 +1770,7 @@
                         >{entry.kind === 'userMessage'
                           ? 'Du'
                           : entry.kind === 'plan'
-                            ? `Plan R${entry.planRevision}`
+                            ? `Plan · Version ${entry.planRevision}`
                             : 'A^3'}</span
                       ><time>{relativeTime(entry.createdAtUnixMillis)}</time>
                     </header>
@@ -1763,12 +1782,23 @@
                           {/each}
                         </div>
                       {/if}
-                      <ChatMarkdown
-                        text={displayedEntryText}
-                        sources={entryResearchSources}
-                        onsource={(source) =>
-                          responseUserSequence && openResearchSource(responseUserSequence, source)}
-                      />
+                      {#if entry.kind === 'plan'}
+                        <AgentPlanCard
+                          text={displayedEntryText}
+                          sources={entryResearchSources}
+                          onsource={(source) =>
+                            responseUserSequence &&
+                            openResearchSource(responseUserSequence, source)}
+                        />
+                      {:else}
+                        <ChatMarkdown
+                          text={displayedEntryText}
+                          sources={entryResearchSources}
+                          onsource={(source) =>
+                            responseUserSequence &&
+                            openResearchSource(responseUserSequence, source)}
+                        />
+                      {/if}
                     </div>
                     {#if responseUserSequence}
                       <AgentDiagrams
@@ -1803,42 +1833,43 @@
                       </div>
                     {/if}
                   </article>
+                  {#if entry.kind === 'userMessage' && turn.userSequence}
+                    <AgentAskResearch
+                      compact
+                      projectionLoader={researchProjectionLoader}
+                      sessionId={sessionView.session.summary.sessionId}
+                      userSequence={turn.userSequence}
+                      refreshKey={turn.userSequence === latestResearchSequence
+                        ? `${sessionView.session.summary.revision}-${researchRefresh}`
+                        : `${turn.key}:completed`}
+                      live={turn.userSequence === latestResearchSequence &&
+                        activeTaskId === null &&
+                        !latestResearchHasResponse &&
+                        sessionView.session.summary.state === 'running'}
+                      recentlyCompleted={turn.userSequence === recentlyCompletedResearchSequence}
+                      responseVisible={turn.entries.length > 1}
+                      sourceRequest={researchSourceRequest}
+                      presentation={researchPresentations[turn.key] ?? null}
+                      onprojectionchange={(projection) =>
+                        rememberResearchProjection(
+                          sessionView.kind === 'available'
+                            ? sessionView.session.summary.sessionId
+                            : undefined,
+                          turn.userSequence ?? '',
+                          projection,
+                        )}
+                      onpresentationchange={(presentation) =>
+                        rememberResearchPresentation(
+                          sessionView.kind === 'available'
+                            ? sessionView.session.summary.sessionId
+                            : undefined,
+                          turn.userSequence ?? '',
+                          presentation,
+                        )}
+                      oncontinue={() => void continueResearch()}
+                    />
+                  {/if}
                 {/each}
-                {#if turn.userSequence}
-                  <AgentAskResearch
-                    projectionLoader={researchProjectionLoader}
-                    sessionId={sessionView.session.summary.sessionId}
-                    userSequence={turn.userSequence}
-                    refreshKey={turn.userSequence === latestResearchSequence
-                      ? `${sessionView.session.summary.revision}-${researchRefresh}`
-                      : `${turn.key}:completed`}
-                    live={turn.userSequence === latestResearchSequence &&
-                      activeTaskId === null &&
-                      !latestResearchHasResponse &&
-                      sessionView.session.summary.state === 'running'}
-                    recentlyCompleted={turn.userSequence === recentlyCompletedResearchSequence}
-                    responseVisible={turn.entries.length > 1}
-                    sourceRequest={researchSourceRequest}
-                    presentation={researchPresentations[turn.key] ?? null}
-                    onprojectionchange={(projection) =>
-                      rememberResearchProjection(
-                        sessionView.kind === 'available'
-                          ? sessionView.session.summary.sessionId
-                          : undefined,
-                        turn.userSequence ?? '',
-                        projection,
-                      )}
-                    onpresentationchange={(presentation) =>
-                      rememberResearchPresentation(
-                        sessionView.kind === 'available'
-                          ? sessionView.session.summary.sessionId
-                          : undefined,
-                        turn.userSequence ?? '',
-                        presentation,
-                      )}
-                    oncontinue={() => void continueResearch()}
-                  />
-                {/if}
               </div>
             {/each}
             {#if activeTaskId}
@@ -1869,13 +1900,11 @@
               >
                 <header class="execution-heading">
                   <div>
-                    <p class="section-label">
-                      {runState === 'done'
-                        ? 'Finaler Review'
-                        : runState === 'failed'
-                          ? 'Sicherer Haltepunkt'
-                          : 'A^3 arbeitet'}
-                    </p>
+                    {#if runState === 'done' || runState === 'failed'}
+                      <p class="section-label">
+                        {runState === 'done' ? 'Finaler Review' : 'Sicherer Haltepunkt'}
+                      </p>
+                    {/if}
                     <h3 id={`${workspaceId}-execution-heading`}>
                       {runState ? controllerStateLabel(runState) : 'Agentenlauf wird vorbereitet'}
                     </h3>
@@ -1923,109 +1952,122 @@
                   </p>
                 {/if}
 
-                {#if selectedSummary?.state === 'awaitingApproval'}
-                  <section class="execution-approval" aria-label="Erforderliche Freigabe">
-                    <AgentApprovalCenter
-                      taskId={visibleTaskId}
-                      refreshKey={executionRefresh}
-                      loader={approvalLoader}
-                      controller={approvalController}
-                      onChanged={async () => {
-                        await Promise.all([
-                          loadActivity(visibleTaskId),
-                          loadWorkPlan(visibleTaskId),
-                        ]);
-                        if (selectedSessionId) await pollSession(selectedSessionId);
-                      }}
-                    />
-                  </section>
-                {/if}
-
-                {#if workPlanLoading && workPlan === null && !workPlanRefreshFailed}
-                  <p role="status">Arbeitsplan wird geladen …</p>
-                {:else if workPlan?.status === 'available'}
-                  <details class="execution-details agent-work-plan">
-                    <summary
-                      ><span>Arbeitsschritte</span><small
-                        >{completedSteps} / {workPlan.steps.length}</small
-                      ></summary
-                    >
-                    <div class="execution-detail-body">
-                      {#if workPlan.ledgerRevision > 1}
-                        <p class="adaptive-plan-note">
-                          Nach einem neuen Befund angepasst; bestätigte Arbeit bleibt erhalten.
-                        </p>
-                      {/if}
-                      <ol aria-label="Alle Arbeitsschritte">
-                        {#each workPlan.steps as step, index (step.stepId)}
-                          <li
-                            class:active={step.stepId === currentStep?.stepId}
-                            aria-current={step.stepId === currentStep?.stepId ? 'step' : undefined}
-                          >
-                            <span class="todo-marker" aria-hidden="true"
-                              >{step.status === 'completed' ? '✓' : index + 1}</span
-                            >
-                            <div>
-                              <strong>{step.intendedOutcome}</strong><small
-                                >{workPlanStepStatus(step.status)}</small
-                              >
-                            </div>
-                          </li>
-                        {/each}
-                      </ol>
-                    </div>
-                  </details>
-                {/if}
-
-                <details class="execution-details execution-activity">
-                  <summary
-                    ><span>Aktivitätsverlauf</span><small
-                      >{activity?.run?.timeline.length ?? 0}</small
-                    ></summary
+                <nav class="execution-links" aria-label="Ausführungsdetails">
+                  <button
+                    class="agent-work-plan"
+                    type="button"
+                    aria-haspopup="dialog"
+                    disabled={workPlan?.status !== 'available'}
+                    aria-busy={workPlanLoading && workPlan === null && !workPlanRefreshFailed}
+                    onclick={() => {
+                      pauseConversationFollow();
+                      executionDetail = 'steps';
+                    }}
                   >
-                  <div class="execution-detail-body">
-                    {#if activityLoading && activity === null}
-                      <p role="status">Aktivität wird geladen …</p>
-                    {:else if activity?.run}
-                      {#if activity.run.earlierEventsOmitted}<p class="adaptive-plan-note">
-                          Die jüngsten {activity.run.timeline.length} Ereignisse werden angezeigt.
-                        </p>{/if}
-                      <ol class="activity-timeline" aria-label="Aktivitäten des Agenten">
-                        {#each activity.run.timeline as event (event.sequence)}
-                          {@const eventState = activityEventState(
-                            event,
-                            activity.run.timeline.at(-1)?.sequence,
-                            activity.run.terminal,
-                          )}
-                          <li
-                            class={eventState}
-                            aria-current={eventState === 'active' ? 'step' : undefined}
-                          >
-                            <span aria-hidden="true">{eventState === 'done' ? '✓' : ''}</span>
-                            <div>
-                              <strong>{activityEventLabel(event)}</strong>
-                              <p>{activityEventFeedback(event)}</p>
-                            </div>
-                          </li>
-                        {/each}
-                      </ol>
-                    {:else}<p>Die Ausführung wird vorbereitet.</p>{/if}
-                  </div>
-                </details>
-
-                <details class="execution-details execution-evidence" bind:open={inspectionOpen}>
-                  <summary><span>Änderungen & Prüfungen</span></summary>
-                  {#if inspectionOpen}
-                    <section aria-label="Dateien und Prüfungen">
-                      <AgentInspectionPanel
-                        taskId={visibleTaskId}
-                        refreshKey={`${activity?.run?.updatedAtUnixMillis ?? 'initial'}:${activity?.ledgerStoreVersion ?? 'initial'}`}
-                        loader={inspectionLoader}
-                        logLoader={inspectionLogLoader}
-                      />
-                    </section>
-                  {/if}
-                </details>
+                    Arbeitsschritte <small
+                      >{workPlan?.status === 'available'
+                        ? `${completedSteps}/${workPlan.steps.length}`
+                        : '…'}</small
+                    >
+                  </button>
+                  <button
+                    class="execution-activity"
+                    type="button"
+                    aria-haspopup="dialog"
+                    onclick={() => {
+                      pauseConversationFollow();
+                      executionDetail = 'activity';
+                    }}
+                  >
+                    Aktivitätsverlauf <small>{activity?.run?.timeline.length ?? 0}</small>
+                  </button>
+                  <button
+                    class="execution-evidence"
+                    type="button"
+                    aria-haspopup="dialog"
+                    onclick={() => {
+                      pauseConversationFollow();
+                      executionDetail = 'evidence';
+                    }}
+                  >
+                    Änderungen & Prüfungen
+                  </button>
+                </nav>
+                {#if executionDetail}
+                  <AgentDetailDialog
+                    title={executionDetail === 'steps'
+                      ? 'Arbeitsschritte'
+                      : executionDetail === 'activity'
+                        ? 'Aktivitätsverlauf'
+                        : 'Änderungen & Prüfungen'}
+                    onclose={() => (executionDetail = null)}
+                  >
+                    {#if executionDetail === 'steps' && workPlan?.status === 'available'}
+                      <div class="agent-work-plan">
+                        {#if workPlan.ledgerRevision > 1}
+                          <p class="adaptive-plan-note">
+                            Nach einem neuen Befund angepasst; bestätigte Arbeit bleibt erhalten.
+                          </p>
+                        {/if}
+                        <ol aria-label="Alle Arbeitsschritte">
+                          {#each workPlan.steps as step, index (step.stepId)}
+                            <li
+                              class:active={step.stepId === currentStep?.stepId}
+                              aria-current={step.stepId === currentStep?.stepId
+                                ? 'step'
+                                : undefined}
+                            >
+                              <span class="todo-marker" aria-hidden="true"
+                                >{step.status === 'completed' ? '✓' : index + 1}</span
+                              >
+                              <div>
+                                <strong>{step.intendedOutcome}</strong><small
+                                  >{workPlanStepStatus(step.status)}</small
+                                >
+                              </div>
+                            </li>
+                          {/each}
+                        </ol>
+                      </div>
+                    {:else if executionDetail === 'activity'}
+                      {#if activityLoading && activity === null}
+                        <p role="status">Aktivität wird geladen …</p>
+                      {:else if activity?.run}
+                        {#if activity.run.earlierEventsOmitted}<p class="adaptive-plan-note">
+                            Die jüngsten {activity.run.timeline.length} Ereignisse werden angezeigt.
+                          </p>{/if}
+                        <ol class="activity-timeline" aria-label="Aktivitäten des Agenten">
+                          {#each activity.run.timeline as event (event.sequence)}
+                            {@const eventState = activityEventState(
+                              event,
+                              activity.run.timeline.at(-1)?.sequence,
+                              activity.run.terminal,
+                            )}
+                            <li
+                              class={eventState}
+                              aria-current={eventState === 'active' ? 'step' : undefined}
+                            >
+                              <span aria-hidden="true">{eventState === 'done' ? '✓' : ''}</span>
+                              <div>
+                                <strong>{activityEventLabel(event)}</strong>
+                                <p>{activityEventFeedback(event)}</p>
+                              </div>
+                            </li>
+                          {/each}
+                        </ol>
+                      {:else}<p>Die Ausführung wird vorbereitet.</p>{/if}
+                    {:else if executionDetail === 'evidence'}
+                      <section aria-label="Dateien und Prüfungen">
+                        <AgentInspectionPanel
+                          taskId={visibleTaskId}
+                          refreshKey={`${activity?.run?.updatedAtUnixMillis ?? 'initial'}:${activity?.ledgerStoreVersion ?? 'initial'}`}
+                          loader={inspectionLoader}
+                          logLoader={inspectionLogLoader}
+                        />
+                      </section>
+                    {/if}
+                  </AgentDetailDialog>
+                {/if}
               </article>
             {/if}
             {#if pendingMessage}
@@ -2105,7 +2147,37 @@
           </section>
         {/if}
         {#if actionError}<p class="composer-error" role="alert">{actionError}</p>{/if}
-        <div class="composer-box">
+        {#if activeTaskId && approvalDockKey}
+          {@const visibleTaskId = activeTaskId}
+          <section
+            class="approval-dock"
+            hidden={writingInsteadOfApproval}
+            aria-label="Erforderliche Freigabe"
+          >
+            <AgentApprovalCenter
+              onwrite={() => void switchComposer(true)}
+              taskId={visibleTaskId}
+              refreshKey={executionRefresh}
+              loader={approvalLoader}
+              controller={approvalController}
+              onChanged={async () => {
+                await Promise.all([loadActivity(visibleTaskId), loadWorkPlan(visibleTaskId)]);
+                if (selectedSessionId) await pollSession(selectedSessionId);
+              }}
+            />
+          </section>
+        {/if}
+
+        {#if approvalDockKey && writingInsteadOfApproval}
+          <button
+            type="button"
+            class="return-to-approval"
+            onclick={() => void switchComposer(false)}
+          >
+            Freigabe erforderlich <span>Zur Freigabe →</span>
+          </button>
+        {/if}
+        <div class="composer-box" hidden={approvalDockKey !== null && !writingInsteadOfApproval}>
           <div class="mode-switch" aria-label="Modus für die nächste Nachricht">
             <button
               type="button"
@@ -2114,14 +2186,7 @@
               class:executing={selectedSummary?.mode === 'ask' &&
                 selectedSummary.state === 'running'}
               aria-pressed={targetMode === 'ask'}
-              onclick={() => (targetMode = 'ask')}
-              ><strong>Fragen</strong><span
-                >{selectedSummary?.mode === 'ask' && selectedSummary.state === 'running'
-                  ? 'Wird ausgeführt'
-                  : targetMode === 'ask'
-                    ? 'Als Nächstes'
-                    : 'Lesen & antworten'}</span
-              ></button
+              onclick={() => (targetMode = 'ask')}><strong>Fragen</strong></button
             >
             <button
               type="button"
@@ -2130,14 +2195,7 @@
               class:executing={selectedSummary?.mode === 'plan' &&
                 selectedSummary.state === 'running'}
               aria-pressed={targetMode === 'plan'}
-              onclick={() => (targetMode = 'plan')}
-              ><strong>Planen</strong><span
-                >{selectedSummary?.mode === 'plan' && selectedSummary.state === 'running'
-                  ? 'Wird ausgeführt'
-                  : targetMode === 'plan'
-                    ? 'Als Nächstes'
-                    : 'Plan erarbeiten'}</span
-              ></button
+              onclick={() => (targetMode = 'plan')}><strong>Planen</strong></button
             >
             <button
               type="button"
@@ -2146,14 +2204,7 @@
               class:executing={selectedSummary?.mode === 'agent' &&
                 selectedSummary.state === 'running'}
               aria-pressed={targetMode === 'agent'}
-              onclick={() => (targetMode = 'agent')}
-              ><strong>Umsetzen</strong><span
-                >{selectedSummary?.mode === 'agent' && selectedSummary.state === 'running'
-                  ? 'Wird ausgeführt'
-                  : targetMode === 'agent'
-                    ? 'Als Nächstes'
-                    : 'Sicher umsetzen'}</span
-              ></button
+              onclick={() => (targetMode = 'agent')}><strong>Umsetzen</strong></button
             >
           </div>
           {#if commandChips.length > 0}
@@ -2184,7 +2235,7 @@
                 : targetMode === 'plan'
                   ? 'Was möchtest du planen?'
                   : 'Welche Aufgabe soll A^3 erledigen?'}
-            rows="3"></textarea>
+            rows="2"></textarea>
           {#if commandSuggestions.length > 0}
             <div class="slash-palette" role="listbox" aria-label="Slash Commands">
               {#each commandSuggestions as command, index (command.name)}
@@ -2247,7 +2298,9 @@
             >
           </div>
         </div>
-        <p class="composer-hint">Enter senden · Shift + Enter neue Zeile</p>
+        {#if !approvalDockKey || writingInsteadOfApproval}<p class="composer-hint">
+            Enter senden · Shift + Enter neue Zeile
+          </p>{/if}
       </div>
     </section>
   {/if}
@@ -2605,7 +2658,8 @@
   }
   .plan-message {
     padding: var(--space-4);
-    border-inline-start: 3px solid var(--color-accent);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-card);
     background: var(--color-surface-subtle);
   }
   .pending {
@@ -2631,7 +2685,7 @@
   .plan-actions {
     display: flex;
     flex-wrap: wrap;
-    margin-top: var(--space-4);
+    margin-top: var(--space-2);
     gap: var(--space-2);
   }
   .plan-actions button,
@@ -2819,14 +2873,11 @@
     background: var(--color-status-pending);
     box-shadow: 0 0 0 3px var(--color-status-pending-ring);
   }
-  .mode-switch span {
-    font-size: var(--font-size-xs);
-  }
   .composer-box textarea {
     display: block;
     width: 100%;
-    min-height: 5rem;
-    max-height: 14rem;
+    min-height: 3.5rem;
+    max-height: min(10rem, 25dvh);
     padding: var(--space-3) var(--space-4);
     resize: vertical;
     border: 0;
@@ -2993,7 +3044,7 @@
     border: 1px solid var(--color-border);
     border-radius: var(--radius-card);
     background: var(--color-surface-subtle);
-    box-shadow: var(--shadow-subtle);
+    box-shadow: none;
   }
   .execution-card.failed {
     border-color: color-mix(in srgb, var(--color-danger) 55%, var(--color-border));
@@ -3037,8 +3088,9 @@
     font-size: var(--font-size-xs);
   }
   .execution-focus {
-    padding: var(--space-3) 0 var(--space-3) var(--space-3);
-    margin-block: var(--space-2);
+    padding: var(--space-1) 0;
+    margin: 0;
+    border: 0;
     background: transparent;
   }
   .execution-alert {
@@ -3048,56 +3100,56 @@
   .execution-success {
     border-inline-start-color: var(--color-status-ready);
   }
-  .execution-approval {
+  .approval-dock {
     min-width: 0;
-    padding: var(--space-4);
-    border: 1px solid var(--color-status-pending);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--color-border-strong);
+    border-top-color: var(--color-accent);
+    border-radius: var(--radius-card);
+    background: var(--color-surface);
+    animation: app-surface-in 120ms var(--ease-out);
+  }
+  .return-to-approval {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    min-height: var(--control-min-size);
+    margin-bottom: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius-control);
     background: var(--color-accent-surface);
+    color: var(--color-accent-text);
+    cursor: pointer;
   }
   .section-label {
     margin: 0;
     color: var(--color-muted);
     font-size: var(--font-size-xs);
   }
-  .execution-details {
-    min-width: 0;
-    border-block-start: 1px solid var(--color-border-soft);
-  }
-  .execution-details > summary {
+  .execution-links {
     display: flex;
-    align-items: center;
-    gap: var(--space-2);
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-3);
+    border-top: 1px solid var(--color-border-soft);
+  }
+  .execution-links button {
     min-height: var(--control-min-size);
-    cursor: pointer;
-    list-style: none;
+    padding: 0;
+    border: 0;
     color: var(--color-muted);
+    background: transparent;
+    cursor: pointer;
     transition: color 120ms ease;
   }
-  .execution-details > summary::-webkit-details-marker {
-    display: none;
+  .execution-links button:hover {
+    color: var(--color-accent-text);
   }
-  .execution-details > summary::before {
-    content: '›';
-    font-size: 1.1rem;
-    transition: transform 120ms ease;
-  }
-  .execution-details[open] > summary::before {
-    transform: rotate(90deg);
-  }
-  .execution-details > summary:hover {
-    color: var(--color-heading);
-  }
-  .execution-details > summary small {
-    margin-inline-start: auto;
+  .execution-links small {
+    margin-left: var(--space-1);
     font-variant-numeric: tabular-nums;
-  }
-  .execution-detail-body {
-    max-height: min(24rem, 55vh);
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-gutter: stable;
-    padding-block: var(--space-2);
   }
   .refresh-note {
     margin: 0;
@@ -3108,9 +3160,11 @@
     margin-inline-start: var(--space-2);
   }
   @media (prefers-reduced-motion: reduce) {
-    .execution-details > summary,
-    .execution-details > summary::before {
+    .execution-links button {
       transition: none;
+    }
+    .approval-dock {
+      animation: none;
     }
   }
   .adaptive-plan-note {
@@ -3275,7 +3329,6 @@
     .starter-grid {
       grid-template-columns: 1fr;
     }
-    .mode-switch span,
     .context-note,
     .composer-hint {
       display: none;
@@ -3328,9 +3381,6 @@
   .composer-box {
     background: var(--color-surface);
   }
-  .mode-switch span {
-    font-size: 0.6875rem;
-  }
   .rename-body {
     display: grid;
     gap: var(--space-2);
@@ -3353,11 +3403,6 @@
   }
   .welcome {
     animation: app-surface-in var(--motion-normal) var(--ease-out);
-  }
-  @media (max-width: 1100px) {
-    .mode-switch span {
-      display: none;
-    }
   }
   @media (max-width: 760px) {
     .session-rail {

@@ -12,6 +12,7 @@
       }
       body {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
         grid-template-rows: auto minmax(0, 1fr) auto;
       }
       nav {
@@ -30,6 +31,10 @@
         max-height: 520px;
       }
       output {
+        min-width: 0;
+        max-height: 3rem;
+        overflow: auto;
+        overflow-wrap: anywhere;
         font-size: 0.75rem;
         padding: 0.5rem;
       }
@@ -38,6 +43,7 @@
   <body>
     <nav aria-label="Offline-Prüfung">
       <button id="measure">Stabilität messen</button>
+      <button id="measure-bottom">Verlaufsende prüfen</button>
       <button id="approval">Freigabe anfordern</button>
       <button id="process-approval">Prüfung freigeben</button>
       <button id="conflict">Lesekonflikt</button>

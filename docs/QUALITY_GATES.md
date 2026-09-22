@@ -468,7 +468,18 @@ offengelegt werden, nicht als isolierter Prosaeffekt erscheinen.
   monotone append-only Projektion ersetzt den letzten vollständigen Stand. Mehrseitige Quellen
   werden vor dem sichtbaren Austausch vollständig geladen, ohne die natürliche Höhe der Timeline
   festzuschreiben. Ein Layout-Resize allein darf eine manuell gelöste Scrollbindung nicht
-  reaktivieren.
+  reaktivieren. ADR-0116 ergänzt ausdrücklich den Ausführungsfall: Ein früherer Fokusblock darf
+  die Rückkehr zum tatsächlichen Ende nicht überschreiben. Ein bis zum Ende gescrollter Nutzer
+  bleibt dort, auch wenn Arbeitsschritte weiter oberhalb liegen.
+- Der ADR-0116-UI-Contract hält Recherche vor Plan und dieselben historischen Instanzen über Polls.
+  Plantexte und Ausführungsdetails öffnen sich vollständig in nativen, begrenzt scrollbaren
+  Dialogen; Escape, Fokus-Rückgabe und manuelles Lesen bleiben stabil. Freigaben liegen außerhalb
+  des Nachrichten-Scrollbereichs. Eingabewechsel erhält Entwurf und dieselbe aktuelle Auswahl;
+  ein Taskwechsel verwirft die vorherige Auswahl. Entscheidung startet neutral; Konflikte sperren
+  Controls, Speichern startet keine Arbeit, Fortsetzen und Widerrufen bleiben getrennt.
+  Das Offline-Profil `apps/desktop/performance/u19-agent-execution.html?conversation` prüft lange
+  Antworten, einen 40-teiligen Plan, 40 Arbeitsschritte, exakte Rust-Vertragsprojektionen und
+  reale Scrollgeometrie in beiden Themes und kleinen Fenstern.
 - Der Langchat-Contract erhält dieselbe Rechercheinstanz auch beim nächsten Nutzerturn, lädt
   historische Traces nicht mit dessen Live-Polls nach und zerlegt unverändertes Markdown nicht
   erneut. Rotierende opake Source-Referenzen erhalten Fokus und Auswahl über ihr turnlokales

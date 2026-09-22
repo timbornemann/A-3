@@ -138,7 +138,7 @@
         }
       }
       if (!expansionInitialized) {
-        expanded = isLive;
+        expanded = isLive && !compact;
         expansionInitialized = true;
       }
       if (isLive) autoCollapseEligible = true;
@@ -742,7 +742,13 @@
   }
 </script>
 
-<details class:compact class="ask-research" data-live={live} bind:open={expanded}>
+<details
+  class:compact
+  class:finished={!live && latest?.state === 'completed'}
+  class="ask-research"
+  data-live={live}
+  bind:open={expanded}
+>
   <summary onclick={handleDisclosureClick}>
     <span class:live-dot={live}></span>
     <span>
@@ -756,7 +762,8 @@
       >
     </span>
     {#if detail}<em
-        >{modeLabel(detail.mode)} · {depthLabel(detail.depth)} · {detail.sourceCount} Quellen</em
+        >{#if !compact || expanded}{modeLabel(detail.mode)} · {depthLabel(detail.depth)} ·
+        {/if}{detail.sourceCount} Quellen</em
       >{/if}
   </summary>
   <div class="research-body">
@@ -1423,11 +1430,29 @@
   .compact {
     margin: 0;
   }
-  .compact summary {
-    grid-template-columns: auto minmax(0, 1fr);
+  .compact > summary {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    min-height: var(--control-min-size);
+    padding-block: var(--space-1);
   }
-  .compact summary em {
-    grid-column: 2;
+  .compact > summary em {
+    grid-column: auto;
+  }
+  .compact.finished:not([open]) > summary small {
+    display: none;
+  }
+  .compact > summary::after {
+    content: '›';
+    color: var(--color-muted);
+    transition: transform 120ms ease;
+  }
+  .compact[open] > summary::after {
+    transform: rotate(90deg);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .compact > summary::after {
+      transition: none;
+    }
   }
   @keyframes research-step-in {
     from {

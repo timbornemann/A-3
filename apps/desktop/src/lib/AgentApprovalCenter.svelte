@@ -11,6 +11,7 @@
 
   interface Props {
     taskId: string;
+    onwrite?: () => void;
     refreshKey?: string | number;
     loader?: (taskId: string) => Promise<AgentApprovalResponseV1>;
     controller?: (
@@ -29,6 +30,7 @@
 
   let {
     taskId,
+    onwrite,
     refreshKey = 0,
     loader = queryAgentApproval,
     controller = controlAgentApproval,
@@ -240,12 +242,16 @@
 <section class="approval-center" aria-labelledby="approval-center-heading">
   <header>
     <div>
-      <p>Deine Entscheidung</p>
       <h3 id="approval-center-heading">Aktion freigeben</h3>
     </div>
-    {#if view.kind === 'result' && view.result.status === 'available'}
-      <span class="status-chip">{statusLabel(view.result.approval.status)}</span>
-    {/if}
+    <div class="header-actions">
+      {#if view.kind === 'result' && view.result.status === 'available'}
+        <span class="status-chip">{statusLabel(view.result.approval.status)}</span>
+      {/if}
+      {#if onwrite}<button type="button" class="write-message" onclick={onwrite}
+          >Nachricht schreiben</button
+        >{/if}
+    </div>
   </header>
   {#if refreshFailed && view.kind === 'result'}
     <p class="bounded-note" role="status">
@@ -278,196 +284,212 @@
     </p>
   {:else if view.result.status === 'available'}
     {@const approval = view.result.approval}
-    <dl class="approval-facts">
-      <div>
-        <dt>Aktion</dt>
-        <dd>{classLabel(approval.actionClass)}</dd>
-      </div>
-      <div>
-        <dt>Risiko</dt>
-        <dd>{riskLabel(approval.risk)}</dd>
-      </div>
-      <div>
-        <dt>Gilt für</dt>
-        <dd>Nur diese Aktion, die angezeigten Ziele und den aktuellen Lauf. Einmalig.</dd>
-      </div>
-      <div>
-        <dt>Grund</dt>
-        <dd>
-          {approval.reason === 'workspacePolicy'
-            ? 'Die Projektregeln verlangen deine Freigabe.'
-            : 'Die Sicherheitsregeln verlangen deine Freigabe.'}
-        </dd>
-      </div>
-      <div>
-        <dt>Gültig bis</dt>
-        <dd>{readableTime(approval.expiresAtUnixMillis)}</dd>
-      </div>
-    </dl>
+    <!-- The exact scope can exceed a small window and must remain keyboard-scrollable. -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div class="approval-content" tabindex="0" role="region" aria-label="Aktion und Freigabeumfang">
+      <dl class="approval-facts">
+        <div>
+          <dt>Aktion</dt>
+          <dd>{classLabel(approval.actionClass)}</dd>
+        </div>
+        <div>
+          <dt>Risiko</dt>
+          <dd>{riskLabel(approval.risk)}</dd>
+        </div>
+        <div>
+          <dt>Gilt für</dt>
+          <dd>Nur diese Aktion, die angezeigten Ziele und den aktuellen Lauf. Einmalig.</dd>
+        </div>
+        <div>
+          <dt>Grund</dt>
+          <dd>
+            {approval.reason === 'workspacePolicy'
+              ? 'Die Projektregeln verlangen deine Freigabe.'
+              : 'Die Sicherheitsregeln verlangen deine Freigabe.'}
+          </dd>
+        </div>
+        <div>
+          <dt>Gültig bis</dt>
+          <dd>{readableTime(approval.expiresAtUnixMillis)}</dd>
+        </div>
+      </dl>
 
-    {#if approval.action.kind === 'patch'}
-      <section class="action-detail" aria-labelledby="approval-patch-heading">
-        <h4 id="approval-patch-heading">Diese Dateien werden geändert</h4>
-        <p>{approval.action.patch.rationale}</p>
-        <ul>
-          {#each approval.action.patch.files as file, index (`${file.operation}-${index}`)}
-            <li>
-              <strong>{operationLabel(file.operation)}</strong>
-              <code
-                >{file.sourcePath?.displayPath ?? '∅'} → {file.targetPath?.displayPath ?? '∅'}</code
-              >
-              <details class="technical-details">
-                <summary>Pfaddetails</summary>
-                {#if file.sourcePath !== null}
-                  <small>Quelle (Bytes): <code>{file.sourcePath.pathHex}</code></small>
-                {/if}
-                {#if file.targetPath !== null}
-                  <small>Ziel (Bytes): <code>{file.targetPath.pathHex}</code></small>
-                {/if}
-              </details>
-            </li>
-          {/each}
-        </ul>
-      </section>
-    {:else}
-      {@const process = approval.action.process}
-      <section class="action-detail" aria-labelledby="approval-process-heading">
-        <h4 id="approval-process-heading">Dieser Befehl wird ausgeführt</h4>
+      {#if approval.action.kind === 'patch'}
+        <section class="action-detail" aria-labelledby="approval-patch-heading">
+          <h4 id="approval-patch-heading">Diese Dateien werden geändert</h4>
+          <p>{approval.action.patch.rationale}</p>
+          <ul>
+            {#each approval.action.patch.files as file, index (`${file.operation}-${index}`)}
+              <li>
+                <strong>{operationLabel(file.operation)}</strong>
+                <code
+                  >{file.sourcePath?.displayPath ?? '∅'} → {file.targetPath?.displayPath ??
+                    '∅'}</code
+                >
+              </li>
+            {/each}
+          </ul>
+        </section>
+      {:else}
+        {@const process = approval.action.process}
+        <section class="action-detail" aria-labelledby="approval-process-heading">
+          <h4 id="approval-process-heading">Dieser Befehl wird ausgeführt</h4>
+          <dl>
+            <div>
+              <dt>Programm und Argumente</dt>
+              <dd>
+                <ol class="argv">
+                  {#each [process.executable, ...process.arguments] as argument, index (`${index}-${argument}`)}
+                    <li>
+                      <span class="sr-only">{index === 0 ? 'Programm' : `Argument ${index}`}</span>
+                      <code>{JSON.stringify(argument)}</code>
+                    </li>
+                  {/each}
+                </ol>
+              </dd>
+            </div>
+            <div>
+              <dt>Arbeitsordner</dt>
+              <dd>
+                <code
+                  >{process.workingDirectory.kind === 'root'
+                    ? '.'
+                    : process.workingDirectory.path.displayPath}</code
+                >
+              </dd>
+            </div>
+            <div>
+              <dt>Netzwerk</dt>
+              <dd>
+                {process.network.kind === 'denied'
+                  ? 'Nicht angefordert'
+                  : `Angefordert · Scope ${process.network.scopeDigest}`}
+              </dd>
+            </div>
+          </dl>
+        </section>
+      {/if}
+
+      <details class="technical-details approval-audit">
+        <summary>Technische Freigabedetails</summary>
         <dl>
           <div>
-            <dt>Programm und Argumente</dt>
-            <dd>
-              <ol class="argv">
-                {#each [process.executable, ...process.arguments] as argument, index (`${index}-${argument}`)}
-                  <li>
-                    <span class="sr-only">{index === 0 ? 'Programm' : `Argument ${index}`}</span>
-                    <code>{JSON.stringify(argument)}</code>
-                  </li>
-                {/each}
-              </ol>
-            </dd>
+            <dt>Exakter Scope</dt>
+            <dd><code>{approval.scopeDigest}</code></dd>
           </div>
           <div>
-            <dt>Arbeitsordner</dt>
-            <dd>
-              <code
-                >{process.workingDirectory.kind === 'root'
-                  ? '.'
-                  : process.workingDirectory.path.displayPath}</code
-              >
-            </dd>
+            <dt>Arbeitsplan</dt>
+            <dd>Revision {approval.ledgerRevision} · <code>{approval.stepId}</code></dd>
           </div>
           <div>
-            <dt>Umgebungsvariablen</dt>
-            <dd>
-              {process.environmentAllowlist.length === 0
-                ? 'Keine'
-                : process.environmentAllowlist.join(', ')}
-            </dd>
+            <dt>Zeitanker</dt>
+            <dd>{approval.requestedAtUnixMillis}–{approval.expiresAtUnixMillis} ms</dd>
           </div>
-          <div>
-            <dt>Zeitlimit</dt>
-            <dd>{Number(process.timeoutMillis) / 1000} Sekunden</dd>
-          </div>
-          <div>
-            <dt>Ausgabegrenzen</dt>
-            <dd>stdout {process.stdoutLimit} B · stderr {process.stderrLimit} B</dd>
-          </div>
-          <div>
-            <dt>Modus</dt>
-            <dd>
-              {{
-                knownSafe: 'Bekannter Befehl',
-                open: 'Offene Ausführung',
-                shell: 'Shell-Ausführung',
-              }[process.executionMode]}
-            </dd>
-          </div>
-          <div>
-            <dt>Befehlstyp</dt>
-            <dd>
-              {{
-                test: 'Tests',
-                build: 'Build',
-                diagnostic: 'Diagnose',
-                lint: 'Codeprüfung',
-                format: 'Formatierung',
-                command: 'Befehl',
-              }[process.processKind]}
-            </dd>
-          </div>
-          <div>
-            <dt>Planbindung</dt>
-            <dd>
-              {process.planBinding.kind === 'unbound'
-                ? 'Ungebunden'
-                : 'An den aktuellen Arbeitsschritt gebunden'}
-            </dd>
-          </div>
-          <div>
-            <dt>Netzwerk</dt>
-            <dd>
-              {process.network.kind === 'denied'
-                ? 'Nicht angefordert'
-                : `Angefordert · Scope ${process.network.scopeDigest}`}
-            </dd>
-          </div>
+          {#if approval.action.kind === 'patch'}
+            {#each approval.action.patch.files as file, index (`${file.operation}-${index}`)}
+              <div>
+                <dt>Pfaddetails {index + 1}</dt>
+                <dd>
+                  {#if file.sourcePath}<span
+                      >Quelle (Bytes): <code>{file.sourcePath.pathHex}</code></span
+                    >{/if}
+                  {#if file.targetPath}<span
+                      >Ziel (Bytes): <code>{file.targetPath.pathHex}</code></span
+                    >{/if}
+                </dd>
+              </div>
+            {/each}
+          {/if}
+          {#if approval.action.kind === 'process'}
+            {@const process = approval.action.process}
+            <div>
+              <dt>Umgebungsvariablen</dt>
+              <dd>
+                {process.environmentAllowlist.length === 0
+                  ? 'Keine'
+                  : process.environmentAllowlist.join(', ')}
+              </dd>
+            </div>
+            <div>
+              <dt>Zeitlimit</dt>
+              <dd>{Number(process.timeoutMillis) / 1000} Sekunden</dd>
+            </div>
+            <div>
+              <dt>Ausgabegrenzen</dt>
+              <dd>stdout {process.stdoutLimit} B · stderr {process.stderrLimit} B</dd>
+            </div>
+            <div>
+              <dt>Modus</dt>
+              <dd>
+                {{
+                  knownSafe: 'Bekannter Befehl',
+                  open: 'Offene Ausführung',
+                  shell: 'Shell-Ausführung',
+                }[process.executionMode]}
+              </dd>
+            </div>
+            <div>
+              <dt>Befehlstyp</dt>
+              <dd>
+                {{
+                  test: 'Tests',
+                  build: 'Build',
+                  diagnostic: 'Diagnose',
+                  lint: 'Codeprüfung',
+                  format: 'Formatierung',
+                  command: 'Befehl',
+                }[process.processKind]}
+              </dd>
+            </div>
+            <div>
+              <dt>Planbindung</dt>
+              <dd>
+                {process.planBinding.kind === 'unbound'
+                  ? 'Ungebunden'
+                  : 'An den aktuellen Arbeitsschritt gebunden'}
+              </dd>
+            </div>
+
+            <div>
+              <dt>Specification-ID</dt>
+              <dd><code>{approval.action.process.specificationId}</code></dd>
+            </div>
+          {/if}
         </dl>
-      </section>
-    {/if}
-
-    <details class="technical-details approval-audit">
-      <summary>Technische Freigabedetails</summary>
-      <dl>
-        <div>
-          <dt>Exakter Scope</dt>
-          <dd><code>{approval.scopeDigest}</code></dd>
-        </div>
-        <div>
-          <dt>Arbeitsplan</dt>
-          <dd>Revision {approval.ledgerRevision} · <code>{approval.stepId}</code></dd>
-        </div>
-        <div>
-          <dt>Zeitanker</dt>
-          <dd>{approval.requestedAtUnixMillis}–{approval.expiresAtUnixMillis} ms</dd>
-        </div>
-        {#if approval.action.kind === 'process'}
-          <div>
-            <dt>Specification-ID</dt>
-            <dd><code>{approval.action.process.specificationId}</code></dd>
-          </div>
-        {/if}
-      </dl>
-    </details>
-
+      </details>
+    </div>
     {#if approval.status === 'pending'}
-      <fieldset class="decision-options">
-        <legend>Entscheidung auswählen</legend>
-        <label
-          ><input
-            type="radio"
-            name={`approval-${taskId}`}
-            value="allowOnce"
-            bind:group={choice}
-            disabled={!approval.canAllowOnce || controlling || refreshFailed}
-          /> Diese Aktion einmal erlauben</label
+      <div class="decision-row">
+        <fieldset class="decision-options">
+          <legend class="sr-only">Entscheidung auswählen</legend>
+          <label
+            ><input
+              type="radio"
+              name={`approval-${taskId}`}
+              aria-label="Diese Aktion einmal erlauben"
+              value="allowOnce"
+              bind:group={choice}
+              disabled={!approval.canAllowOnce || controlling || refreshFailed}
+            /> Einmal erlauben</label
+          >
+          <label
+            ><input
+              type="radio"
+              name={`approval-${taskId}`}
+              aria-label="Ablehnen und diesen Schritt stoppen"
+              value="deny"
+              bind:group={choice}
+              disabled={!approval.canDeny || controlling || refreshFailed}
+            /> Ablehnen & stoppen</label
+          >
+        </fieldset>
+        <button
+          type="button"
+          class="confirm-decision"
+          disabled={choice === null || controlling || refreshFailed}
+          onclick={confirmPending}>Entscheidung bestätigen</button
         >
-        <label
-          ><input
-            type="radio"
-            name={`approval-${taskId}`}
-            value="deny"
-            bind:group={choice}
-            disabled={!approval.canDeny || controlling || refreshFailed}
-          /> Ablehnen und diesen Schritt stoppen</label
-        >
-      </fieldset>
-      <button
-        type="button"
-        class="confirm-decision"
-        disabled={choice === null || controlling || refreshFailed}
-        onclick={confirmPending}>Entscheidung bestätigen</button
-      >
+      </div>
     {:else if approval.status === 'active'}
       <p class="bounded-note">
         Die Freigabe ist gespeichert. Erst „Agent fortsetzen“ startet die Aktion. Bis dahin kannst
@@ -503,24 +525,68 @@
 
 <style>
   .approval-center {
-    display: grid;
+    display: flex;
+    flex-direction: column;
     min-width: 0;
-    gap: 1.1rem;
-    padding: 0.3rem 0;
+    max-height: min(26rem, calc(52dvh - 2rem));
+    gap: var(--space-2);
+    padding: 0;
+  }
+  .approval-content {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    display: grid;
+    gap: var(--space-2);
+  }
+  header,
+  .decision-row,
+  .decision-actions,
+  .bounded-note {
+    flex-shrink: 0;
+  }
+  .decision-options input {
+    min-height: 1rem;
+    min-width: 1rem;
+    width: 1rem;
+    height: 1rem;
+    padding: 0;
+  }
+  .decision-options label {
+    font-size: var(--font-size-xs);
+  }
+  .action-detail h4 {
+    font-size: var(--font-size-sm);
   }
   header {
-    align-items: start;
+    align-items: center;
     display: flex;
     justify-content: space-between;
     gap: 1rem;
   }
-  header p {
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  h3 {
+    font-size: var(--font-size-base);
+  }
+  .write-message {
+    min-height: var(--control-min-size);
+    padding: 0 var(--space-2);
+    border: 0;
+    border-radius: var(--radius-control);
     color: var(--color-muted);
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    margin: 0;
-    text-transform: uppercase;
+    background: transparent;
+    cursor: pointer;
+  }
+  .write-message:hover {
+    background: var(--color-surface-muted);
+    color: var(--color-text);
   }
   h3,
   h4,
@@ -542,19 +608,22 @@
     grid-template-columns: minmax(6rem, 0.35fr) minmax(0, 1fr);
     align-items: baseline;
     gap: 0.5rem 0.9rem;
-    padding: 0.7rem 0;
+    padding: 0.25rem 0;
     border-bottom: 1px solid var(--color-border-soft);
   }
   .approval-facts {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--space-2) var(--space-3);
+    gap: var(--space-1) var(--space-3);
     margin: 0;
   }
   .approval-facts > div {
     display: grid;
     align-content: start;
-    gap: var(--space-1);
+    gap: 0.15rem var(--space-2);
+    grid-template-columns: auto 1fr;
+    align-items: baseline;
+    font-size: var(--font-size-xs);
   }
   .approval-facts > div:nth-child(5) {
     grid-column: 3;
@@ -583,24 +652,22 @@
   }
   .action-detail {
     display: grid;
-    gap: 0.65rem;
+    gap: 0.25rem;
     min-width: 0;
   }
   .action-detail ul {
     display: grid;
-    gap: 0.45rem;
+    gap: 0.15rem;
     list-style: none;
     margin: 0;
     padding: 0;
   }
   .action-detail li {
-    display: grid;
-    gap: 0.25rem;
-    padding-block: 0.4rem;
-  }
-  .action-detail small {
-    color: var(--color-muted);
-    overflow-wrap: anywhere;
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding-block: 0;
   }
   .argv {
     display: flex;
@@ -623,18 +690,22 @@
     clip-path: inset(50%);
     white-space: nowrap;
   }
-  .decision-options {
-    border: 0;
-    border-top: 1px solid var(--color-border-soft);
-    display: grid;
+  .decision-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
     gap: var(--space-2);
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
-    margin: 0;
-    padding: 0.8rem 0 0;
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--color-border-soft);
   }
-  .decision-options legend {
-    padding: 0 0.6rem 0 0;
-    font-weight: 650;
+  .decision-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding: 0;
+    margin: 0;
+    border: 0;
   }
   .decision-options label {
     align-items: center;
@@ -687,9 +758,6 @@
     gap: 0.8rem;
     margin: 0.4rem 0;
   }
-  .technical-details small {
-    display: block;
-  }
   .approval-audit {
     border-bottom: 1px solid var(--color-border-soft);
   }
@@ -731,5 +799,17 @@
   }
   .success-state {
     color: var(--color-positive);
+  }
+  @media (max-width: 760px) {
+    .header-actions .status-chip {
+      display: none;
+    }
+    .approval-facts {
+      grid-template-columns: 1fr 1fr;
+    }
+    .approval-facts > div:nth-child(5) {
+      grid-column: 1 / -1;
+      grid-row: auto;
+    }
   }
 </style>

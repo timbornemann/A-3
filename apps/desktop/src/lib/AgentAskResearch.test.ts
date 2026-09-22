@@ -55,6 +55,29 @@ afterEach(() => {
 });
 
 describe('AgentAskResearch', () => {
+  it('starts compact live research collapsed and retains a deliberate expansion across polls', async () => {
+    const loader = vi.fn(async () => detailResponse([step('Quellen lesen', '100', 'reading')]));
+    const view = render(AgentAskResearch, {
+      compact: true,
+      live: true,
+      detailLoader: loader,
+      sourcesLoader: emptySources,
+      refreshKey: '1',
+      sessionId: id('1'),
+      userSequence: '1',
+    });
+    await waitFor(() => expect(loader).toHaveBeenCalledOnce());
+    const disclosure = view.container.querySelector('details');
+    if (!disclosure) throw new Error('missing research disclosure');
+    expect(disclosure.open).toBe(false);
+    await fireEvent.click(screen.getByText('A^3 arbeitet'));
+    expect(disclosure.open).toBe(true);
+    await view.rerender({ refreshKey: '2' });
+    await waitFor(() => expect(loader).toHaveBeenCalledTimes(2));
+    expect(view.container.querySelector('details')).toBe(disclosure);
+    expect(disclosure.open).toBe(true);
+  });
+
   it('does not describe a preparation failure as a limited search', async () => {
     render(AgentAskResearch, {
       detailLoader: async () =>

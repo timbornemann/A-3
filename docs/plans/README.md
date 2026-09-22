@@ -21,6 +21,8 @@ Diese Pläne zerlegen A^3 in überprüfbare vertikale Arbeitspakete. Sie sind f�
 15. [Agent in leeren und bestehenden Projekten](16-AGENT-GREENFIELD-AND-EXISTING.md)
 16. [Tatsächliche Agentenausführung im Chat](17-CHAT-AGENT-EXECUTION.md)
 17. [Durchgängige Agentenausführung aus realer Recherche](18-END-TO-END-AGENT-EXECUTION.md)
+18. [Bedienbare Agentenausführung](19-AGENT-EXECUTION-UX.md)
+19. [Kompakter, frei lesbarer Agentenverlauf](20-AGENT-CONVERSATION-INTERACTION.md)
 
 ## Ausführungsregeln für Codex
 

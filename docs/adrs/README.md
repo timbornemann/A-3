@@ -139,6 +139,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0113](0113-sichere-unterverzeichnisse-fuer-patches.md) | Sichere Unterverzeichnisse für strukturierte Patches |
 | [0114](0114-chatgebundene-agentenausfuehrung.md) | Chatgebundene Agentenausführung und konkrete Haltegründe |
 | [0115](0115-ausfuehrbarer-plananker-im-modellkontext.md) | Ausführbarer Plananker im konfigurierten Modellkontext |
+| [0116](0116-kompakter-agentenverlauf-und-entscheidungsdock.md) | Kompakter Agentenverlauf und Entscheidungsbereich |
 
 ## Neue ADRs
 

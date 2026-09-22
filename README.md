@@ -245,7 +245,7 @@ ADR-0044 priorisiert dabei aktuelle explizite Dateiziele und aktuelle Task-Lens-
 historischem Conversation-Kontext. Der Modellturn erhält die Core-aufgelöste Zuordnung von
 angefragtem Namen, aktuellem Repositorypfad und `S`-Quelle; adaptive Reads behalten reservierten
 Kontextplatz und eine dateihaltige `searchIndex`-Aktion liest das eindeutige Ziel direkt.
-Während der Recherche folgt die Ansicht dem neuesten sichtbaren Arbeitsschritt, solange der
+Während der Recherche folgt die Ansicht dem tatsächlichen Ende des Verlaufs, solange der
 Nutzer nicht manuell im Verlauf liest. „Zum neuesten Schritt“ aktiviert das Mitlaufen wieder.
 Unveränderte historische Antworten, Quellen und Diagramme behalten ihre DOM-Instanzen; ein
 Folgeturn versetzt seinen Vorgänger nicht an einen neuen Renderort. ADR-0046 trennt sicher
@@ -358,12 +358,16 @@ Technische Prüfanker bleiben aufklappbar, während Aktion, Risiko und konkrete 
 bleiben. Native Dialoge, 44-Pixel-Controls, Fokusrahmen und Reduced Motion gelten durchgehend.
 Die Abnahme ist in [Plan 09](docs/plans/09-COHESIVE_DESKTOP_UI.md) dokumentiert.
 
-Während der Agent arbeitet, zeigt die Unterhaltung zuerst den aktuellen Schritt. Arbeitsschritte,
-Aktivitätsverlauf und Änderungen/Prüfungen lassen sich einzeln aufklappen. Freigaben stehen davor
-direkt im Chat; die genaue Aktion und ihr Risiko bleiben sichtbar. Eine gespeicherte Freigabe
-startet weiterhin erst durch „Agent fortsetzen“. Hintergrundabfragen erhalten den zuletzt
-bestätigten Stand und die Scrollposition; bei Lesekonflikten bleiben Entscheidungen gesperrt,
-bis der Core die aktuellen Freigabeanker bestätigt. Siehe [Plan 19](docs/plans/19-AGENT-EXECUTION-UX.md).
+Die Unterhaltung zeigt Auftrag, Recherche, Plan und Ausführung in dieser Reihenfolge.
+Recherche bleibt zunächst kompakt, Pläne öffnen sich über „Plan öffnen“. Während der Umsetzung
+zeigt eine kleine Karte den aktuellen Schritt; alle Arbeitsschritte, Aktivitäten und Prüfbelege
+sind in getrennt scrollbaren Dialogen erreichbar. Eine erforderliche Freigabe ersetzt unten das
+Eingabefeld. „Nachricht schreiben“ und „Zur Freigabe“ wechseln zwischen beiden, ohne den Entwurf
+zu verlieren. Exakte Aktionen und Risiken bleiben vor der neutralen Entscheidung prüfbar;
+Speichern, Fortsetzen und Widerrufen bleiben getrennte Aktionen. Hintergrundabfragen erhalten den
+letzten bestätigten Stand, offene Details und die Leseposition. Das Folgen richtet sich auf das
+tatsächliche Verlaufsende. Siehe [Plan 20](docs/plans/20-AGENT-CONVERSATION-INTERACTION.md) und
+[ADR-0116](docs/adrs/0116-kompakter-agentenverlauf-und-entscheidungsdock.md).
 
 Die Mehrprovider-Einstellungen besitzen kompakte, unabhängig bedienbare Verbindungskarten.
 Adresse und API-Key werden neben dem jeweiligen Eingabefeld gespeichert. Modelle wählen

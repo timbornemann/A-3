@@ -116,6 +116,167 @@ afterEach(() => {
 });
 
 describe('AgentWorkspace', () => {
+  it('keeps research before the compact plan and opens all plan content with focus return', async () => {
+    const completed = reviewedPlan();
+    if (completed.result.status !== 'available') throw new Error('available fixture required');
+    let response = structuredClone(completed);
+    if (response.result.status !== 'available') throw new Error('available fixture required');
+    response.result.session.summary.state = 'running';
+    response.result.session.entries = response.result.session.entries.slice(0, 1);
+    const summary = structuredClone(response.result.session.summary);
+    const { container } = render(AgentWorkspace, {
+      activeProject: true,
+      pollIntervalMs: 30,
+      sessionLoader: async () => structuredClone(response),
+      sessionsLoader: async () => ({
+        protocolVersion: 1,
+        result: { status: 'available', sessions: [summary], nextCursor: null },
+      }),
+    });
+    await screen.findByText('Überarbeite den Agent Workspace');
+    const research = container.querySelector('.ask-research');
+    expect(research).not.toBeNull();
+    response = completed;
+    const trigger = await screen.findByRole('button', { name: 'Plan öffnen' });
+    expect(container.querySelector('.ask-research')).toBe(research);
+    const plan = container.querySelector('.plan-message');
+    if (!research || !plan) throw new Error('missing conversation cards');
+    expect(research.compareDocumentPosition(plan) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByText('Ein exakter Implementierungsplan')).toBeNull();
+    trigger.focus();
+    await fireEvent.click(trigger);
+    const dialog = screen.getByRole('dialog', { name: 'Vorgehensplan' });
+    expect(dialog.tagName).toBe('DIALOG');
+    expect(within(dialog).getByText('Ein exakter Implementierungsplan')).toBeTruthy();
+    expect(document.activeElement).toBe(
+      within(dialog).getByRole('button', { name: 'Dialog schließen' }),
+    );
+    await fireEvent(dialog, new Event('cancel', { cancelable: true }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    expect(container.querySelector('.ask-research')).toBe(research);
+  });
+
+  it('retains the draft and approval choice across dock switches and resets on another task', async () => {
+    let response = activeAgentSession();
+    if (response.result.status !== 'available') throw new Error('available fixture required');
+    const summary = structuredClone(response.result.session.summary);
+    const controller = vi.fn();
+    const { container } = render(AgentWorkspace, {
+      activeProject: true,
+      pollIntervalMs: 20,
+      sessionLoader: async () => structuredClone(response),
+      sessionsLoader: async () => ({
+        protocolVersion: 1,
+        result: { status: 'available', sessions: [summary], nextCursor: null },
+      }),
+      approvalLoader: async () => patchApprovalResponse(),
+      approvalController: controller,
+      activityLoader: async () => activeAgentActivity(),
+      workPlanLoader: async () => adaptiveWorkPlan(),
+    });
+    const input = await screen.findByRole('textbox', { name: 'Nachricht an A^3' });
+    await fireEvent.input(input, { target: { value: 'Bitte auch den Randfall prüfen.' } });
+    response = structuredClone(response);
+    if (response.result.status !== 'available') throw new Error('available fixture required');
+    response.result.session.summary.state = 'awaitingApproval';
+    response.result.session.summary.revision = '2';
+    const allow = await screen.findByRole<HTMLInputElement>('radio', {
+      name: 'Diese Aktion einmal erlauben',
+    });
+    expect(allow.checked).toBe(false);
+    expect(
+      screen.getByRole<HTMLButtonElement>('button', { name: 'Entscheidung bestätigen' }).disabled,
+    ).toBe(true);
+    await fireEvent.click(allow);
+    const approval = container.querySelector('.approval-center');
+    await fireEvent.click(screen.getByRole('button', { name: 'Nachricht schreiben' }));
+    expect(document.activeElement).toBe(input);
+    expect((input as HTMLTextAreaElement).value).toBe('Bitte auch den Randfall prüfen.');
+    const returnButton = screen.getByRole('button', { name: /Zur Freigabe/ });
+    await new Promise((resolve) => window.setTimeout(resolve, 80));
+    expect(screen.getByRole('textbox', { name: 'Nachricht an A^3' })).toBe(input);
+    await fireEvent.click(returnButton);
+    expect(container.querySelector('.approval-center')).toBe(approval);
+    expect(
+      screen.getByRole<HTMLInputElement>('radio', { name: 'Diese Aktion einmal erlauben' }).checked,
+    ).toBe(true);
+    expect(controller).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Nachricht schreiben' }));
+    response = structuredClone(response);
+    if (response.result.status !== 'available') throw new Error('available fixture required');
+    response.result.session.activeTaskId = 'c'.repeat(64);
+    response.result.session.summary.revision = '3';
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Nachricht an A^3' })).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole<HTMLInputElement>('radio', { name: 'Diese Aktion einmal erlauben' })
+          .checked,
+      ).toBe(false),
+    );
+    expect(controller).not.toHaveBeenCalled();
+  });
+
+  it('keeps the actual bottom reachable when execution focus is above the end', async () => {
+    let notifyResize = () => {};
+    class ResizeObserverMock {
+      constructor(callback: ResizeObserverCallback) {
+        notifyResize = () => callback([], this);
+      }
+      observe(): void {}
+      disconnect(): void {}
+      unobserve(): void {}
+    }
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock);
+    const response = activeAgentSession();
+    if (response.result.status !== 'available') throw new Error('available fixture required');
+    const summary = response.result.session.summary;
+    const { container } = render(AgentWorkspace, {
+      activeProject: true,
+      pollIntervalMs: 60_000,
+      sessionLoader: async () => structuredClone(response),
+      sessionsLoader: async () => ({
+        protocolVersion: 1,
+        result: { status: 'available', sessions: [summary], nextCursor: null },
+      }),
+      activityLoader: async () => activeAgentActivity(),
+      workPlanLoader: async () => adaptiveWorkPlan(),
+    });
+    await screen.findByText('Serializer ergänzen und Adapter anbinden', {
+      selector: '.execution-focus strong',
+    });
+    const viewport = container.querySelector<HTMLDivElement>('.message-scroll');
+    const focus = container.querySelector<HTMLElement>('.execution-focus');
+    if (!viewport || !focus) throw new Error('missing execution viewport');
+    let height = 1_500;
+    Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 400 });
+    Object.defineProperty(viewport, 'scrollHeight', { configurable: true, get: () => height });
+    vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue({ bottom: 400 } as DOMRect);
+    vi.spyOn(focus, 'getBoundingClientRect').mockImplementation(
+      () => ({ bottom: 1_000 - viewport.scrollTop }) as DOMRect,
+    );
+    await fireEvent.wheel(viewport, { deltaY: 100 });
+    viewport.scrollTop = 1_100;
+    await fireEvent.scroll(viewport);
+    notifyResize();
+    await new Promise((resolve) => window.setTimeout(resolve, 40));
+    expect(viewport.scrollTop).toBe(1_100);
+    // At the end another downward wheel gesture emits no native scroll event.
+    await fireEvent.wheel(focus, { deltaY: 100 });
+    height = 1_600;
+    notifyResize();
+    await waitFor(() => expect(viewport.scrollTop).toBe(1_200));
+    await fireEvent.wheel(viewport, { deltaY: -200 });
+    viewport.scrollTop = 800;
+    await fireEvent.scroll(viewport);
+    height = 1_700;
+    notifyResize();
+    await new Promise((resolve) => window.setTimeout(resolve, 40));
+    expect(viewport.scrollTop).toBe(800);
+  });
+
   it.each([false, true])(
     'does not insert another initial plan loader above the activity after a failed read (open=%s)',
     async (open) => {
@@ -145,14 +306,16 @@ describe('AgentWorkspace', () => {
         workPlanLoader,
       });
       await screen.findByText(/Letzter bestätigter Stand/);
-      const history = container.querySelector<HTMLDetailsElement>('.execution-activity');
+      const history = container.querySelector<HTMLButtonElement>('.execution-activity');
       if (!history) throw new Error('activity disclosure required');
-      history.open = open;
+      if (open) await fireEvent.click(history);
+      const dialog = screen.queryByRole('dialog', { name: 'Aktivitätsverlauf' });
       for (let index = 0; index < 3; index += 1) {
         await waitFor(() => expect(workPlanLoader).toHaveBeenCalledTimes(index + 2));
         expect(screen.queryByText('Arbeitsplan wird geladen …')).toBeNull();
         expect(container.querySelector('.execution-activity')).toBe(history);
-        expect(history.open).toBe(open);
+        expect(screen.queryByRole('dialog', { name: 'Aktivitätsverlauf' })).toBe(dialog);
+        expect(Boolean(dialog)).toBe(open);
         rejectPlan?.(new Error('temporary read failure'));
       }
       unmount();
@@ -192,15 +355,17 @@ describe('AgentWorkspace', () => {
       await screen.findByText('Serializer ergänzen und Adapter anbinden', {
         selector: '.execution-focus strong',
       });
-      const history = container.querySelector<HTMLDetailsElement>('.execution-activity');
+      const history = container.querySelector<HTMLButtonElement>('.execution-activity');
       if (!history) throw new Error('activity disclosure required');
-      history.open = open;
+      if (open) await fireEvent.click(history);
+      const dialog = screen.queryByRole('dialog', { name: 'Aktivitätsverlauf' });
       const plan = container.querySelector('.agent-work-plan');
       for (let index = 0; index < 3; index += 1) {
         await waitFor(() => expect(workPlanLoader).toHaveBeenCalledTimes(index + 2));
         expect(screen.queryByText('Arbeitsplan wird geladen …')).toBeNull();
         expect(container.querySelector('.execution-activity')).toBe(history);
-        expect(history.open).toBe(open);
+        expect(screen.queryByRole('dialog', { name: 'Aktivitätsverlauf' })).toBe(dialog);
+        expect(Boolean(dialog)).toBe(open);
         expect(container.querySelector('.agent-work-plan')).toBe(plan);
         finishPlan?.(adaptiveWorkPlan());
       }
@@ -269,11 +434,8 @@ describe('AgentWorkspace', () => {
       ),
     );
     expect(inspectionLoader).not.toHaveBeenCalled();
-    await fireEvent.keyDown(screen.getByText('Änderungen & Prüfungen', { exact: true }), {
-      key: 'Enter',
-    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Änderungen & Prüfungen' }));
     expect(screen.getByRole('button', { name: '↓ Zum neuesten Schritt' })).toBeTruthy();
-    await fireEvent.click(screen.getByText('Änderungen & Prüfungen', { exact: true }));
     await screen.findByText('Für diese Aufgabe liegt noch kein prüfbarer Arbeitsplan vor.');
     const panel = container.querySelector('.inspection-panel');
     const calls = activityLoader.mock.calls.length;
@@ -729,10 +891,10 @@ describe('AgentWorkspace', () => {
     await fireEvent.click(agent);
     expect(agent.getAttribute('aria-pressed')).toBe('true');
     expect(agent.textContent).not.toContain('Nach Planfreigabe');
-    expect(agent.textContent).toContain('Als Nächstes');
+    expect(agent.textContent).toBe('Umsetzen');
     const ask = screen.getByRole('button', { name: /Ask\s*Nur lesen und antworten/u });
     await fireEvent.click(ask);
-    expect(agent.textContent).toContain('Sicher umsetzen');
+    expect(agent.getAttribute('aria-pressed')).toBe('false');
   });
 
   it('keeps the header menu keyboard reachable and returns focus on Escape', async () => {
@@ -1142,7 +1304,7 @@ describe('AgentWorkspace', () => {
       const researchSummaries = screen.getAllByText('Recherche & Quellen');
       expect(researchSummaries).toHaveLength(1);
       expect(researchSummaries.some((summary) => summary.closest('details')?.open === true)).toBe(
-        true,
+        false,
       );
     });
     expect(container.querySelector('.messages details.ask-research')).toBe(liveResearch);
@@ -1514,23 +1676,20 @@ describe('AgentWorkspace', () => {
     expect(
       within(execution).getAllByRole('heading', { name: 'Änderungen werden umgesetzt' }),
     ).toHaveLength(1);
-    const steps = within(execution).getByText('Arbeitsschritte').closest('details');
-    const history = within(execution).getByText('Aktivitätsverlauf').closest('details');
-    const inspection = within(execution).getByText('Änderungen & Prüfungen').closest('details');
-    expect(steps?.open).toBe(false);
-    expect(history?.open).toBe(false);
-    expect(inspection?.open).toBe(false);
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(within(execution).queryByRole('region', { name: 'Dateien und Prüfungen' })).toBeNull();
     expect(within(execution).getByText('1 von 3 Schritten erledigt · 2 offen')).toBeTruthy();
-    await fireEvent.click(within(execution).getByText('Arbeitsschritte'));
-    expect(steps?.open).toBe(true);
-    expect(within(execution).getByRole('list', { name: 'Alle Arbeitsschritte' })).toBeTruthy();
-    expect(within(execution).getByText('Integrationstests ausführen')).toBeTruthy();
-    expect(within(execution).getByText(/Nach einem neuen Befund angepasst/)).toBeTruthy();
-    await fireEvent.click(within(execution).getByText('Aktivitätsverlauf'));
-    expect(within(execution).getByRole('list', { name: 'Aktivitäten des Agenten' })).toBeTruthy();
-    expect(within(execution).getByText('Umsetzung vorbereitet')).toBeTruthy();
-    expect(within(execution).getByText('Sichere Aktion ausgeführt')).toBeTruthy();
+    await fireEvent.click(within(execution).getByRole('button', { name: /Arbeitsschritte/ }));
+    const steps = screen.getByRole('dialog', { name: 'Arbeitsschritte' });
+    expect(within(steps).getByRole('list', { name: 'Alle Arbeitsschritte' })).toBeTruthy();
+    expect(within(steps).getByText('Integrationstests ausführen')).toBeTruthy();
+    expect(within(steps).getByText(/Nach einem neuen Befund angepasst/)).toBeTruthy();
+    await fireEvent.click(within(steps).getByRole('button', { name: 'Dialog schließen' }));
+    await fireEvent.click(within(execution).getByRole('button', { name: /Aktivitätsverlauf/ }));
+    const history = screen.getByRole('dialog', { name: 'Aktivitätsverlauf' });
+    expect(within(history).getByRole('list', { name: 'Aktivitäten des Agenten' })).toBeTruthy();
+    expect(within(history).getByText('Umsetzung vorbereitet')).toBeTruthy();
+    expect(within(history).getByText('Sichere Aktion ausgeführt')).toBeTruthy();
     expect(screen.queryByText('controllerDecision')).toBeNull();
     expect(screen.queryByText('policyDecision')).toBeNull();
     expect(screen.queryByText(/dddddddd/u)).toBeNull();
@@ -1580,7 +1739,7 @@ describe('AgentWorkspace', () => {
     expect(screen.queryByRole('complementary', { name: 'Agentenlauf' })).toBeNull();
   });
 
-  it('places exact action approval inside the conversation', async () => {
+  it('places exact action approval in the dock outside the scrolling conversation', async () => {
     const response = activeAgentSession();
     const activity = activeAgentActivity();
     if (response.result.status !== 'available' || activity.result.status !== 'available') {
@@ -1608,7 +1767,10 @@ describe('AgentWorkspace', () => {
       workPlanLoader: async () => adaptiveWorkPlan(),
     });
 
-    expect(await screen.findByRole('heading', { name: 'Aktion freigeben' })).toBeTruthy();
+    const heading = await screen.findByRole('heading', { name: 'Aktion freigeben' });
+    expect(heading.closest('.message-scroll')).toBeNull();
+    expect(heading.closest('.composer-wrap')).not.toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Nachricht an A^3' })).toBeNull();
     expect(screen.getByRole('radio', { name: 'Diese Aktion einmal erlauben' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Review' })).toBeNull();
   });

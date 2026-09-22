@@ -32,6 +32,51 @@ if (
 const session = sessionResponse.result.session;
 const run = activityResponse.result.activity.run;
 const plan = planResponse.result;
+if (new URLSearchParams(window.location.search).has('conversation')) {
+  session.entries = [];
+  for (let index = 0; index < 5; index += 1) {
+    session.entries.push(
+      {
+        sequence: String(index * 2 + 1),
+        createdAtUnixMillis: '100',
+        kind: 'userMessage',
+        planRevision: null,
+        text: `Frage ${index + 1}: Wie ist die Änderung aufgebaut?`,
+        diagrams: [],
+      },
+      {
+        sequence: String(index * 2 + 2),
+        createdAtUnixMillis: '101',
+        kind: 'finalReport',
+        planRevision: null,
+        text: 'Die Oberfläche zeigt den aktuellen Schritt. Vollständige Belege bleiben über die Detailansicht erreichbar. '.repeat(
+          4,
+        ),
+      },
+    );
+  }
+  session.entries.push(
+    {
+      sequence: '11',
+      createdAtUnixMillis: '102',
+      kind: 'userMessage',
+      planRevision: null,
+      text: 'Plane die Änderung und setze sie anschließend um.',
+      diagrams: [],
+    },
+    {
+      sequence: '12',
+      createdAtUnixMillis: '103',
+      kind: 'plan',
+      planRevision: 1,
+      text: Array.from(
+        { length: 40 },
+        (_, index) =>
+          `## Schritt ${index + 1}\n\nDie Darstellung vereinheitlichen und das Verhalten mit einem gezielten Test prüfen.\n\n- Ergebnis sichtbar machen\n- Regressionsprüfung durchführen`,
+      ).join('\n\n'),
+    },
+  );
+}
 for (let index = 3; index < 40; index += 1)
   plan.steps.push({
     intendedOutcome: `Weitere Prüfung ${index + 1}`,
@@ -137,7 +182,35 @@ const component = mount(AgentWorkspace, {
             structuredClone(inspections[approvalStage === 1 ? 0 : 1].response),
           );
     },
-    researchProjectionLoader: async () => ({ protocolVersion: 1, result: { status: 'notFound' } }),
+    researchProjectionLoader: async (_sessionId, userSequence) => ({
+      protocolVersion: 1,
+      result: {
+        status: 'available',
+        projectionRef: 'c'.repeat(128),
+        nextCursor: null,
+        sources: [],
+        detail: {
+          citedSourceCount: 0,
+          depth: 'standard',
+          legacy: false,
+          mode: 'agent',
+          sourceCount: 0,
+          stale: false,
+          userSequence,
+          steps: [
+            {
+              action: 'Projektstruktur geprüft',
+              completeness: 'notApplicable',
+              occurredAtUnixMillis: '102',
+              note: null,
+              phase: 'completed',
+              query: null,
+              state: 'completed',
+            },
+          ],
+        },
+      },
+    }),
     onRunStatusChange: (next) => {
       status = next;
       statuses.push(next.kind);
@@ -175,19 +248,23 @@ let measuring = false;
 button('measure', () => {
   void measure();
 });
-async function measure(): Promise<void> {
+button('measure-bottom', () => {
+  void measure(true);
+});
+async function measure(atBottom = false): Promise<void> {
   if (measuring || !root || !output) return;
   measuring = true;
   const viewport = root.querySelector<HTMLElement>('.message-scroll');
   const card = root.querySelector<HTMLElement>('.execution-card');
-  const history = root.querySelector<HTMLDetailsElement>('.execution-activity');
+  const history = root.querySelector<HTMLButtonElement>('.execution-activity');
   if (!viewport || !card || !history) {
     measuring = false;
     return;
   }
   // Simulate a deliberate reader scroll; subsequent resizes must not take ownership back.
-  viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -60, bubbles: true }));
-  viewport.scrollTop = Math.max(0, viewport.scrollTop - 60);
+  viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: atBottom ? 60 : -60, bubbles: true }));
+  viewport.scrollTop = atBottom ? viewport.scrollHeight : Math.max(0, viewport.scrollTop - 60);
+  viewport.dispatchEvent(new Event('scroll'));
   const samples: number[][] = [];
   const priorReads = reads;
   const priorStatuses = statuses.length;
@@ -206,13 +283,15 @@ async function measure(): Promise<void> {
     Math.max(...samples.map((row) => row[column])) - Math.min(...samples.map((row) => row[column]));
   output.textContent = JSON.stringify({
     samples: samples.length,
+    mode: atBottom ? 'bottom' : 'manualReading',
+    distanceFromEnd: viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop,
     reads: reads - priorReads,
     scrollDrift: spread(0),
     contentHeightDrift: spread(1),
     cardHeightDrift: spread(2),
     historyTopDrift: spread(3),
     sameHistory: root.querySelector('.execution-activity') === history,
-    historyOpen: history.open,
+    historyOpen: root.querySelector('.agent-detail-dialog[open]') !== null,
     planLoadingSamples,
     sameCard: root.querySelector('.execution-card') === card,
     status,
