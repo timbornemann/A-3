@@ -232,6 +232,12 @@ button('process-approval', () => {
   grant = 'pending';
   approvalStage = 3;
 });
+button('approval-session-running', () => {
+  session.summary.state = 'running';
+  run.state = 'awaitApproval';
+  grant = 'pending';
+  approvalStage = 1;
+});
 button('conflict', () => {
   conflicts = true;
 });

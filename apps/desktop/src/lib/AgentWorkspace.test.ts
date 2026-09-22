@@ -159,27 +159,32 @@ describe('AgentWorkspace', () => {
 
   it('retains the draft and approval choice across dock switches and resets on another task', async () => {
     let response = activeAgentSession();
+    const activity = activeAgentActivity();
+    if (activity.result.status !== 'available' || !activity.result.activity.run)
+      throw new Error('run fixture required');
+    const run = activity.result.activity.run;
     if (response.result.status !== 'available') throw new Error('available fixture required');
     const summary = structuredClone(response.result.session.summary);
     const controller = vi.fn();
+    const sessionLoader = vi.fn(async () => structuredClone(response));
     const { container } = render(AgentWorkspace, {
       activeProject: true,
       pollIntervalMs: 20,
-      sessionLoader: async () => structuredClone(response),
+      sessionLoader,
       sessionsLoader: async () => ({
         protocolVersion: 1,
         result: { status: 'available', sessions: [summary], nextCursor: null },
       }),
       approvalLoader: async () => patchApprovalResponse(),
       approvalController: controller,
-      activityLoader: async () => activeAgentActivity(),
+      activityLoader: async () => structuredClone(activity),
       workPlanLoader: async () => adaptiveWorkPlan(),
     });
     const input = await screen.findByRole('textbox', { name: 'Nachricht an A^3' });
     await fireEvent.input(input, { target: { value: 'Bitte auch den Randfall prüfen.' } });
     response = structuredClone(response);
     if (response.result.status !== 'available') throw new Error('available fixture required');
-    response.result.session.summary.state = 'awaitingApproval';
+    run.state = 'awaitApproval';
     response.result.session.summary.revision = '2';
     const allow = await screen.findByRole<HTMLInputElement>('radio', {
       name: 'Diese Aktion einmal erlauben',
@@ -194,7 +199,17 @@ describe('AgentWorkspace', () => {
     expect(document.activeElement).toBe(input);
     expect((input as HTMLTextAreaElement).value).toBe('Bitte auch den Randfall prüfen.');
     const returnButton = screen.getByRole('button', { name: /Zur Freigabe/ });
-    await new Promise((resolve) => window.setTimeout(resolve, 80));
+    for (const state of ['awaitingApproval', 'running', 'awaitingApproval'] as const) {
+      response.result.session.summary.state = state;
+      response.result.session.summary.revision = String(
+        Number(response.result.session.summary.revision) + 1,
+      );
+      const reads = sessionLoader.mock.calls.length;
+      await waitFor(() => expect(sessionLoader.mock.calls.length).toBeGreaterThan(reads + 1));
+      expect(container.querySelector('.approval-center')).toBe(approval);
+      expect(screen.getByRole('textbox', { name: 'Nachricht an A^3' })).toBe(input);
+      expect(screen.getByRole('button', { name: /Zur Freigabe/ })).toBe(returnButton);
+    }
     expect(screen.getByRole('textbox', { name: 'Nachricht an A^3' })).toBe(input);
     await fireEvent.click(returnButton);
     expect(container.querySelector('.approval-center')).toBe(approval);
@@ -206,7 +221,7 @@ describe('AgentWorkspace', () => {
     response = structuredClone(response);
     if (response.result.status !== 'available') throw new Error('available fixture required');
     response.result.session.activeTaskId = 'c'.repeat(64);
-    response.result.session.summary.revision = '3';
+    response.result.session.summary.revision = '6';
     await waitFor(() =>
       expect(screen.queryByRole('textbox', { name: 'Nachricht an A^3' })).toBeNull(),
     );
@@ -1739,39 +1754,182 @@ describe('AgentWorkspace', () => {
     expect(screen.queryByRole('complementary', { name: 'Agentenlauf' })).toBeNull();
   });
 
-  it('places exact action approval in the dock outside the scrolling conversation', async () => {
+  it('ignores a late waiting run from the previous task and restores input when work continues', async () => {
     const response = activeAgentSession();
-    const activity = activeAgentActivity();
-    if (response.result.status !== 'available' || activity.result.status !== 'available') {
-      throw new Error('available fixtures required');
-    }
-    response.result.session.summary.state = 'awaitingApproval';
-    const summary = response.result.session.summary;
-    if (!activity.result.activity.run) throw new Error('run fixture required');
-    activity.result.activity.run.state = 'awaitApproval';
-
+    if (response.result.status !== 'available') throw new Error('available session required');
+    const session = response.result.session;
+    const initialTaskId = session.activeTaskId;
+    const waiting = activeAgentActivity();
+    if (waiting.result.status !== 'available' || !waiting.result.activity.run)
+      throw new Error('available run required');
+    waiting.result.activity.run.state = 'awaitApproval';
+    let finishOldRead: ((value: AgentActivityResponseV1) => void) | undefined;
+    let currentActivity = activeAgentActivity();
+    const activityLoader = vi.fn((taskId: string) =>
+      taskId === initialTaskId
+        ? new Promise<AgentActivityResponseV1>((resolve) => (finishOldRead = resolve))
+        : Promise.resolve(structuredClone(currentActivity)),
+    );
+    const approvalLoader = vi.fn(async () => patchApprovalResponse());
+    const approvalController = vi.fn();
     render(AgentWorkspace, {
       activeProject: true,
-      activityLoader: async () => activity,
-      approvalLoader: async () => patchApprovalResponse(),
+      pollIntervalMs: 20,
+      sessionLoader: async () => structuredClone(response),
+      sessionsLoader: async () => ({
+        protocolVersion: 1,
+        result: {
+          status: 'available',
+          sessions: [structuredClone(session.summary)],
+          nextCursor: null,
+        },
+      }),
+      activityLoader,
+      approvalLoader,
+      approvalController,
+      workPlanLoader: async () => adaptiveWorkPlan(),
+    });
+    const input = await screen.findByRole('textbox', { name: 'Nachricht an A^3' });
+    await fireEvent.input(input, { target: { value: 'Entwurf für den nächsten Schritt' } });
+    await waitFor(() => expect(finishOldRead).toBeDefined());
+    session.activeTaskId = 'c'.repeat(64);
+    session.summary.revision = '2';
+    await waitFor(() => expect(activityLoader).toHaveBeenCalledWith(session.activeTaskId));
+    finishOldRead?.(waiting);
+    await screen.findByRole('article', { name: 'Änderungen werden umgesetzt' });
+    expect(approvalLoader).not.toHaveBeenCalled();
+    expect(screen.queryByRole('region', { name: 'Erforderliche Freigabe' })).toBeNull();
+
+    currentActivity = waiting;
+    await screen.findByRole('heading', { name: 'Aktion freigeben' });
+    expect(approvalLoader).toHaveBeenCalledWith(session.activeTaskId);
+    expect(screen.queryByRole('textbox', { name: 'Nachricht an A^3' })).toBeNull();
+    currentActivity = activeAgentActivity();
+    expect(await screen.findByRole('textbox', { name: 'Nachricht an A^3' })).toBe(input);
+    expect((input as HTMLTextAreaElement).value).toBe('Entwurf für den nächsten Schritt');
+    expect(screen.queryByRole('region', { name: 'Erforderliche Freigabe' })).toBeNull();
+    expect(approvalController).not.toHaveBeenCalled();
+  });
+
+  it.each(['completed', 'failed', 'cancelled', 'archived', 'paused'] as const)(
+    'does not reopen approval for a %s session with a retained waiting run',
+    async (state) => {
+      const response = activeAgentSession();
+      const activity = activeAgentActivity();
+      if (
+        response.result.status !== 'available' ||
+        activity.result.status !== 'available' ||
+        !activity.result.activity.run
+      )
+        throw new Error('available fixtures required');
+      response.result.session.summary.state = state;
+      activity.result.activity.run.state = 'awaitApproval';
+      const summary = response.result.session.summary;
+      const approvalLoader = vi.fn(async () => patchApprovalResponse());
+      render(AgentWorkspace, {
+        activeProject: true,
+        pollIntervalMs: 60_000,
+        sessionLoader: async () => response,
+        sessionsLoader: async () => ({
+          protocolVersion: 1,
+          result: { status: 'available', sessions: [summary], nextCursor: null },
+        }),
+        activityLoader: async () => activity,
+        approvalLoader,
+        workPlanLoader: async () => adaptiveWorkPlan(),
+      });
+      await screen.findByRole('article', { name: 'Wartet auf deine Freigabe' });
+      expect(screen.getByRole('textbox', { name: 'Nachricht an A^3' })).toBeTruthy();
+      expect(approvalLoader).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not offer an approval decision when the exact action is unavailable', async () => {
+    const response = activeAgentSession();
+    const activity = activeAgentActivity();
+    if (
+      response.result.status !== 'available' ||
+      activity.result.status !== 'available' ||
+      !activity.result.activity.run
+    )
+      throw new Error('available fixtures required');
+    const summary = response.result.session.summary;
+    activity.result.activity.run.state = 'awaitApproval';
+    const approvalController = vi.fn();
+    render(AgentWorkspace, {
+      activeProject: true,
       pollIntervalMs: 60_000,
       sessionLoader: async () => response,
       sessionsLoader: async () => ({
         protocolVersion: 1,
-        result: {
-          nextCursor: null,
-          sessions: [summary],
-          status: 'available',
-        },
+        result: { status: 'available', sessions: [summary], nextCursor: null },
       }),
+      activityLoader: async () => activity,
+      approvalLoader: async () => ({ protocolVersion: 1, result: { status: 'unavailable' } }),
+      approvalController,
       workPlanLoader: async () => adaptiveWorkPlan(),
     });
-
-    const heading = await screen.findByRole('heading', { name: 'Aktion freigeben' });
-    expect(heading.closest('.message-scroll')).toBeNull();
-    expect(heading.closest('.composer-wrap')).not.toBeNull();
-    expect(screen.queryByRole('textbox', { name: 'Nachricht an A^3' })).toBeNull();
-    expect(screen.getByRole('radio', { name: 'Diese Aktion einmal erlauben' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Review' })).toBeNull();
+    await screen.findByText('Für diese Aufgabe ist gerade keine Freigabe erforderlich.');
+    expect(screen.queryByRole('radio', { name: 'Diese Aktion einmal erlauben' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Entscheidung bestätigen' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Nachricht schreiben' }));
+    expect(screen.getByRole('textbox', { name: 'Nachricht an A^3' })).toBeTruthy();
+    expect(approvalController).not.toHaveBeenCalled();
   });
+
+  it.each(['running', 'awaitingApproval'] as const)(
+    'shows the waiting run approval outside the conversation while the session is %s',
+    async (sessionState) => {
+      const response = activeAgentSession();
+      const activity = activeAgentActivity();
+      if (response.result.status !== 'available' || activity.result.status !== 'available') {
+        throw new Error('available fixtures required');
+      }
+      response.result.session.summary.state = sessionState;
+      const summary = response.result.session.summary;
+      if (!activity.result.activity.run) throw new Error('run fixture required');
+      activity.result.activity.run.state = 'awaitApproval';
+
+      const approvalController = vi.fn();
+      const { container } = render(AgentWorkspace, {
+        activeProject: true,
+        activityLoader: async () => activity,
+        approvalLoader: async () => patchApprovalResponse(),
+        approvalController,
+        pollIntervalMs: 60_000,
+        sessionLoader: async () => response,
+        sessionsLoader: async () => ({
+          protocolVersion: 1,
+          result: {
+            nextCursor: null,
+            sessions: [summary],
+            status: 'available',
+          },
+        }),
+        workPlanLoader: async () => adaptiveWorkPlan(),
+      });
+
+      const heading = await screen.findByRole('heading', { name: 'Aktion freigeben' });
+      expect(heading.closest('.message-scroll')).toBeNull();
+      expect(heading.closest('.composer-wrap')).not.toBeNull();
+      expect(screen.queryByRole('textbox', { name: 'Nachricht an A^3' })).toBeNull();
+      expect(screen.getByRole('radio', { name: 'Diese Aktion einmal erlauben' })).toBeTruthy();
+      expect(
+        screen.getByRole<HTMLInputElement>('radio', { name: 'Diese Aktion einmal erlauben' })
+          .checked,
+      ).toBe(false);
+      expect(
+        screen.getByRole<HTMLButtonElement>('button', { name: 'Entscheidung bestätigen' }).disabled,
+      ).toBe(true);
+      expect(container.querySelector('.conversation-heading p')?.textContent).toContain(
+        'Freigabe nötig',
+      );
+      expect(container.querySelector('.execution-state')?.textContent).toContain('Freigabe nötig');
+      expect(
+        screen.getByRole('button', { name: /Geprüfte Änderung umsetzen.*Freigabe nötig/ }),
+      ).toBeTruthy();
+      expect(approvalController).not.toHaveBeenCalled();
+      expect(screen.queryByRole('button', { name: 'Review' })).toBeNull();
+    },
+  );
 });

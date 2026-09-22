@@ -192,6 +192,7 @@
     sessionRailWidth: 264,
   });
   let activity = $state<AgentActivityV1 | null>(null);
+  let activityTaskId = $state<string | null>(null);
   let activityLoading = $state(false);
   let activityRefreshFailed = $state(false);
   let workPlan = $state<TaskLensTaskResponseV1['result'] | null>(null);
@@ -255,8 +256,18 @@
       : researchDepth,
   );
   const activeTaskId = $derived(selectedSession?.activeTaskId ?? null);
+  // Session/worker and durable run reads can arrive independently. A waiting current
+  // run must expose the authoritative approval read even while its session says running.
+  const displayedSessionState = $derived<AgentSessionStateV1>(
+    selectedSummary?.state === 'running' &&
+      activeTaskId !== null &&
+      activityTaskId === activeTaskId &&
+      activity?.run?.state === 'awaitApproval'
+      ? 'awaitingApproval'
+      : (selectedSummary?.state ?? 'draft'),
+  );
   const approvalDockKey = $derived(
-    selectedSummary?.state === 'awaitingApproval' && activeTaskId
+    selectedSummary && displayedSessionState === 'awaitingApproval' && activeTaskId
       ? `${selectedSummary.sessionId}:${activeTaskId}`
       : null,
   );
@@ -395,6 +406,7 @@
     activityRequest += 1;
     workPlanRequest += 1;
     activity = null;
+    activityTaskId = null;
     workPlan = null;
     activityRefreshFailed = false;
     workPlanRefreshFailed = false;
@@ -612,6 +624,7 @@
     paletteDismissed = false;
     pendingMessage = null;
     activity = null;
+    activityTaskId = null;
     recentlyCompletedResearchSequence = null;
     researchProjections = {};
     researchPresentations = {};
@@ -1206,6 +1219,7 @@
         return;
       }
       activity = response.result.status === 'available' ? response.result.activity : null;
+      activityTaskId = taskId;
       activityRefreshFailed = false;
     } catch {
       if (request === activityRequest && taskId === activeTaskId) activityRefreshFailed = true;
@@ -1539,6 +1553,10 @@
           <p class="rail-state">Deine Unterhaltungen erscheinen hier.</p>
         {:else}
           {#each visibleSessions() as session (session.sessionId)}
+            {@const displayedState =
+              session.sessionId === selectedSummary?.sessionId
+                ? displayedSessionState
+                : session.state}
             <button
               class="session-item"
               class:selected={session.sessionId === selectedSessionId}
@@ -1553,9 +1571,9 @@
                 ></span
               >
               <span
-                class:attention={session.state === 'awaitingApproval' ||
-                  session.state === 'awaitingUser'}
-                class="session-state">{stateLabel(session.state)}</span
+                class:attention={displayedState === 'awaitingApproval' ||
+                  displayedState === 'awaitingUser'}
+                class="session-state">{stateLabel(displayedState)}</span
               >
             </button>
           {/each}
@@ -1598,7 +1616,7 @@
           <h2>{selectedSummary?.title ?? 'Neuer Chat'}</h2>
           <p>
             {selectedSummary
-              ? `${modeLabel(selectedSummary.mode)} · ${stateLabel(selectedSummary.state)}`
+              ? `${modeLabel(selectedSummary.mode)} · ${stateLabel(displayedSessionState)}`
               : 'Beschreibe eine Aufgabe oder stelle eine Frage.'}
           </p>
         </div>
@@ -1909,9 +1927,7 @@
                       {runState ? controllerStateLabel(runState) : 'Agentenlauf wird vorbereitet'}
                     </h3>
                   </div>
-                  <span class="execution-state"
-                    >{stateLabel(selectedSummary?.state ?? 'draft')}</span
-                  >
+                  <span class="execution-state">{stateLabel(displayedSessionState)}</span>
                 </header>
 
                 {#if workPlan?.status === 'available'}

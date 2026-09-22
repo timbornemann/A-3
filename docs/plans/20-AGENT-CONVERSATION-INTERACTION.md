@@ -96,3 +96,45 @@ Freigaben oder Berechtigungsmodi. Der Nutzer hat ADR-0116 ausdrücklich angenomm
   Die vorhandenen Buildhinweise zu Chunkgrößen und BigInt-Zielumgebungen bleiben bestehen.
   Die Prüfung verwendet Browser und echte serialisierte Core-Verträge; kein neuer echter
   Modelllauf und kein neu gestarteter nativer Tauri-Prozess waren dafür erforderlich.
+
+## Nachbesserung: fehlende Freigabe bei abweichendem Unterhaltungsstatus
+
+Der Nutzer meldet einen wartenden Agentenlauf ohne Freigabekarte. Die Dockbedingung verwendete
+ausschließlich `session.summary.state`; Activity und Fußleiste zeigten bereits `awaitApproval`,
+während die Unterhaltung noch `running` lieferte. Unterhaltungs-/Workerstatus und dauerhafter
+Controllerstatus werden unabhängig gelesen. Der neue Regressionstest reproduzierte genau diesen
+Fall vor der Korrektur: Die erwartete Überschrift „Aktion freigeben“ fehlte.
+
+Ziel ist die zuverlässige Anzeige dieser vorhandenen Entscheidung einschließlich konsistenter
+Statusbeschriftung. Neue Freigaberegeln, Änderungen am Core-Automaten und weitere Layoutumbauten
+sind nicht Teil dieser Nachbesserung.
+
+- [x] Fehler mit laufender Unterhaltung und wartendem Controller reproduzieren und korrigieren.
+- [x] Nur die Activity des ausgewählten Tasks für den ergänzenden Anzeigehinweis verwenden.
+      Beendete und pausierte Unterhaltungen durch alte Runs nicht wieder öffnen.
+- [x] Statuswechsel über mehrere Polls, erhaltene Eingabe/Auswahl, verspätete Reads nach
+      Taskwechsel sowie Rückkehr zur Eingabe bei fortgesetztem Lauf prüfen.
+- [x] Entscheidbarkeit weiterhin allein aus der exakten Approval-Projektion ableiten;
+      fehlende Darstellung bietet keine Freigabeaktion. Mount/Polling starten keine Ausführung.
+- [x] Sichtbarkeit und Bedienung mit der Offline-Browserfixture prüfen.
+- [x] Vollständiges Frontendgate, Links und finalen Diff prüfen.
+
+Die Korrektur ergänzt ausschließlich den Präsentationszustand für eine laufende Unterhaltung,
+deren aktueller Task nachweislich auf Freigabe wartet. Kopfzeile, Verlaufsliste und Statusmarke
+zeigen dann ebenfalls „Freigabe nötig“. Die persistierte Session, Runtime-Controls und alle
+Core-Validierungen bleiben unverändert. Der taskgebundene Approval-Read entscheidet weiterhin,
+welche exakte Aktion angezeigt und bestätigt werden darf (ADR-0022/ADR-0116).
+
+Nachweise: Die gezielte Ausführung von `AgentWorkspace.test.ts` und
+`AgentApprovalCenter.test.ts` besteht mit 56 Tests. `pnpm ci:frontend` besteht einschließlich
+Formatierung, Lint, Typecheck (0 Fehler/0 Warnungen), 461 Tests in 73 Dateien, 5 Tooltests und
+Produktionsbuild; 14 bestehende opt-in Tests bleiben übersprungen. `pnpm check:links` prüft
+176 Markdown-Dateien und 798 lokale Links. `git diff --check` ist sauber.
+
+Die Offline-Browserfixture reproduziert den abweichenden Status mit den vorhandenen echten
+serialisierten Approval-Verträgen. Bei 1280 × 720 sowie auf einer 720 × 520 begrenzten Appfläche
+bleibt die Karte sichtbar und bedienbar, ohne horizontalen Überlauf. Einmalfreigabe speichern
+zeigt getrennt „Agent fortsetzen“ und „Freigabe widerrufen“; erst die simulierte Fortsetzung
+blendet wieder den erhaltenen Eingabeentwurf ein. Hell/Dunkel und der manuelle Wechsel zwischen
+Nachricht und Freigabe wurden geprüft. Dies ist ein Browsernachweis, kein neuer nativer Modelllauf.
+Die oben dokumentierten bestehenden Engine-/Buildwarnungen bleiben unverändert.
