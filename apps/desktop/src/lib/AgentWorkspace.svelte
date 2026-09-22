@@ -191,8 +191,12 @@
   });
   let activity = $state<AgentActivityV1 | null>(null);
   let activityLoading = $state(false);
+  let activityRefreshFailed = $state(false);
   let workPlan = $state<TaskLensTaskResponseV1['result'] | null>(null);
   let workPlanLoading = $state(false);
+  let workPlanRefreshFailed = $state(false);
+  let inspectionOpen = $state(false);
+  let executionRefresh = $state(0);
   let observedProject = false;
   let sessionRequest = 0;
   let sessionsRequest = 0;
@@ -367,11 +371,17 @@
   });
 
   $effect(() => {
-    if (activeTaskId) void Promise.all([loadActivity(activeTaskId), loadWorkPlan(activeTaskId)]);
-    else {
-      activity = null;
-      workPlan = null;
-    }
+    const taskId = activeTaskId;
+    activityRequest += 1;
+    workPlanRequest += 1;
+    activity = null;
+    workPlan = null;
+    activityRefreshFailed = false;
+    workPlanRefreshFailed = false;
+    activityLoading = false;
+    workPlanLoading = false;
+    inspectionOpen = false;
+    if (taskId) untrack(() => void Promise.all([loadActivity(taskId), loadWorkPlan(taskId)]));
   });
 
   $effect(() => {
@@ -393,6 +403,10 @@
   });
 
   onDestroy(() => {
+    sessionRequest += 1;
+    sessionsRequest += 1;
+    activityRequest += 1;
+    workPlanRequest += 1;
     resizeCleanup?.();
     if (followFrame !== null) window.cancelAnimationFrame(followFrame);
   });
@@ -431,9 +445,14 @@
   }
 
   function scrollConversationToEnd(viewport: HTMLDivElement): void {
-    const tail = viewport.querySelector<HTMLElement>(
-      '.conversation-turn:last-child .ask-research[data-live="true"][open] .research-steps li:last-child',
-    );
+    const execution = viewport.querySelector<HTMLElement>('.execution-card');
+    const tail = execution
+      ? (execution.querySelector<HTMLElement>('.confirm-decision') ??
+        execution.querySelector<HTMLElement>('.execution-focus') ??
+        execution)
+      : viewport.querySelector<HTMLElement>(
+          '.conversation-turn:last-child .ask-research[data-live="true"][open] .research-steps li:last-child',
+        );
     const maximum = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
     // Keep the latest *work*, not the source-list footer, visible in small windows.
     const end = tail
@@ -504,7 +523,10 @@
   }
 
   function handleConversationKeydown(event: KeyboardEvent): void {
-    if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key))
+    if (
+      ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key) ||
+      (event.key === 'Enter' && event.target instanceof Element && event.target.closest('summary'))
+    )
       pauseConversationFollow();
   }
 
@@ -522,10 +544,16 @@
   });
 
   $effect(() => {
-    if (!activeProject) onRunStatusChange({ kind: 'noProject' });
-    else if (activityLoading) onRunStatusChange({ kind: 'loading' });
-    else if (activity?.run) onRunStatusChange({ kind: 'available', state: activity.run.state });
-    else onRunStatusChange({ kind: 'idle' });
+    const status: GlobalRunStatus = !activeProject
+      ? { kind: 'noProject' }
+      : activity?.run
+        ? { kind: 'available', state: activity.run.state }
+        : activityLoading
+          ? { kind: 'loading' }
+          : activityRefreshFailed
+            ? { kind: 'error' }
+            : { kind: 'idle' };
+    untrack(() => onRunStatusChange(status));
   });
 
   $effect(() => {
@@ -548,6 +576,8 @@
   }
 
   function reset(): void {
+    sessionRequest += 1;
+    sessionsRequest += 1;
     resizeCleanup?.();
     renameOpen = false;
     researchDepthBySession.clear();
@@ -608,7 +638,7 @@
 
   async function loadSessions(preferredId: string | null = selectedSessionId): Promise<void> {
     const request = ++sessionsRequest;
-    sessionsView = { kind: 'loading' };
+    if (sessionsView.kind !== 'available') sessionsView = { kind: 'loading' };
     try {
       const response = await sessionsLoader({
         includeArchived,
@@ -642,6 +672,7 @@
 
   async function selectSession(sessionId: string): Promise<void> {
     const request = ++sessionRequest;
+    const sameSession = selectedSession?.summary.sessionId === sessionId;
     if (selectedSessionId !== sessionId) {
       recentlyCompletedResearchSequence = null;
       resumeConversationFollow();
@@ -654,7 +685,7 @@
     researchDepth = researchDepthBySession.get(sessionId) ?? 'standard';
     sessionMenuOpen = false;
     actionError = null;
-    sessionView = { kind: 'loading' };
+    if (!sameSession) sessionView = { kind: 'loading' };
     try {
       const response = await sessionLoader(sessionId);
       if (request !== sessionRequest || selectedSessionId !== sessionId) return;
@@ -666,14 +697,23 @@
       } else if (response.result.status === 'notFound') sessionView = { kind: 'missing' };
       else sessionView = { kind: 'error' };
     } catch {
-      if (request === sessionRequest) sessionView = { kind: 'error' };
+      if (request === sessionRequest) {
+        if (!sameSession) sessionView = { kind: 'error' };
+        else actionError = 'Die Unterhaltung konnte gerade nicht aktualisiert werden.';
+      }
     }
   }
 
   async function pollSession(sessionId: string): Promise<void> {
+    const owner = sessionRequest;
     try {
       const response = await sessionLoader(sessionId);
-      if (selectedSessionId !== sessionId || response.result.status !== 'available') return;
+      if (
+        owner !== sessionRequest ||
+        selectedSessionId !== sessionId ||
+        response.result.status !== 'available'
+      )
+        return;
       const previous = selectedSession;
       const next = response.result.session;
       if (previous && !isMonotonicSessionProjection(previous, next)) return;
@@ -681,10 +721,20 @@
         recentlyCompletedResearchSequence = latestUserSequence(next.entries);
       }
       sessionView = { kind: 'available', session: next };
-      researchRefresh += 1;
-      if (next.activeTaskId) {
+      if (sessionsView.kind === 'available') {
+        sessionsView = {
+          kind: 'available',
+          sessions: sessionsView.sessions.map((summary) =>
+            summary.sessionId === next.summary.sessionId ? next.summary : summary,
+          ),
+        };
+      }
+      if (!next.activeTaskId || next.activeTaskId !== previous?.activeTaskId) researchRefresh += 1;
+      if (next.activeTaskId && next.activeTaskId === previous?.activeTaskId) {
         await Promise.all([loadActivity(next.activeTaskId), loadWorkPlan(next.activeTaskId)]);
       }
+      if (owner !== sessionRequest || selectedSessionId !== sessionId) return;
+      executionRefresh += 1;
       if (!['running', 'awaitingApproval', 'paused'].includes(next.summary.state)) {
         await loadSessions(sessionId);
       }
@@ -1132,9 +1182,14 @@
     try {
       const response = await activityLoader(taskId);
       if (request !== activityRequest || taskId !== activeTaskId) return;
+      if (response.result.status === 'activityChanged') {
+        activityRefreshFailed = true;
+        return;
+      }
       activity = response.result.status === 'available' ? response.result.activity : null;
+      activityRefreshFailed = false;
     } catch {
-      if (request === activityRequest) activity = null;
+      if (request === activityRequest && taskId === activeTaskId) activityRefreshFailed = true;
     } finally {
       if (request === activityRequest) activityLoading = false;
     }
@@ -1147,8 +1202,9 @@
       const response = await workPlanLoader({ taskId });
       if (request !== workPlanRequest || taskId !== activeTaskId) return;
       workPlan = response.result;
+      workPlanRefreshFailed = false;
     } catch {
-      if (request === workPlanRequest) workPlan = null;
+      if (request === workPlanRequest && taskId === activeTaskId) workPlanRefreshFailed = true;
     } finally {
       if (request === workPlanRequest) workPlanLoading = false;
     }
@@ -1757,6 +1813,7 @@
                       ? `${sessionView.session.summary.revision}-${researchRefresh}`
                       : `${turn.key}:completed`}
                     live={turn.userSequence === latestResearchSequence &&
+                      activeTaskId === null &&
                       !latestResearchHasResponse &&
                       sessionView.session.summary.state === 'running'}
                     recentlyCompleted={turn.userSequence === recentlyCompletedResearchSequence}
@@ -1792,11 +1849,12 @@
                   : 0}
               {@const currentStep =
                 workPlan?.status === 'available'
-                  ? workPlan.steps.find((step) =>
-                      ['inProgress', 'verifying', 'awaitingApproval', 'blocked', 'ready'].includes(
+                  ? (workPlan.steps.find((step) => step.stepId === activity?.run?.stepId) ??
+                    workPlan.steps.find((step) =>
+                      ['inProgress', 'verifying', 'awaitingApproval', 'blocked'].includes(
                         step.status,
                       ),
-                    )
+                    ))
                   : null}
               {@const remainingSteps =
                 workPlan?.status === 'available'
@@ -1816,7 +1874,7 @@
                         ? 'Finaler Review'
                         : runState === 'failed'
                           ? 'Sicherer Haltepunkt'
-                          : 'Live-Ausführung'}
+                          : 'A^3 arbeitet'}
                     </p>
                     <h3 id={`${workspaceId}-execution-heading`}>
                       {runState ? controllerStateLabel(runState) : 'Agentenlauf wird vorbereitet'}
@@ -1829,12 +1887,12 @@
 
                 {#if workPlan?.status === 'available'}
                   <div class="execution-focus">
-                    <span>Aktuelle Aufgabe</span>
+                    <span>{runState === 'done' ? 'Abgeschlossen' : 'Aktueller Schritt'}</span>
                     <strong>{currentStep?.intendedOutcome ?? workPlan.task.objective}</strong>
                     <small>
                       {remainingSteps === 0
                         ? 'Alle geplanten Schritte sind abgeschlossen.'
-                        : `${remainingSteps} Schritt${remainingSteps === 1 ? '' : 'e'} verbleiben.`}
+                        : `${completedSteps} von ${workPlan.steps.length} Schritten erledigt · ${remainingSteps} offen`}
                     </small>
                   </div>
                 {/if}
@@ -1847,104 +1905,29 @@
                 {:else if runState === 'done'}
                   <div class="execution-success" role="status">
                     <strong>Aufgabe verifiziert abgeschlossen</strong>
-                    <p>Änderungen und Prüfungen sind unten gemeinsam nachvollziehbar.</p>
+                    <p>Die Ergebnisse findest du unter „Änderungen & Prüfungen“.</p>
                   </div>
                 {/if}
 
-                {#if workPlanLoading && workPlan === null}
-                  <p role="status">Arbeitsplan wird geladen …</p>
-                {:else if workPlan?.status === 'available'}
-                  <section class="agent-work-plan" aria-labelledby="agent-work-plan-heading">
-                    <header>
-                      <div>
-                        <p class="section-label">
-                          Arbeitsplan · Revision {workPlan.ledgerRevision}
-                        </p>
-                        <h3 id="agent-work-plan-heading">
-                          {completedSteps} von {workPlan.steps.length} Schritten erledigt
-                        </h3>
-                      </div>
-                      <span>{remainingSteps} offen</span>
-                    </header>
-                    {#if workPlan.ledgerRevision > 1}
-                      <p class="adaptive-plan-note">
-                        Nach einem neuen Befund angepasst; bestätigte Arbeit bleibt erhalten.
-                      </p>
-                    {/if}
-                    <ol>
-                      {#each workPlan.steps as step, index (step.stepId)}
-                        <li
-                          class:active={step.status === 'inProgress' ||
-                            step.status === 'verifying' ||
-                            step.status === 'awaitingApproval'}
-                        >
-                          <span class="todo-marker" aria-hidden="true">
-                            {step.status === 'completed' ? '✓' : index + 1}
-                          </span>
-                          <div>
-                            <strong>{step.intendedOutcome}</strong>
-                            <small>{workPlanStepStatus(step.status)}</small>
-                          </div>
-                        </li>
-                      {/each}
-                    </ol>
-                  </section>
+                {#if activityRefreshFailed || workPlanRefreshFailed}
+                  <p class="refresh-note" role="status">
+                    {activity || workPlan
+                      ? 'Letzter bestätigter Stand · Aktualisierung folgt.'
+                      : 'Der Arbeitsstand ist gerade nicht erreichbar.'}
+                    <button
+                      type="button"
+                      onclick={() =>
+                        Promise.all([loadActivity(visibleTaskId), loadWorkPlan(visibleTaskId)])}
+                      >Erneut laden</button
+                    >
+                  </p>
                 {/if}
-
-                <section class="execution-activity" aria-labelledby="execution-activity-heading">
-                  <div class="run-summary">
-                    <p class="section-label">Vorgehen und sichere Entscheidungen</p>
-                    <h3 id="execution-activity-heading">
-                      {activity?.run
-                        ? controllerStateLabel(activity.run.state)
-                        : 'Noch keine Run-Aktivität'}
-                    </h3>
-                    <p>
-                      Sichtbar sind Controllerentscheidungen und Werkzeugresultate, keine versteckte
-                      Modellgedankenkette.
-                    </p>
-                  </div>
-                  {#if activityLoading && activity === null}
-                    <p role="status">Aktivität wird geladen …</p>
-                  {:else if activity?.run}
-                    <ol class="activity-timeline">
-                      {#each activity.run.timeline as event (event.sequence)}
-                        {@const eventState = activityEventState(
-                          event,
-                          activity.run.timeline.at(-1)?.sequence,
-                          activity.run.terminal,
-                        )}
-                        <li
-                          class={eventState}
-                          aria-current={eventState === 'active' ? 'step' : undefined}
-                        >
-                          <span aria-hidden="true">{eventState === 'done' ? '✓' : ''}</span>
-                          <div>
-                            <strong>{activityEventLabel(event)}</strong>
-                            <p>{activityEventFeedback(event)}</p>
-                          </div>
-                        </li>
-                      {/each}
-                    </ol>
-                  {:else}
-                    <p>Der sichere Run wird nach der Planmaterialisierung sichtbar.</p>
-                  {/if}
-                </section>
-
-                <section class="execution-evidence" aria-label="Dateien und Prüfungen">
-                  {#key `${visibleTaskId}:${activity?.run?.updatedAtUnixMillis ?? 'initial'}`}
-                    <AgentInspectionPanel
-                      taskId={visibleTaskId}
-                      loader={inspectionLoader}
-                      logLoader={inspectionLogLoader}
-                    />
-                  {/key}
-                </section>
 
                 {#if selectedSummary?.state === 'awaitingApproval'}
                   <section class="execution-approval" aria-label="Erforderliche Freigabe">
                     <AgentApprovalCenter
                       taskId={visibleTaskId}
+                      refreshKey={executionRefresh}
                       loader={approvalLoader}
                       controller={approvalController}
                       onChanged={async () => {
@@ -1952,10 +1935,97 @@
                           loadActivity(visibleTaskId),
                           loadWorkPlan(visibleTaskId),
                         ]);
+                        if (selectedSessionId) await pollSession(selectedSessionId);
                       }}
                     />
                   </section>
                 {/if}
+
+                {#if workPlanLoading && workPlan === null && !workPlanRefreshFailed}
+                  <p role="status">Arbeitsplan wird geladen …</p>
+                {:else if workPlan?.status === 'available'}
+                  <details class="execution-details agent-work-plan">
+                    <summary
+                      ><span>Arbeitsschritte</span><small
+                        >{completedSteps} / {workPlan.steps.length}</small
+                      ></summary
+                    >
+                    <div class="execution-detail-body">
+                      {#if workPlan.ledgerRevision > 1}
+                        <p class="adaptive-plan-note">
+                          Nach einem neuen Befund angepasst; bestätigte Arbeit bleibt erhalten.
+                        </p>
+                      {/if}
+                      <ol aria-label="Alle Arbeitsschritte">
+                        {#each workPlan.steps as step, index (step.stepId)}
+                          <li
+                            class:active={step.stepId === currentStep?.stepId}
+                            aria-current={step.stepId === currentStep?.stepId ? 'step' : undefined}
+                          >
+                            <span class="todo-marker" aria-hidden="true"
+                              >{step.status === 'completed' ? '✓' : index + 1}</span
+                            >
+                            <div>
+                              <strong>{step.intendedOutcome}</strong><small
+                                >{workPlanStepStatus(step.status)}</small
+                              >
+                            </div>
+                          </li>
+                        {/each}
+                      </ol>
+                    </div>
+                  </details>
+                {/if}
+
+                <details class="execution-details execution-activity">
+                  <summary
+                    ><span>Aktivitätsverlauf</span><small
+                      >{activity?.run?.timeline.length ?? 0}</small
+                    ></summary
+                  >
+                  <div class="execution-detail-body">
+                    {#if activityLoading && activity === null}
+                      <p role="status">Aktivität wird geladen …</p>
+                    {:else if activity?.run}
+                      {#if activity.run.earlierEventsOmitted}<p class="adaptive-plan-note">
+                          Die jüngsten {activity.run.timeline.length} Ereignisse werden angezeigt.
+                        </p>{/if}
+                      <ol class="activity-timeline" aria-label="Aktivitäten des Agenten">
+                        {#each activity.run.timeline as event (event.sequence)}
+                          {@const eventState = activityEventState(
+                            event,
+                            activity.run.timeline.at(-1)?.sequence,
+                            activity.run.terminal,
+                          )}
+                          <li
+                            class={eventState}
+                            aria-current={eventState === 'active' ? 'step' : undefined}
+                          >
+                            <span aria-hidden="true">{eventState === 'done' ? '✓' : ''}</span>
+                            <div>
+                              <strong>{activityEventLabel(event)}</strong>
+                              <p>{activityEventFeedback(event)}</p>
+                            </div>
+                          </li>
+                        {/each}
+                      </ol>
+                    {:else}<p>Die Ausführung wird vorbereitet.</p>{/if}
+                  </div>
+                </details>
+
+                <details class="execution-details execution-evidence" bind:open={inspectionOpen}>
+                  <summary><span>Änderungen & Prüfungen</span></summary>
+                  {#if inspectionOpen}
+                    <section aria-label="Dateien und Prüfungen">
+                      <AgentInspectionPanel
+                        taskId={visibleTaskId}
+                        refreshKey={`${activity?.run?.updatedAtUnixMillis ?? 'initial'}:${activity?.ledgerStoreVersion ?? 'initial'}`}
+                        loader={inspectionLoader}
+                        logLoader={inspectionLogLoader}
+                      />
+                    </section>
+                  {/if}
+                </details>
               </article>
             {/if}
             {#if pendingMessage}
@@ -2471,8 +2541,13 @@
     margin-block-start: var(--space-5);
   }
   .follow-latest {
-    display: block;
-    margin: 0 auto var(--space-2);
+    position: absolute;
+    z-index: 2;
+    top: 0;
+    left: 50%;
+    transform: translate(-50%, -100%);
+    margin: 0;
+    box-shadow: var(--shadow-subtle);
     color: var(--color-muted);
     font-size: var(--font-size-xs);
   }
@@ -2637,6 +2712,7 @@
     font-size: var(--font-size-xs);
   }
   .composer-wrap {
+    position: relative;
     width: min(100%, 52rem);
     margin: 0 auto;
     padding: var(--space-3) var(--space-4) var(--space-4);
@@ -2913,7 +2989,7 @@
     display: grid;
     padding: var(--space-4);
     margin-block-start: var(--space-5);
-    gap: var(--space-4);
+    gap: var(--space-2);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-card);
     background: var(--color-surface-subtle);
@@ -2960,6 +3036,11 @@
     color: var(--color-muted);
     font-size: var(--font-size-xs);
   }
+  .execution-focus {
+    padding: var(--space-3) 0 var(--space-3) var(--space-3);
+    margin-block: var(--space-2);
+    background: transparent;
+  }
   .execution-alert {
     border-inline-start-color: var(--color-danger);
     color: var(--color-danger);
@@ -2967,38 +3048,70 @@
   .execution-success {
     border-inline-start-color: var(--color-status-ready);
   }
-  .execution-activity,
-  .execution-evidence,
   .execution-approval {
     min-width: 0;
-    padding-block-start: var(--space-3);
-    border-block-start: 1px solid var(--color-border-soft);
+    padding: var(--space-4);
+    border: 1px solid var(--color-status-pending);
+    border-radius: var(--radius-control);
+    background: var(--color-accent-surface);
   }
   .section-label {
     margin: 0;
     color: var(--color-muted);
     font-size: var(--font-size-xs);
-    text-transform: uppercase;
   }
-  .agent-work-plan {
-    display: grid;
-    margin-block-end: var(--space-4);
-    gap: var(--space-2);
+  .execution-details {
+    min-width: 0;
+    border-block-start: 1px solid var(--color-border-soft);
   }
-  .agent-work-plan > header {
+  .execution-details > summary {
     display: flex;
-    align-items: start;
-    justify-content: space-between;
+    align-items: center;
     gap: var(--space-2);
+    min-height: var(--control-min-size);
+    cursor: pointer;
+    list-style: none;
+    color: var(--color-muted);
+    transition: color 120ms ease;
   }
-  .agent-work-plan h3 {
-    margin: var(--space-1) 0 0;
-    font-size: var(--font-size-base);
+  .execution-details > summary::-webkit-details-marker {
+    display: none;
   }
-  .agent-work-plan > header > span {
-    flex: 0 0 auto;
+  .execution-details > summary::before {
+    content: '›';
+    font-size: 1.1rem;
+    transition: transform 120ms ease;
+  }
+  .execution-details[open] > summary::before {
+    transform: rotate(90deg);
+  }
+  .execution-details > summary:hover {
+    color: var(--color-heading);
+  }
+  .execution-details > summary small {
+    margin-inline-start: auto;
+    font-variant-numeric: tabular-nums;
+  }
+  .execution-detail-body {
+    max-height: min(24rem, 55vh);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    padding-block: var(--space-2);
+  }
+  .refresh-note {
+    margin: 0;
     color: var(--color-muted);
     font-size: var(--font-size-xs);
+  }
+  .refresh-note button {
+    margin-inline-start: var(--space-2);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .execution-details > summary,
+    .execution-details > summary::before {
+      transition: none;
+    }
   }
   .adaptive-plan-note {
     padding: var(--space-2);
@@ -3048,13 +3161,6 @@
   }
   .agent-work-plan small {
     color: var(--color-muted);
-  }
-  .run-summary h3 {
-    margin: var(--space-1) 0;
-  }
-  .run-summary > p:last-child {
-    color: var(--color-muted);
-    font-size: var(--font-size-xs);
   }
   .activity-timeline {
     display: grid;

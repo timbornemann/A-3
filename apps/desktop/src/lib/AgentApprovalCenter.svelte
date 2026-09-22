@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy, untrack } from 'svelte';
   import {
     controlAgentApproval,
     queryAgentApproval,
@@ -10,6 +11,7 @@
 
   interface Props {
     taskId: string;
+    refreshKey?: string | number;
     loader?: (taskId: string) => Promise<AgentApprovalResponseV1>;
     controller?: (
       taskId: string,
@@ -27,6 +29,7 @@
 
   let {
     taskId,
+    refreshKey = 0,
     loader = queryAgentApproval,
     controller = controlAgentApproval,
     onChanged = () => undefined,
@@ -37,53 +40,130 @@
   let message = $state<string | null>(null);
   let actionError = $state<string | null>(null);
   let requestNumber = 0;
+  let observedTaskId = '';
+  let refreshing = false;
+  let refreshQueued = false;
+  let refreshFailed = $state(false);
+  let disposed = false;
 
   $effect(() => {
-    choice = null;
-    message = null;
-    actionError = null;
-    if (taskId.length > 0) void load();
+    const selectedTask = taskId;
+    const refresh = refreshKey;
+    untrack(() => {
+      if (selectedTask !== observedTaskId) {
+        requestNumber += 1;
+        observedTaskId = selectedTask;
+        view = { kind: 'loading' };
+        choice = null;
+        message = null;
+        actionError = null;
+        controlling = false;
+        refreshing = false;
+        refreshQueued = false;
+        refreshFailed = false;
+      }
+      if (selectedTask.length > 0 && refresh !== undefined) void load();
+    });
   });
 
-  async function load(): Promise<void> {
+  onDestroy(() => {
+    disposed = true;
+    requestNumber += 1;
+  });
+
+  function approvalIdentity(result: AgentApprovalResponseV1['result']): string | null {
+    return result.status === 'available'
+      ? `${result.approval.approvalRevision}:${result.approval.ledgerStoreVersion}:${result.approval.status}`
+      : null;
+  }
+
+  async function load(afterControl = false): Promise<void> {
+    if (disposed || (controlling && !afterControl)) return;
+    if (refreshing) {
+      refreshQueued = true;
+      return;
+    }
     const request = ++requestNumber;
-    view = { kind: 'loading' };
+    const selectedTask = taskId;
+    refreshing = true;
     try {
-      const response = await loader(taskId);
-      if (request === requestNumber) view = { kind: 'result', result: response.result };
+      const response = await loader(selectedTask);
+      if (request === requestNumber && selectedTask === taskId) {
+        if (
+          response.result.status === 'activityChanged' &&
+          view.kind === 'result' &&
+          view.result.status === 'available'
+        ) {
+          refreshFailed = true;
+          choice = null;
+          return;
+        }
+        if (
+          view.kind !== 'result' ||
+          approvalIdentity(view.result) !== approvalIdentity(response.result)
+        )
+          choice = null;
+        view = { kind: 'result', result: response.result };
+        refreshFailed = false;
+      }
     } catch {
-      if (request === requestNumber) view = { kind: 'error' };
+      if (request === requestNumber) {
+        refreshFailed = true;
+        choice = null;
+        if (view.kind !== 'result' || view.result.status !== 'available') view = { kind: 'error' };
+      }
+    } finally {
+      if (request === requestNumber) {
+        refreshing = false;
+        if (refreshQueued) {
+          refreshQueued = false;
+          void load();
+        }
+      }
     }
   }
 
   async function apply(action: AgentApprovalControlActionV1): Promise<void> {
-    if (controlling || view.kind !== 'result' || view.result.status !== 'available') return;
+    if (
+      disposed ||
+      controlling ||
+      refreshFailed ||
+      view.kind !== 'result' ||
+      view.result.status !== 'available'
+    )
+      return;
     const approval = view.result.approval;
+    const selectedTask = taskId;
+    const owner = ++requestNumber;
+    refreshing = false;
+    refreshQueued = false;
     controlling = true;
     message = null;
     actionError = null;
     try {
-      const response = await controller(taskId, approval, action);
+      const response = await controller(selectedTask, approval, action);
+      if (disposed || selectedTask !== taskId || owner !== requestNumber) return;
       if (response.result.status === 'applied') {
         message = outcomeMessage(response.result);
         choice = null;
         await onChanged();
-        await load();
+        if (!disposed && selectedTask === taskId) await load(true);
       } else if (response.result.status === 'activityChanged') {
         actionError =
           'Die Anfrage oder der Arbeitsplan hat sich geändert. Der aktuelle Stand wurde geladen.';
         choice = null;
         await onChanged();
-        await load();
+        if (!disposed && selectedTask === taskId) await load(true);
       } else {
         actionError = 'Diese Entscheidung ist im aktuellen dauerhaften Zustand nicht verfügbar.';
-        await load();
+        await load(true);
       }
     } catch {
+      if (disposed || selectedTask !== taskId) return;
       actionError =
         'Die Entscheidung konnte nicht gespeichert werden. Bitte prüfe den aktuellen Stand.';
     } finally {
-      controlling = false;
+      if (!disposed && selectedTask === taskId) controlling = false;
     }
   }
 
@@ -167,20 +247,26 @@
       <span class="status-chip">{statusLabel(view.result.approval.status)}</span>
     {/if}
   </header>
+  {#if refreshFailed && view.kind === 'result'}
+    <p class="bounded-note" role="status">
+      Diese Freigabe wird erneut geprüft. Entscheidungen sind bis zum aktuellen Stand gesperrt.
+    </p>
+    <button type="button" onclick={() => load()}>Erneut prüfen</button>
+  {/if}
 
   {#if view.kind === 'loading'}
     <p role="status" aria-live="polite">Freigabe wird geladen …</p>
   {:else if view.kind === 'error'}
     <div class="error-state" role="alert">
       <p>Die Freigabeanfrage konnte nicht geladen werden.</p>
-      <button type="button" onclick={load}>Erneut prüfen</button>
+      <button type="button" onclick={() => load()}>Erneut prüfen</button>
     </div>
   {:else if view.result.status === 'unavailable'}
     <p class="empty-state">Für diese Aufgabe ist gerade keine Freigabe erforderlich.</p>
   {:else if view.result.status === 'activityChanged'}
     <div class="error-state" role="status">
       <p>Die Anfrage oder der Arbeitsplan hat sich geändert. Lade den aktuellen Stand.</p>
-      <button type="button" onclick={load}>Aktuellen Stand laden</button>
+      <button type="button" onclick={() => load()}>Aktuellen Stand laden</button>
     </div>
   {:else if view.result.status === 'goalRevisionMismatch'}
     <p class="error-state" role="alert">
@@ -253,7 +339,10 @@
             <dd>
               <ol class="argv">
                 {#each [process.executable, ...process.arguments] as argument, index (`${index}-${argument}`)}
-                  <li><span>argv[{index}]</span> <code>{JSON.stringify(argument)}</code></li>
+                  <li>
+                    <span class="sr-only">{index === 0 ? 'Programm' : `Argument ${index}`}</span>
+                    <code>{JSON.stringify(argument)}</code>
+                  </li>
                 {/each}
               </ol>
             </dd>
@@ -278,7 +367,7 @@
           </div>
           <div>
             <dt>Zeitlimit</dt>
-            <dd>{process.timeoutMillis} ms</dd>
+            <dd>{Number(process.timeoutMillis) / 1000} Sekunden</dd>
           </div>
           <div>
             <dt>Ausgabegrenzen</dt>
@@ -286,18 +375,33 @@
           </div>
           <div>
             <dt>Modus</dt>
-            <dd>{process.executionMode}</dd>
+            <dd>
+              {{
+                knownSafe: 'Bekannter Befehl',
+                open: 'Offene Ausführung',
+                shell: 'Shell-Ausführung',
+              }[process.executionMode]}
+            </dd>
           </div>
           <div>
             <dt>Befehlstyp</dt>
-            <dd>{process.processKind}</dd>
+            <dd>
+              {{
+                test: 'Tests',
+                build: 'Build',
+                diagnostic: 'Diagnose',
+                lint: 'Codeprüfung',
+                format: 'Formatierung',
+                command: 'Befehl',
+              }[process.processKind]}
+            </dd>
           </div>
           <div>
             <dt>Planbindung</dt>
             <dd>
               {process.planBinding.kind === 'unbound'
                 ? 'Ungebunden'
-                : `Schritt ${process.planBinding.stepId}`}
+                : 'An den aktuellen Arbeitsschritt gebunden'}
             </dd>
           </div>
           <div>
@@ -345,7 +449,7 @@
             name={`approval-${taskId}`}
             value="allowOnce"
             bind:group={choice}
-            disabled={!approval.canAllowOnce || controlling}
+            disabled={!approval.canAllowOnce || controlling || refreshFailed}
           /> Diese Aktion einmal erlauben</label
         >
         <label
@@ -354,12 +458,15 @@
             name={`approval-${taskId}`}
             value="deny"
             bind:group={choice}
-            disabled={!approval.canDeny || controlling}
+            disabled={!approval.canDeny || controlling || refreshFailed}
           /> Ablehnen und diesen Schritt stoppen</label
         >
       </fieldset>
-      <button type="button" disabled={choice === null || controlling} onclick={confirmPending}
-        >Entscheidung bestätigen</button
+      <button
+        type="button"
+        class="confirm-decision"
+        disabled={choice === null || controlling || refreshFailed}
+        onclick={confirmPending}>Entscheidung bestätigen</button
       >
     {:else if approval.status === 'active'}
       <p class="bounded-note">
@@ -368,13 +475,14 @@
       </p>
       <div class="decision-actions">
         <button
+          class="confirm-decision"
           type="button"
-          disabled={!approval.canContinue || controlling}
+          disabled={!approval.canContinue || controlling || refreshFailed}
           onclick={() => apply('continue')}>Agent fortsetzen</button
         >
         <button
           type="button"
-          disabled={!approval.canRevoke || controlling}
+          disabled={!approval.canRevoke || controlling || refreshFailed}
           onclick={() => apply('revoke')}>Freigabe widerrufen</button
         >
       </div>
@@ -424,13 +532,11 @@
     font-size: var(--font-size-xs);
     padding: 0.3rem 0;
   }
-  .approval-facts,
   .action-detail dl {
     display: grid;
     gap: 0;
     margin: 0;
   }
-  .approval-facts div,
   .action-detail dl div {
     display: grid;
     grid-template-columns: minmax(6rem, 0.35fr) minmax(0, 1fr);
@@ -438,6 +544,28 @@
     gap: 0.5rem 0.9rem;
     padding: 0.7rem 0;
     border-bottom: 1px solid var(--color-border-soft);
+  }
+  .approval-facts {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-2) var(--space-3);
+    margin: 0;
+  }
+  .approval-facts > div {
+    display: grid;
+    align-content: start;
+    gap: var(--space-1);
+  }
+  .approval-facts > div:nth-child(5) {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .approval-facts > div:nth-child(3),
+  .approval-facts > div:nth-child(4) {
+    grid-column: 1 / -1;
+    grid-template-columns: 4rem minmax(0, 1fr);
+    font-size: var(--font-size-xs);
+    color: var(--color-muted);
   }
   dt {
     color: var(--color-muted);
@@ -475,24 +603,32 @@
     overflow-wrap: anywhere;
   }
   .argv {
-    display: grid;
+    display: flex;
+    flex-wrap: wrap;
     gap: 0.25rem;
     list-style: none;
     margin: 0;
     padding: 0;
   }
   .argv li {
-    grid-template-columns: auto 1fr;
+    padding: var(--space-1) var(--space-2);
+    background: var(--color-canvas);
+    border-radius: var(--radius-control);
   }
-  .argv span {
-    color: var(--color-muted);
-    font-size: 0.78rem;
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
   .decision-options {
     border: 0;
     border-top: 1px solid var(--color-border-soft);
     display: grid;
-    gap: 0.3rem;
+    gap: var(--space-2);
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
     margin: 0;
     padding: 0.8rem 0 0;
   }
@@ -507,6 +643,27 @@
     gap: 0.55rem;
     grid-template-columns: auto 1fr;
     cursor: pointer;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-control);
+    background: var(--color-surface);
+    transition:
+      background 120ms ease,
+      border-color 120ms ease;
+  }
+  .decision-options label:has(input:checked) {
+    border-color: var(--color-accent);
+    background: var(--color-accent-surface);
+  }
+  .confirm-decision:not(:disabled) {
+    background: var(--color-accent-strong);
+    color: var(--color-on-accent);
+    border-color: var(--color-accent-strong);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .decision-options label {
+      transition: none;
+    }
   }
   .technical-details {
     color: var(--color-muted);

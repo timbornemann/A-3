@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy, untrack } from 'svelte';
   import {
     queryAgentInspection,
     queryAgentInspectionLog,
@@ -15,6 +16,7 @@
 
   interface Props {
     taskId: string;
+    refreshKey?: string | number;
     loader?: (taskId: string) => Promise<AgentInspectionResponseV1>;
     logLoader?: (
       taskId: string,
@@ -47,6 +49,7 @@
 
   let {
     taskId,
+    refreshKey = 0,
     loader = queryAgentInspection,
     logLoader = queryAgentInspectionLog,
   }: Props = $props();
@@ -55,25 +58,83 @@
   let logs = $state<Record<string, LogView>>({});
   let requestSequence = 0;
   let observedTaskId = '';
+  let observedRefresh: string | number | undefined;
+  let refreshing = $state(false);
+  let refreshFailed = $state(false);
+  let refreshQueued = false;
+  let disposed = false;
 
   $effect(() => {
-    if (taskId !== observedTaskId) {
-      observedTaskId = taskId;
-      void loadInspection();
-    }
+    const selectedTask = taskId;
+    const refresh = refreshKey;
+    untrack(() => {
+      if (selectedTask !== observedTaskId) {
+        requestSequence += 1;
+        observedTaskId = selectedTask;
+        refreshing = false;
+        refreshQueued = false;
+        refreshFailed = false;
+        logs = {};
+        view = { kind: 'loading' };
+      }
+      if (observedRefresh !== refresh || view.kind === 'loading') {
+        observedRefresh = refresh;
+        void loadInspection();
+      }
+    });
+  });
+
+  onDestroy(() => {
+    disposed = true;
+    requestSequence += 1;
   });
 
   async function loadInspection(): Promise<void> {
+    if (disposed) return;
+    if (refreshing) {
+      refreshQueued = true;
+      return;
+    }
     const request = ++requestSequence;
-    view = { kind: 'loading' };
-    logs = {};
+    const selectedTask = taskId;
+    refreshing = true;
     try {
-      const response = await loader(taskId);
-      if (request === requestSequence && taskId === observedTaskId) {
+      const response = await loader(selectedTask);
+      if (request === requestSequence && selectedTask === taskId) {
+        if (
+          response.result.status === 'inspectionChanged' &&
+          view.kind === 'result' &&
+          view.result.status === 'available'
+        ) {
+          refreshFailed = true;
+          return;
+        }
+        if (
+          view.kind !== 'result' ||
+          view.result.status !== 'available' ||
+          response.result.status !== 'available' ||
+          view.result.inspection.inspectionRevision !==
+            response.result.inspection.inspectionRevision ||
+          view.result.inspection.verification.ledgerStoreVersion !==
+            response.result.inspection.verification.ledgerStoreVersion
+        )
+          logs = {};
         view = { kind: 'result', result: response.result };
+        refreshFailed = false;
       }
     } catch {
-      if (request === requestSequence) view = { kind: 'error' };
+      if (request === requestSequence) {
+        refreshFailed = true;
+        if (view.kind !== 'result' || view.result.status !== 'available') view = { kind: 'error' };
+      }
+    } finally {
+      if (request === requestSequence) {
+        refreshing = false;
+        if (refreshQueued) {
+          refreshQueued = false;
+          void loadInspection();
+        }
+      }
     }
   }
 
@@ -91,6 +152,8 @@
     offset: number,
   ): Promise<void> {
     if (
+      disposed ||
+      refreshFailed ||
       view.kind !== 'result' ||
       view.result.status !== 'available' ||
       view.result.inspection.inspectionRevision === null
@@ -112,6 +175,7 @@
         offset,
       );
       if (
+        disposed ||
         taskId !== selectedTaskId ||
         view.kind !== 'result' ||
         view.result.status !== 'available' ||
@@ -135,6 +199,7 @@
       }
     } catch {
       if (
+        !disposed &&
         taskId === selectedTaskId &&
         view.kind === 'result' &&
         view.result.status === 'available' &&
@@ -224,6 +289,11 @@
     </div>
     <button class="secondary" type="button" onclick={loadInspection}>Aktualisieren</button>
   </header>
+  <p class="inspection-sync" role="status">
+    {refreshFailed && view.kind === 'result'
+      ? 'Letzter bestätigter Stand · die Aktualisierung ist noch nicht bestätigt.'
+      : 'Zuletzt bestätigte Änderungen und Nachweise.'}
+  </p>
 
   {#if view.kind === 'loading'}
     <p class="empty-state">Änderungen und Prüfergebnisse werden geladen …</p>
@@ -260,9 +330,11 @@
         </div>
       </div>
       <p class:proof-summary={doneProven} class="done-proof-state">
-        {doneProven
-          ? 'Abschluss belegt · alle Muss-Kriterien sind aktuell nachgewiesen.'
-          : 'Abschluss noch nicht belegt · mindestens ein Muss-Kriterium ist noch nicht aktuell nachgewiesen.'}
+        {refreshFailed
+          ? 'Der aktuelle Abschluss ist noch nicht bestätigt. Angezeigt wird der letzte geladene Prüfstand.'
+          : doneProven
+            ? 'Abschluss belegt · alle Muss-Kriterien sind aktuell nachgewiesen.'
+            : 'Abschluss noch nicht belegt · mindestens ein Muss-Kriterium ist noch nicht aktuell nachgewiesen.'}
       </p>
       <ul class="criterion-list">
         {#each inspection.verification.criteria as criterion (criterion.criterionId)}

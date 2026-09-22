@@ -201,7 +201,12 @@ impl AgentDiffLineV1 {
 
 /// Shared row used by unified and side-by-side renderers.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "kind")]
+#[serde(
+    deny_unknown_fields,
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
 pub enum AgentDiffRowV1 {
     /// Unchanged context present on both sides.
     Context {
@@ -720,7 +725,12 @@ pub enum AgentDiffEvidenceSourceV1 {
 
 /// Method-specific durable artifact semantics.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "kind")]
+#[serde(
+    deny_unknown_fields,
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
 pub enum AgentVerificationEvidenceDetailV1 {
     /// Generic command evidence.
     Command {
@@ -877,7 +887,12 @@ pub enum AgentVerificationStepStatusV1 {
 
 /// Why a previously completed step became stale.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "kind")]
+#[serde(
+    deny_unknown_fields,
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
 pub enum AgentStepStaleCauseV1 {
     /// One or more exact artifacts were invalidated.
     VerificationEvidence {
@@ -1249,6 +1264,42 @@ pub enum AgentInspectionLogResultV1 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tagged_details_use_camel_case_fields_and_reject_internal_names()
+    -> Result<(), serde_json::Error> {
+        // These are the exact public shapes consumed by the strict frontend decoder.
+        // Round trips test deserialization and serialization, including nested enum fields.
+        for wire in [
+            serde_json::json!({"kind":"added","afterLine":1,"line":{"text":"new","ending":"lf"}}),
+            serde_json::json!({"kind":"removed","beforeLine":1,"line":{"text":"old","ending":"lf"}}),
+            serde_json::json!({"kind":"context","beforeLine":1,"afterLine":1,"line":{"text":"same","ending":"lf"}}),
+        ] {
+            let value: super::AgentDiffRowV1 = serde_json::from_value(wire.clone())?;
+            assert_eq!(serde_json::to_value(value)?, wire);
+        }
+        for wire in [
+            serde_json::json!({"kind":"userConfirmation","scopeId":"11".repeat(32),"confirmedAtUnixMillis":"42"}),
+            serde_json::json!({"kind":"diff","source":"patchChangeSet","baseSnapshotId":"11".repeat(32),"snapshotId":"22".repeat(32),"changedPaths":[],"complete":true}),
+        ] {
+            let value: super::AgentVerificationEvidenceDetailV1 =
+                serde_json::from_value(wire.clone())?;
+            assert_eq!(serde_json::to_value(value)?, wire);
+        }
+        for wire in [
+            serde_json::json!({"kind":"verificationEvidence","evidenceIds":["11".repeat(32)]}),
+            serde_json::json!({"kind":"dependency","stepId":"22".repeat(32)}),
+        ] {
+            let value: super::AgentStepStaleCauseV1 = serde_json::from_value(wire.clone())?;
+            assert_eq!(serde_json::to_value(value)?, wire);
+        }
+        assert!(
+            serde_json::from_value::<super::AgentDiffRowV1>(serde_json::json!({
+                "kind":"added","after_line":1,"line":{"text":"new","ending":"lf"}
+            }))
+            .is_err()
+        );
+        Ok(())
+    }
     use super::{
         AgentInspectionStreamV1, QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1,
     };

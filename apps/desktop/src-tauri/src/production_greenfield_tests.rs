@@ -190,7 +190,8 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
         let profile = model_profile()?;
         let criterion = AcceptanceCriterionId::from_bytes([1; 32]);
         let task_id = TaskId::from_bytes([2; 32]);
-        let change_id = TaskStepId::from_bytes([3; 32]);
+        // Dependency order deliberately differs from lexical ID order at the UI boundary.
+        let change_id = TaskStepId::from_bytes([6; 32]);
         let test_id = TaskStepId::from_bytes([4; 32]);
         let run_id = AgentRunId::from_bytes([5; 32]);
         let goal = GoalContract::initial(
@@ -351,7 +352,7 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
                 research: None,
             },
             runtime,
-            inspection,
+            inspection.clone(),
             approvals.clone(),
             None,
         )?);
@@ -369,8 +370,51 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
             approvals,
         );
         let mut request = AgentRunExecutionRequest::new(task_id, ledger.revision(), version);
+        let mut ui_projections = Vec::new();
         for attempt in 0..3u8 {
             run_attempt(executor.clone(), project.clone(), request)?;
+            let work_plan = a3_application::GetTaskLensTask::new(store.clone())
+                .execute(&project, task_id, &crate::DesktopBoundedReadControl::new())
+                .await?;
+            let a3_application::TaskLensTaskLoadResult::Available(work_plan) = work_plan else {
+                return Err("execution must expose a coherent work plan".into());
+            };
+            ui_projections.push(serde_json::json!({
+                "kind": "workPlan",
+                "response": crate::map_task_lens_task_to_v1(&work_plan)
+                    .map_err(|_| "invalid work-plan projection")?,
+            }));
+            let activity = a3_application::GetAgentActivity::new(store.clone(), store.clone())
+                .execute(&project, task_id, &crate::DesktopBoundedReadControl::new())
+                .await?;
+            let a3_application::AgentActivityLoadResult::Available(activity) = activity else {
+                return Err("execution must expose a coherent activity projection".into());
+            };
+            ui_projections.push(serde_json::json!({
+                "kind": "activity",
+                "response": a3_protocol::AgentActivityResponseV1::available(
+                    crate::map_agent_activity_to_v1(&activity).ok_or("invalid activity projection")?,
+                ),
+            }));
+            let verification =
+                a3_application::GetTaskVerificationInspection::new(store.clone(), store.clone())
+                    .execute(&project, task_id, &crate::DesktopBoundedReadControl::new())
+                    .await?;
+            let a3_application::TaskVerificationInspectionLoadResult::Available(verification) =
+                verification
+            else {
+                return Err("execution must expose a coherent verification projection".into());
+            };
+            let overview = inspection.overview(&project, task_id)?;
+            let overview = overview
+                .as_ref()
+                .filter(|value| crate::inspection_contexts_are_current(value, &verification));
+            ui_projections.push(serde_json::json!({
+                "kind": "inspection",
+                "response": a3_protocol::AgentInspectionResponseV1::available(
+                    crate::agent_inspection_mapping::map_agent_inspection_to_v1(overview, &verification),
+                ),
+            }));
             let observed_run = store.load_agent_run(&project, run_id).await?.ok_or("run")?;
             if observed_run.state() == AgentControllerState::Done {
                 break;
@@ -382,6 +426,14 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
             else {
                 return Err("missing exact approval".into());
             };
+            ui_projections.push(serde_json::json!({
+                "kind": "approval",
+                "response": a3_protocol::AgentApprovalResponseV1::new(
+                    a3_protocol::AgentApprovalResultV1::Available {
+                        approval: Box::new(crate::agent_approval_mapping::map_agent_approval_to_v1(&center)),
+                    },
+                ),
+            }));
             if attempt == 0 {
                 assert!(matches!(
                     center.presentation().action(),
@@ -436,6 +488,11 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
             .await?
             .ok_or("final ledger")?;
         assert_eq!(final_run.state(), AgentControllerState::Done);
+        // Explicit opt-in exports only this deterministic, isolated fixture's public IPC
+        // projections for the frontend decoder contract, never user repository state.
+        if let Some(output) = std::env::var_os("A3_AGENT_UI_CONTRACT_OUTPUT") {
+            std::fs::write(output, serde_json::to_vec_pretty(&ui_projections)?)?;
+        }
         assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
         assert!(
             final_ledger

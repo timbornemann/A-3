@@ -3180,49 +3180,7 @@ impl CompositionRoot {
                 current_goal.revision().get(),
                 ledger_goal.revision().get(),
             )),
-            TaskLensTaskLoadResult::Available(anchor) => {
-                let stored = anchor.task_ledger();
-                let mut remaining = stored
-                    .ledger()
-                    .steps()
-                    .filter(|step| step.is_active_plan_step())
-                    .collect::<Vec<_>>();
-                let mut ordered = Vec::with_capacity(remaining.len());
-                while !remaining.is_empty() {
-                    let pending = remaining
-                        .iter()
-                        .map(|step| step.definition().id())
-                        .collect::<BTreeSet<_>>();
-                    let position = remaining.iter().position(|step| {
-                        step.definition()
-                            .dependencies()
-                            .iter()
-                            .all(|dependency| !pending.contains(&dependency.prerequisite()))
-                    });
-                    let Some(position) = position else {
-                        return Err(CommandErrorV1::project_open(
-                            ErrorCodeV1::LocalStorageInvalidData,
-                        ));
-                    };
-                    ordered.push(remaining.remove(position));
-                }
-                let steps = ordered
-                    .into_iter()
-                    .map(|step| {
-                        TaskLensStepV1::new(
-                            step.definition().id().to_string(),
-                            step.definition().intended_outcome().as_str().to_owned(),
-                            map_task_lens_step_status_to_v1(step.status()),
-                        )
-                    })
-                    .collect();
-                Ok(TaskLensTaskResponseV1::available(
-                    map_task_lens_summary_to_v1(anchor.goal_contract()),
-                    stored.ledger().revision().get(),
-                    stored.version().get().to_string(),
-                    steps,
-                ))
-            }
+            TaskLensTaskLoadResult::Available(anchor) => map_task_lens_task_to_v1(&anchor),
         }
     }
 
@@ -8043,6 +8001,52 @@ const fn map_project_map_search_symbol_kind_to_v1(
         SymbolKind::Variant => ProjectMapSearchSymbolKindV1::Variant,
         SymbolKind::Parameter => ProjectMapSearchSymbolKindV1::Parameter,
     }
+}
+
+fn map_task_lens_task_to_v1(
+    anchor: &a3_application::TaskLensTaskAnchor,
+) -> Result<TaskLensTaskResponseV1, CommandErrorV1> {
+    let stored = anchor.task_ledger();
+    let mut remaining = stored
+        .ledger()
+        .steps()
+        .filter(|step| step.is_active_plan_step())
+        .collect::<Vec<_>>();
+    let mut ordered = Vec::with_capacity(remaining.len());
+    while !remaining.is_empty() {
+        let pending = remaining
+            .iter()
+            .map(|step| step.definition().id())
+            .collect::<BTreeSet<_>>();
+        let position = remaining.iter().position(|step| {
+            step.definition()
+                .dependencies()
+                .iter()
+                .all(|dependency| !pending.contains(&dependency.prerequisite()))
+        });
+        let Some(position) = position else {
+            return Err(CommandErrorV1::project_open(
+                ErrorCodeV1::LocalStorageInvalidData,
+            ));
+        };
+        ordered.push(remaining.remove(position));
+    }
+    let steps = ordered
+        .into_iter()
+        .map(|step| {
+            TaskLensStepV1::new(
+                step.definition().id().to_string(),
+                step.definition().intended_outcome().as_str().to_owned(),
+                map_task_lens_step_status_to_v1(step.status()),
+            )
+        })
+        .collect();
+    Ok(TaskLensTaskResponseV1::available(
+        map_task_lens_summary_to_v1(anchor.goal_contract()),
+        stored.ledger().revision().get(),
+        stored.version().get().to_string(),
+        steps,
+    ))
 }
 
 fn map_task_lens_summary_to_v1(goal: &a3_domain::GoalContract) -> TaskLensTaskSummaryV1 {

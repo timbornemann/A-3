@@ -358,6 +358,13 @@ Technische Prüfanker bleiben aufklappbar, während Aktion, Risiko und konkrete 
 bleiben. Native Dialoge, 44-Pixel-Controls, Fokusrahmen und Reduced Motion gelten durchgehend.
 Die Abnahme ist in [Plan 09](docs/plans/09-COHESIVE_DESKTOP_UI.md) dokumentiert.
 
+Während der Agent arbeitet, zeigt die Unterhaltung zuerst den aktuellen Schritt. Arbeitsschritte,
+Aktivitätsverlauf und Änderungen/Prüfungen lassen sich einzeln aufklappen. Freigaben stehen davor
+direkt im Chat; die genaue Aktion und ihr Risiko bleiben sichtbar. Eine gespeicherte Freigabe
+startet weiterhin erst durch „Agent fortsetzen“. Hintergrundabfragen erhalten den zuletzt
+bestätigten Stand und die Scrollposition; bei Lesekonflikten bleiben Entscheidungen gesperrt,
+bis der Core die aktuellen Freigabeanker bestätigt. Siehe [Plan 19](docs/plans/19-AGENT-EXECUTION-UX.md).
+
 Die Mehrprovider-Einstellungen besitzen kompakte, unabhängig bedienbare Verbindungskarten.
 Adresse und API-Key werden neben dem jeweiligen Eingabefeld gespeichert. Modelle wählen
 Nutzer in einem nativen Dialog mit Suche, Anbieterfilter und separat scrollbarer Liste

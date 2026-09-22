@@ -138,7 +138,12 @@ impl AgentActivityTurnV1 {
 
 /// Event-specific fields preserving the distinction between model output and tool execution.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "kind")]
+#[serde(
+    deny_unknown_fields,
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
 pub enum AgentActivityEventKindV1 {
     /// Mandatory first event for the selected run.
     RunStarted,
@@ -406,7 +411,12 @@ impl AgentActivityV1 {
 
 /// Expected read states for the selected task's execution activity.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "status")]
+#[serde(
+    deny_unknown_fields,
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "status"
+)]
 pub enum AgentActivityResultV1 {
     /// No active Core-owned project exists.
     NoProject,
@@ -496,6 +506,31 @@ impl AgentActivityResponseV1 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn revision_events_and_mismatches_use_camel_case_fields() -> Result<(), serde_json::Error> {
+        let event = super::AgentActivityEventKindV1::LedgerUpdated {
+            from_revision: 1,
+            to_revision: 2,
+        };
+        let wire =
+            serde_json::json!({ "kind": "ledgerUpdated", "fromRevision": 1, "toRevision": 2 });
+        assert_eq!(serde_json::to_value(&event)?, wire);
+        assert_eq!(
+            serde_json::from_value::<super::AgentActivityEventKindV1>(wire)?,
+            event
+        );
+        let result = super::AgentActivityResultV1::GoalRevisionMismatch {
+            current_revision: 2,
+            ledger_revision: 1,
+        };
+        let wire = serde_json::json!({ "status": "goalRevisionMismatch", "currentRevision": 2, "ledgerRevision": 1 });
+        assert_eq!(serde_json::to_value(&result)?, wire);
+        assert_eq!(
+            serde_json::from_value::<super::AgentActivityResultV1>(wire)?,
+            result
+        );
+        Ok(())
+    }
     use super::{
         AgentActivityBlockerStatusV1, AgentActivityBlockerV1, AgentActivityBudgetV1,
         AgentActivityCodeV1, AgentActivityEventKindV1, AgentActivityEventV1,

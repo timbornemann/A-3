@@ -377,11 +377,9 @@ function parseTaskResult(value: unknown): TaskLensTaskResultV1 {
   ) {
     const task = parseTaskSummary(value.task);
     const steps = value.steps.map(parseStep);
-    if (
-      new Set(steps.map((step) => step.stepId)).size !== steps.length ||
-      steps.some((step, index) => index > 0 && steps[index - 1].stepId >= step.stepId)
-    ) {
-      throw new Error('Task Lens steps violate stable identity ordering.');
+    // The Core orders steps by their dependencies; opaque IDs do not encode execution order.
+    if (new Set(steps.map((step) => step.stepId)).size !== steps.length) {
+      throw new Error('Task Lens steps contain duplicate identities.');
     }
     return {
       ledgerRevision: value.ledgerRevision,

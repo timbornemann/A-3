@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>A^3 · Agentenausführung prüfen</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        overflow: hidden;
+      }
+      body {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+      }
+      nav {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      #profile-root {
+        min-height: 0;
+        min-width: 0;
+        width: 100%;
+        margin-inline: auto;
+      }
+      #profile-root.compact {
+        max-width: 720px;
+        max-height: 520px;
+      }
+      output {
+        font-size: 0.75rem;
+        padding: 0.5rem;
+      }
+    </style>
+  </head>
+  <body>
+    <nav aria-label="Offline-Prüfung">
+      <button id="measure">Stabilität messen</button>
+      <button id="approval">Freigabe anfordern</button>
+      <button id="process-approval">Prüfung freigeben</button>
+      <button id="conflict">Lesekonflikt</button>
+      <button id="recover">Verbindung wiederherstellen</button>
+      <button id="theme">Theme wechseln</button>
+      <button id="compact">720 × 520</button>
+    </nav>
+    <main id="profile-root"></main>
+    <output id="profile-result">Bereit</output>
+    <script type="module" src="/src/performance/u19-agent-execution-profile.ts"></script>
+  </body>
+</html>

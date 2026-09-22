@@ -269,7 +269,12 @@ pub enum AgentApprovalExecutionModeV1 {
 
 /// Exact current-plan binding of the process.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "kind")]
+#[serde(
+    deny_unknown_fields,
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
 pub enum AgentApprovalPlanBindingV1 {
     /// No validated step binding.
     Unbound,
@@ -282,7 +287,12 @@ pub enum AgentApprovalPlanBindingV1 {
 
 /// Declarative network boundary of the process specification.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "kind")]
+#[serde(
+    deny_unknown_fields,
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
 pub enum AgentApprovalNetworkV1 {
     /// Network use is not requested.
     Denied,
@@ -583,6 +593,35 @@ impl AgentApprovalControlResponseV1 {
 mod tests {
     use super::{AgentApprovalControlActionV1, ControlAgentApprovalRequestV1};
     use std::error::Error;
+
+    #[test]
+    fn process_binding_and_network_use_frontend_field_names() -> Result<(), Box<dyn Error>> {
+        let binding = super::AgentApprovalPlanBindingV1::Validated {
+            step_id: "11".repeat(32),
+        };
+        let wire = serde_json::json!({ "kind": "validated", "stepId": "11".repeat(32) });
+        assert_eq!(serde_json::to_value(&binding)?, wire);
+        assert_eq!(
+            serde_json::from_value::<super::AgentApprovalPlanBindingV1>(wire)?,
+            binding
+        );
+        let network = super::AgentApprovalNetworkV1::Requested {
+            scope_digest: "22".repeat(32),
+        };
+        let wire = serde_json::json!({ "kind": "requested", "scopeDigest": "22".repeat(32) });
+        assert_eq!(serde_json::to_value(&network)?, wire);
+        assert_eq!(
+            serde_json::from_value::<super::AgentApprovalNetworkV1>(wire)?,
+            network
+        );
+        assert!(
+            serde_json::from_value::<super::AgentApprovalPlanBindingV1>(serde_json::json!({
+                "kind": "validated", "step_id": "11".repeat(32)
+            }))
+            .is_err()
+        );
+        Ok(())
+    }
 
     #[test]
     fn control_accepts_only_closed_action_and_visible_anchors() -> Result<(), Box<dyn Error>> {

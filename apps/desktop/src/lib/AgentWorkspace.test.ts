@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import AgentWorkspace from './AgentWorkspace.svelte';
 import * as sessionApi from './agent-session';
 import type { AgentActivityResponseV1 } from './agent-activity';
+import type { TaskLensTaskResponseV1 } from './task-lens';
 import { patchApprovalResponse } from './agent-approval.fixture';
 import type {
   AgentSessionControlActionV1,
@@ -10,7 +11,11 @@ import type {
   AgentSessionsResponseV1,
   AgentSlashCommandsResponseV1,
 } from './agent-session';
-import type { TaskLensTaskResponseV1 } from './task-lens';
+import {
+  activeAgentSession,
+  activeAgentActivity,
+  adaptiveWorkPlan,
+} from './agent-execution.fixture';
 
 // This suite verifies conversation/poll ownership, not Mermaid's layout in jsdom.
 // Renderer and sanitizer contracts live in AgentDiagrams and agent-diagram-rendering tests.
@@ -105,123 +110,227 @@ const askSession = (state: 'running' | 'completed'): AgentSessionResponseV1 => (
   },
 });
 
-const activeAgentSession = (): AgentSessionResponseV1 => ({
-  protocolVersion: 1,
-  result: {
-    session: {
-      activeTaskId: 'b'.repeat(64),
-      entries: [
-        {
-          createdAtUnixMillis: '100',
-          kind: 'userMessage',
-          planRevision: null,
-          sequence: '1',
-          text: 'Setze die geprüfte Änderung um',
-        },
-      ],
-      hasOlderEntries: false,
-      summary: {
-        currentPlanRevision: null,
-        mode: 'agent',
-        revision: '1',
-        sessionId,
-        state: 'running',
-        title: 'Geprüfte Änderung umsetzen',
-        updatedAtUnixMillis: '100',
-      },
-    },
-    status: 'available',
-  },
-});
-
-const activeAgentActivity = (): AgentActivityResponseV1 => ({
-  protocolVersion: 1,
-  result: {
-    activity: {
-      blockers: [],
-      currentLedgerRevision: 1,
-      ledgerStoreVersion: '1',
-      run: {
-        attemptNumber: 1,
-        budget: {
-          actionLimit: 8,
-          durationLimitMillis: '60000',
-          outputTokenLimit: '2000',
-          promptTokenLimit: '8000',
-          repairLimit: 1,
-          turnLimit: 8,
-        },
-        createdAtUnixMillis: '100',
-        currentSnapshotId: 'c'.repeat(64),
-        earlierEventsOmitted: false,
-        ledgerRevision: 1,
-        ledgerRevisionMatchesCurrent: true,
-        runId: 'd'.repeat(64),
-        state: 'execute',
-        stepId: 'e'.repeat(64),
-        terminal: false,
-        timeline: [
-          {
-            code: 'controllerDecision',
-            event: { kind: 'runStarted' },
-            occurredAtUnixMillis: '100',
-            outcome: 'succeeded',
-            sequence: '1',
-            snapshotId: 'c'.repeat(64),
-          },
-          {
-            code: 'policyDecision',
-            event: { kind: 'toolAction' },
-            occurredAtUnixMillis: '101',
-            outcome: null,
-            sequence: '2',
-            snapshotId: 'c'.repeat(64),
-          },
-        ],
-        updatedAtUnixMillis: '101',
-        usage: {
-          actionCount: 1,
-          elapsedAtLastEventMillis: '1',
-          outputTokens: '10',
-          promptTokens: '20',
-          repairCount: 0,
-          turnCount: 1,
-        },
-      },
-    },
-    status: 'available',
-  },
-});
-
-const adaptiveWorkPlan = (): TaskLensTaskResponseV1 => ({
-  protocolVersion: 1,
-  result: {
-    ledgerRevision: 2,
-    ledgerStoreVersion: '4',
-    status: 'available',
-    steps: [
-      { intendedOutcome: 'API-Vertrag definieren', status: 'completed', stepId: 'f'.repeat(64) },
-      {
-        intendedOutcome: 'Serializer ergänzen und Adapter anbinden',
-        status: 'inProgress',
-        stepId: 'e'.repeat(64),
-      },
-      { intendedOutcome: 'Integrationstests ausführen', status: 'pending', stepId: '9'.repeat(64) },
-    ],
-    task: {
-      goalRevision: 1,
-      objective: 'API sicher implementieren',
-      taskId: 'b'.repeat(64),
-    },
-  },
-});
-
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
 describe('AgentWorkspace', () => {
+  it.each([false, true])(
+    'does not insert another initial plan loader above the activity after a failed read (open=%s)',
+    async (open) => {
+      const response = activeAgentSession();
+      if (response.result.status !== 'available') throw new Error('available fixture required');
+      let rejectPlan: ((error: Error) => void) | undefined;
+      const workPlanLoader = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('invalid IPC response'))
+        .mockImplementation(
+          () => new Promise<TaskLensTaskResponseV1>((_resolve, reject) => (rejectPlan = reject)),
+        );
+      const { container, unmount } = render(AgentWorkspace, {
+        activeProject: true,
+        pollIntervalMs: 30,
+        sessionLoader: async () => structuredClone(response),
+        sessionsLoader: async () => ({
+          protocolVersion: 1,
+          result: {
+            status: 'available',
+            sessions:
+              response.result.status === 'available' ? [response.result.session.summary] : [],
+            nextCursor: null,
+          },
+        }),
+        activityLoader: async () => activeAgentActivity(),
+        workPlanLoader,
+      });
+      await screen.findByText(/Letzter bestätigter Stand/);
+      const history = container.querySelector<HTMLDetailsElement>('.execution-activity');
+      if (!history) throw new Error('activity disclosure required');
+      history.open = open;
+      for (let index = 0; index < 3; index += 1) {
+        await waitFor(() => expect(workPlanLoader).toHaveBeenCalledTimes(index + 2));
+        expect(screen.queryByText('Arbeitsplan wird geladen …')).toBeNull();
+        expect(container.querySelector('.execution-activity')).toBe(history);
+        expect(history.open).toBe(open);
+        rejectPlan?.(new Error('temporary read failure'));
+      }
+      unmount();
+    },
+  );
+
+  it.each([false, true])(
+    'keeps the activity disclosure mounted (open=%s) while a fresh session waits for its plan',
+    async (open) => {
+      const response = activeAgentSession();
+      if (response.result.status !== 'available') throw new Error('available fixture required');
+      const summary = response.result.session.summary;
+      let finishPlan: ((response: TaskLensTaskResponseV1) => void) | undefined;
+      const workPlanLoader = vi
+        .fn()
+        .mockResolvedValueOnce(adaptiveWorkPlan())
+        .mockImplementation(
+          () => new Promise<TaskLensTaskResponseV1>((resolve) => (finishPlan = resolve)),
+        );
+      let revision = 0;
+      const { container, unmount } = render(AgentWorkspace, {
+        activeProject: true,
+        pollIntervalMs: 50,
+        sessionLoader: async () => {
+          const next = structuredClone(response);
+          if (next.result.status === 'available')
+            next.result.session.summary.revision = String(++revision);
+          return next;
+        },
+        sessionsLoader: async () => ({
+          protocolVersion: 1,
+          result: { status: 'available', sessions: [summary], nextCursor: null },
+        }),
+        activityLoader: async () => activeAgentActivity(),
+        workPlanLoader,
+      });
+      await screen.findByText('Serializer ergänzen und Adapter anbinden', {
+        selector: '.execution-focus strong',
+      });
+      const history = container.querySelector<HTMLDetailsElement>('.execution-activity');
+      if (!history) throw new Error('activity disclosure required');
+      history.open = open;
+      const plan = container.querySelector('.agent-work-plan');
+      for (let index = 0; index < 3; index += 1) {
+        await waitFor(() => expect(workPlanLoader).toHaveBeenCalledTimes(index + 2));
+        expect(screen.queryByText('Arbeitsplan wird geladen …')).toBeNull();
+        expect(container.querySelector('.execution-activity')).toBe(history);
+        expect(history.open).toBe(open);
+        expect(container.querySelector('.agent-work-plan')).toBe(plan);
+        finishPlan?.(adaptiveWorkPlan());
+      }
+      unmount();
+    },
+  );
+
+  it('updates the history status when the selected running session needs approval', async () => {
+    let response = activeAgentSession();
+    if (response.result.status !== 'available') throw new Error('available fixture required');
+    const summary = structuredClone(response.result.session.summary);
+    const { unmount } = render(AgentWorkspace, {
+      activeProject: true,
+      pollIntervalMs: 20,
+      sessionLoader: async () => structuredClone(response),
+      sessionsLoader: async () => ({
+        protocolVersion: 1,
+        result: { status: 'available', sessions: [summary], nextCursor: null },
+      }),
+      activityLoader: async () => activeAgentActivity(),
+      workPlanLoader: async () => adaptiveWorkPlan(),
+      approvalLoader: async () => patchApprovalResponse(),
+    });
+    await screen.findByRole('button', { name: /Geprüfte Änderung umsetzen.*Arbeitet/ });
+    response = structuredClone(response);
+    if (response.result.status !== 'available') throw new Error('available fixture required');
+    response.result.session.summary.state = 'awaitingApproval';
+    response.result.session.summary.revision = '2';
+    await screen.findByRole('button', { name: /Geprüfte Änderung umsetzen.*Freigabe nötig/ });
+    unmount();
+  });
+
+  it('keeps an opened inspection mounted while new run events arrive', async () => {
+    const response = activeAgentSession();
+    if (response.result.status !== 'available') throw new Error('available fixture required');
+    const summary = response.result.session.summary;
+    let timestamp = 101;
+    const plan = adaptiveWorkPlan();
+    if (plan.result.status === 'available') plan.result.steps[0].status = 'blocked';
+    const activityLoader = vi.fn(async () => {
+      const activity = activeAgentActivity();
+      if (activity.result.status === 'available' && activity.result.activity.run)
+        activity.result.activity.run.updatedAtUnixMillis = String(timestamp++);
+      return activity;
+    });
+    const inspectionLoader = vi.fn(async () => ({
+      protocolVersion: 1 as const,
+      result: { status: 'ledgerUnavailable' as const },
+    }));
+    const { container, unmount } = render(AgentWorkspace, {
+      activeProject: true,
+      activityLoader,
+      inspectionLoader,
+      pollIntervalMs: 20,
+      sessionLoader: async () => response,
+      sessionsLoader: async () => ({
+        protocolVersion: 1,
+        result: { status: 'available', sessions: [summary], nextCursor: null },
+      }),
+      workPlanLoader: async () => plan,
+    });
+    await screen.findByRole('article', { name: 'Änderungen werden umgesetzt' });
+    await waitFor(() =>
+      expect(container.querySelector('.execution-focus strong')?.textContent).toBe(
+        'Serializer ergänzen und Adapter anbinden',
+      ),
+    );
+    expect(inspectionLoader).not.toHaveBeenCalled();
+    await fireEvent.keyDown(screen.getByText('Änderungen & Prüfungen', { exact: true }), {
+      key: 'Enter',
+    });
+    expect(screen.getByRole('button', { name: '↓ Zum neuesten Schritt' })).toBeTruthy();
+    await fireEvent.click(screen.getByText('Änderungen & Prüfungen', { exact: true }));
+    await screen.findByText('Für diese Aufgabe liegt noch kein prüfbarer Arbeitsplan vor.');
+    const panel = container.querySelector('.inspection-panel');
+    const calls = activityLoader.mock.calls.length;
+    await waitFor(() => expect(activityLoader.mock.calls.length).toBeGreaterThan(calls + 2));
+    expect(container.querySelector('.inspection-panel')).toBe(panel);
+    expect(inspectionLoader.mock.calls.length).toBeGreaterThan(1);
+    unmount();
+  });
+
+  it('keeps the known run status during delayed and failed background reads', async () => {
+    const response = activeAgentSession();
+    if (response.result.status !== 'available') throw new Error('available fixture required');
+    const summary = response.result.session.summary;
+    let rejectRefresh: ((error: Error) => void) | undefined;
+    const activityLoader = vi
+      .fn()
+      .mockResolvedValueOnce(activeAgentActivity())
+      .mockImplementation(
+        () =>
+          new Promise<AgentActivityResponseV1>((_resolve, reject) => {
+            rejectRefresh = reject;
+          }),
+      );
+    const onRunStatusChange = vi.fn();
+    const { unmount } = render(AgentWorkspace, {
+      activeProject: true,
+      activityLoader,
+      onRunStatusChange,
+      pollIntervalMs: 20,
+      sessionLoader: async () => response,
+      sessionsLoader: async () => ({
+        protocolVersion: 1,
+        result: {
+          nextCursor: null,
+          sessions: [summary],
+          status: 'available',
+        },
+      }),
+      workPlanLoader: async () => adaptiveWorkPlan(),
+    });
+    await waitFor(() =>
+      expect(onRunStatusChange).toHaveBeenLastCalledWith({ kind: 'available', state: 'execute' }),
+    );
+    onRunStatusChange.mockClear();
+    await waitFor(() => expect(activityLoader.mock.calls.length).toBeGreaterThanOrEqual(2));
+    expect(onRunStatusChange.mock.calls.every(([status]) => status.kind === 'available')).toBe(
+      true,
+    );
+    rejectRefresh?.(new Error('temporary read failure'));
+    await screen.findByText(/Letzter bestätigter Stand/);
+    expect(onRunStatusChange.mock.calls.every(([status]) => status.kind === 'available')).toBe(
+      true,
+    );
+    expect(screen.getByRole('article', { name: 'Änderungen werden umgesetzt' })).toBeTruthy();
+    unmount();
+  });
+
   it('renames through a native dialog with the visible session revision and trimmed title', async () => {
     let response = askSession('completed');
     const sessionController = vi.fn(
@@ -1403,20 +1512,25 @@ describe('AgentWorkspace', () => {
     expect(screen.queryByRole('button', { name: 'Änderungen' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Review' })).toBeNull();
     expect(
-      within(execution).getAllByRole('heading', { name: 'Änderungen werden umgesetzt' }).length,
-    ).toBe(2);
-    expect(within(execution).getByRole('region', { name: 'Dateien und Prüfungen' })).toBeTruthy();
-    expect(within(execution).getByRole('heading', { name: 'Änderungen & Prüfungen' })).toBeTruthy();
-    expect(within(execution).getByText('Umsetzung vorbereitet')).toBeTruthy();
-    expect(within(execution).getByText('Sichere Aktion ausgeführt')).toBeTruthy();
-    expect(
-      within(execution).getByRole('heading', { name: '1 von 3 Schritten erledigt' }),
-    ).toBeTruthy();
-    expect(within(execution).getAllByText('Serializer ergänzen und Adapter anbinden').length).toBe(
-      2,
-    );
+      within(execution).getAllByRole('heading', { name: 'Änderungen werden umgesetzt' }),
+    ).toHaveLength(1);
+    const steps = within(execution).getByText('Arbeitsschritte').closest('details');
+    const history = within(execution).getByText('Aktivitätsverlauf').closest('details');
+    const inspection = within(execution).getByText('Änderungen & Prüfungen').closest('details');
+    expect(steps?.open).toBe(false);
+    expect(history?.open).toBe(false);
+    expect(inspection?.open).toBe(false);
+    expect(within(execution).queryByRole('region', { name: 'Dateien und Prüfungen' })).toBeNull();
+    expect(within(execution).getByText('1 von 3 Schritten erledigt · 2 offen')).toBeTruthy();
+    await fireEvent.click(within(execution).getByText('Arbeitsschritte'));
+    expect(steps?.open).toBe(true);
+    expect(within(execution).getByRole('list', { name: 'Alle Arbeitsschritte' })).toBeTruthy();
     expect(within(execution).getByText('Integrationstests ausführen')).toBeTruthy();
     expect(within(execution).getByText(/Nach einem neuen Befund angepasst/)).toBeTruthy();
+    await fireEvent.click(within(execution).getByText('Aktivitätsverlauf'));
+    expect(within(execution).getByRole('list', { name: 'Aktivitäten des Agenten' })).toBeTruthy();
+    expect(within(execution).getByText('Umsetzung vorbereitet')).toBeTruthy();
+    expect(within(execution).getByText('Sichere Aktion ausgeführt')).toBeTruthy();
     expect(screen.queryByText('controllerDecision')).toBeNull();
     expect(screen.queryByText('policyDecision')).toBeNull();
     expect(screen.queryByText(/dddddddd/u)).toBeNull();

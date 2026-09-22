@@ -239,7 +239,12 @@ impl TaskLensTaskResponseV1 {
 
 /// Availability and freshness of one selected durable task anchor.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "status")]
+#[serde(
+    deny_unknown_fields,
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "status"
+)]
 pub enum TaskLensTaskResultV1 {
     /// No Core-owned project is active.
     NoProject,
@@ -267,7 +272,7 @@ pub enum TaskLensTaskResultV1 {
         ledger_revision: u32,
         /// Optimistic persistence version encoded losslessly.
         ledger_store_version: String,
-        /// At most 256 active-plan steps in stable identity order.
+        /// At most 256 active-plan steps in Core-resolved dependency order.
         steps: Vec<TaskLensStepV1>,
     },
 }
@@ -827,10 +832,53 @@ pub enum TaskLensClaimEvidenceV1 {
 mod tests {
     use super::{
         CompileTaskLensRequestV1, QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1,
-        TaskLensCompileResponseV1, TaskLensCompileResultV1, TaskLensTasksResponseV1,
+        TaskLensCompileResponseV1, TaskLensCompileResultV1, TaskLensStepStatusV1, TaskLensStepV1,
+        TaskLensTaskResponseV1, TaskLensTaskSummaryV1, TaskLensTasksResponseV1,
         TaskLensTasksResultV1,
     };
     use crate::ProtocolVersion;
+
+    #[test]
+    fn work_plan_responses_use_camel_case_fields_at_the_webview_boundary()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let task_id = "a".repeat(64);
+        let step_id = "b".repeat(64);
+        let response = TaskLensTaskResponseV1::available(
+            TaskLensTaskSummaryV1::new(task_id.clone(), 1, "Implement the task".to_owned()),
+            2,
+            "3".to_owned(),
+            vec![TaskLensStepV1::new(
+                step_id.clone(),
+                "Implement".to_owned(),
+                TaskLensStepStatusV1::Ready,
+            )],
+        );
+        let expected = serde_json::json!({
+            "protocolVersion": 1,
+            "result": {
+                "status": "available", "ledgerRevision": 2, "ledgerStoreVersion": "3",
+                "task": {"taskId": task_id, "goalRevision": 1, "objective": "Implement the task"},
+                "steps": [{"stepId": step_id, "intendedOutcome": "Implement", "status": "ready"}],
+            },
+        });
+        assert_eq!(serde_json::to_value(&response)?, expected);
+        assert_eq!(
+            serde_json::from_value::<TaskLensTaskResponseV1>(expected)?,
+            response
+        );
+        let mismatch = TaskLensTaskResponseV1::goal_revision_mismatch(task_id.clone(), 2, 1);
+        let expected = serde_json::json!({
+            "protocolVersion": 1,
+            "result": {"status": "goalRevisionMismatch", "taskId": task_id,
+                "currentGoalRevision": 2, "ledgerGoalRevision": 1},
+        });
+        assert_eq!(serde_json::to_value(&mismatch)?, expected);
+        assert_eq!(
+            serde_json::from_value::<TaskLensTaskResponseV1>(expected)?,
+            mismatch
+        );
+        Ok(())
+    }
 
     #[test]
     fn requests_reject_paths_and_unknown_fields() {

@@ -159,6 +159,18 @@ describe('Task Lens V1 boundary', () => {
     await expect(queryTaskLensTask({ taskId }, async () => stale)).rejects.toThrow(/selection/i);
   });
 
+  it('preserves Core dependency order even when opaque step IDs are not alphabetically sorted', () => {
+    const payload = taskResponse();
+    payload.result.steps = [
+      { stepId: id('f'), intendedOutcome: 'Create the implementation', status: 'completed' },
+      { stepId: id('a'), intendedOutcome: 'Verify the implementation', status: 'ready' },
+    ];
+    const decoded = parseTaskLensTaskResponseV1(payload);
+    expect(decoded.result).toEqual(payload.result);
+    payload.result.steps[1].stepId = id('f');
+    expect(() => parseTaskLensTaskResponseV1(payload)).toThrow(/duplicate/i);
+  });
+
   it('accepts current Evidence, visible hypotheses, and semantic candidate-only provenance', () => {
     const response = parseTaskLensCompileResponseV1(compileResponse());
     expect(response.result.status).toBe('available');

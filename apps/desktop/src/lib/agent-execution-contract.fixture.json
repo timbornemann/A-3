@@ -1,0 +1,1772 @@
+[
+  {
+    "kind": "workPlan",
+    "response": {
+      "protocolVersion": 1,
+      "result": {
+        "ledgerRevision": 1,
+        "ledgerStoreVersion": "2",
+        "status": "available",
+        "steps": [
+          {
+            "intendedOutcome": "create the server and its tests",
+            "status": "awaitingApproval",
+            "stepId": "0606060606060606060606060606060606060606060606060606060606060606"
+          },
+          {
+            "intendedOutcome": "run the created project tests",
+            "status": "pending",
+            "stepId": "0404040404040404040404040404040404040404040404040404040404040404"
+          }
+        ],
+        "task": {
+          "goalRevision": 1,
+          "objective": "create a tested Hello World Python server",
+          "taskId": "0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      }
+    }
+  },
+  {
+    "kind": "activity",
+    "response": {
+      "protocolVersion": 1,
+      "result": {
+        "activity": {
+          "blockers": [
+            {
+              "reason": "exact mutation approval is required",
+              "status": "awaitingApproval",
+              "stepId": "0606060606060606060606060606060606060606060606060606060606060606"
+            }
+          ],
+          "currentLedgerRevision": 1,
+          "ledgerStoreVersion": "2",
+          "run": {
+            "attemptNumber": 1,
+            "budget": {
+              "actionLimit": 128,
+              "durationLimitMillis": "7200000",
+              "outputTokenLimit": "524288",
+              "promptTokenLimit": "2097152",
+              "repairLimit": 32,
+              "turnLimit": 128
+            },
+            "createdAtUnixMillis": "1790090018251",
+            "currentSnapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab",
+            "earlierEventsOmitted": false,
+            "ledgerRevision": 1,
+            "ledgerRevisionMatchesCurrent": true,
+            "runId": "0505050505050505050505050505050505050505050505050505050505050505",
+            "state": "awaitApproval",
+            "stepId": "0606060606060606060606060606060606060606060606060606060606060606",
+            "terminal": false,
+            "timeline": [
+              {
+                "code": "none",
+                "event": {
+                  "kind": "runStarted"
+                },
+                "occurredAtUnixMillis": "1790090018251",
+                "outcome": null,
+                "sequence": "1",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "intake",
+                  "kind": "stateTransition",
+                  "to": "localize"
+                },
+                "occurredAtUnixMillis": "1790090018266",
+                "outcome": "succeeded",
+                "sequence": "2",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "localize",
+                  "kind": "stateTransition",
+                  "to": "plan"
+                },
+                "occurredAtUnixMillis": "1790090018279",
+                "outcome": "succeeded",
+                "sequence": "3",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "plan",
+                  "kind": "stateTransition",
+                  "to": "execute"
+                },
+                "occurredAtUnixMillis": "1790090018292",
+                "outcome": "succeeded",
+                "sequence": "4",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "kind": "modelInteraction",
+                  "turn": {
+                    "outputTokens": 40,
+                    "promptTokens": 200,
+                    "repairUsed": false,
+                    "selectedAction": "applyPatch"
+                  }
+                },
+                "occurredAtUnixMillis": "1790090018339",
+                "outcome": "succeeded",
+                "sequence": "5",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "policyDecision",
+                "event": {
+                  "kind": "approvalRecorded"
+                },
+                "occurredAtUnixMillis": "1790090018554",
+                "outcome": "denied",
+                "sequence": "6",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "execute",
+                  "kind": "stateTransition",
+                  "to": "awaitApproval"
+                },
+                "occurredAtUnixMillis": "1790090018554",
+                "outcome": "succeeded",
+                "sequence": "7",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              }
+            ],
+            "updatedAtUnixMillis": "1790090018554",
+            "usage": {
+              "actionCount": 1,
+              "elapsedAtLastEventMillis": "303",
+              "outputTokens": "40",
+              "promptTokens": "200",
+              "repairCount": 0,
+              "turnCount": 1
+            }
+          }
+        },
+        "status": "available"
+      }
+    }
+  },
+  {
+    "kind": "inspection",
+    "response": {
+      "protocolVersion": 1,
+      "result": {
+        "inspection": {
+          "inspectionRevision": "1",
+          "patch": {
+            "files": [
+              {
+                "addedLines": 34,
+                "after": {
+                  "contentHash": "dec981f37d4b519cd13ca3b59bbb48a4dcd6dfe3516b1d7d752d4fd7660d8680",
+                  "contentTruncated": false,
+                  "encoding": "utf8",
+                  "lineEndings": "lf",
+                  "retainedBytes": "1014",
+                  "totalBytes": "1014"
+                },
+                "attribution": "proposedAgent",
+                "before": null,
+                "contentTruncated": false,
+                "hunks": [
+                  {
+                    "afterCount": 34,
+                    "afterStart": 1,
+                    "beforeCount": 0,
+                    "beforeStart": 1,
+                    "rows": [
+                      {
+                        "afterLine": 1,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer"
+                        }
+                      },
+                      {
+                        "afterLine": 2,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": ""
+                        }
+                      },
+                      {
+                        "afterLine": 3,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": ""
+                        }
+                      },
+                      {
+                        "afterLine": 4,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "def response_for(method: str, path: str) -> tuple[int, bytes, dict[str, str]]:"
+                        }
+                      },
+                      {
+                        "afterLine": 5,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "    if method != \"GET\":"
+                        }
+                      },
+                      {
+                        "afterLine": 6,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "        return 405, b\"Method Not Allowed\\n\", {\"Allow\": \"GET\"}"
+                        }
+                      },
+                      {
+                        "afterLine": 7,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "    if path != \"/\":"
+                        }
+                      },
+                      {
+                        "afterLine": 8,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "        return 404, b\"Not Found\\n\", {}"
+                        }
+                      },
+                      {
+                        "afterLine": 9,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "    return 200, b\"Hello, world!\\n\", {\"Content-Type\": \"text/plain; charset=utf-8\"}"
+                        }
+                      },
+                      {
+                        "afterLine": 10,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": ""
+                        }
+                      },
+                      {
+                        "afterLine": 11,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": ""
+                        }
+                      },
+                      {
+                        "afterLine": 12,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "class Handler(BaseHTTPRequestHandler):"
+                        }
+                      },
+                      {
+                        "afterLine": 13,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "    def _respond(self) -> None:"
+                        }
+                      },
+                      {
+                        "afterLine": 14,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "        status, body, headers = response_for(self.command, self.path)"
+                        }
+                      },
+                      {
+                        "afterLine": 15,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "        self.send_response(status)"
+                        }
+                      },
+                      {
+                        "afterLine": 16,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "        for name, value in headers.items():"
+                        }
+                      },
+                      {
+                        "afterLine": 17,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "            self.send_header(name, value)"
+                        }
+                      },
+                      {
+                        "afterLine": 18,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "        self.send_header(\"Content-Length\", str(len(body)))"
+                        }
+                      },
+                      {
+                        "afterLine": 19,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "        self.end_headers()"
+                        }
+                      },
+                      {
+                        "afterLine": 20,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "        self.wfile.write(body)"
+                        }
+                      },
+                      {
+                        "afterLine": 21,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": ""
+                        }
+                      },
+                      {
+                        "afterLine": 22,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "    do_GET = _respond"
+                        }
+                      },
+                      {
+                        "afterLine": 23,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "    do_POST = _respond"
+                        }
+                      },
+                      {
+                        "afterLine": 24,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": ""
+                        }
+                      },
+                      {
+                        "afterLine": 25,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "    def log_message(self, format: str, *args: object) -> None:"
+                        }
+                      },
+                      {
+                        "afterLine": 26,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "        return"
+                        }
+                      },
+                      {
+                        "afterLine": 27,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": ""
+                        }
+                      },
+                      {
+                        "afterLine": 28,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": ""
+                        }
+                      },
+                      {
+                        "afterLine": 29,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "def main() -> None:"
+                        }
+                      },
+                      {
+                        "afterLine": 30,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "    ThreadingHTTPServer((\"127.0.0.1\", 8000), Handler).serve_forever()"
+                        }
+                      },
+                      {
+                        "afterLine": 31,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": ""
+                        }
+                      },
+                      {
+                        "afterLine": 32,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": ""
+                        }
+                      },
+                      {
+                        "afterLine": 33,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "if __name__ == \"__main__\":"
+                        }
+                      },
+                      {
+                        "afterLine": 34,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "    main()"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "operation": "add",
+                "removedLines": 0,
+                "sourcePath": null,
+                "targetPath": {
+                  "displayPath": "server.py",
+                  "pathHex": "7365727665722e7079"
+                }
+              },
+              {
+                "addedLines": 1,
+                "after": {
+                  "contentHash": "fa80c2a0481d0161054621c196be3e22f0e64829edf29b8e9c0dbfed9a7726c0",
+                  "contentTruncated": false,
+                  "encoding": "utf8",
+                  "lineEndings": "lf",
+                  "retainedBytes": "15",
+                  "totalBytes": "15"
+                },
+                "attribution": "proposedAgent",
+                "before": null,
+                "contentTruncated": false,
+                "hunks": [
+                  {
+                    "afterCount": 1,
+                    "afterStart": 1,
+                    "beforeCount": 0,
+                    "beforeStart": 1,
+                    "rows": [
+                      {
+                        "afterLine": 1,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "# test package"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "operation": "add",
+                "removedLines": 0,
+                "sourcePath": null,
+                "targetPath": {
+                  "displayPath": "tests/__init__.py",
+                  "pathHex": "74657374732f5f5f696e69745f5f2e7079"
+                }
+              },
+              {
+                "addedLines": 23,
+                "after": {
+                  "contentHash": "ef44208d21534cb40f27c189333c2dab55653e510dbbdf8a5163f9fdf58ea9fc",
+                  "contentTruncated": false,
+                  "encoding": "utf8",
+                  "lineEndings": "lf",
+                  "retainedBytes": "718",
+                  "totalBytes": "718"
+                },
+                "attribution": "proposedAgent",
+                "before": null,
+                "contentTruncated": false,
+                "hunks": [
+                  {
+                    "afterCount": 23,
+                    "afterStart": 1,
+                    "beforeCount": 0,
+                    "beforeStart": 1,
+                    "rows": [
+                      {
+                        "afterLine": 1,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "import unittest"
+                        }
+                      },
+                      {
+                        "afterLine": 2,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": ""
+                        }
+                      },
+                      {
+                        "afterLine": 3,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "from server import response_for"
+                        }
+                      },
+                      {
+                        "afterLine": 4,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": ""
+                        }
+                      },
+                      {
+                        "afterLine": 5,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": ""
+                        }
+                      },
+                      {
+                        "afterLine": 6,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "class ServerTests(unittest.TestCase):"
+                        }
+                      },
+                      {
+                        "afterLine": 7,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "    def test_root_returns_hello_world(self):"
+                        }
+                      },
+                      {
+                        "afterLine": 8,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "        status, body, headers = response_for(\"GET\", \"/\")"
+                        }
+                      },
+                      {
+                        "afterLine": 9,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "        self.assertEqual(status, 200)"
+                        }
+                      },
+                      {
+                        "afterLine": 10,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "        self.assertEqual(body, b\"Hello, world!\\n\")"
+                        }
+                      },
+                      {
+                        "afterLine": 11,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "        self.assertEqual(headers[\"Content-Type\"], \"text/plain; charset=utf-8\")"
+                        }
+                      },
+                      {
+                        "afterLine": 12,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": ""
+                        }
+                      },
+                      {
+                        "afterLine": 13,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "    def test_unknown_path_returns_404(self):"
+                        }
+                      },
+                      {
+                        "afterLine": 14,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "        self.assertEqual(response_for(\"GET\", \"/missing\")[0], 404)"
+                        }
+                      },
+                      {
+                        "afterLine": 15,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": ""
+                        }
+                      },
+                      {
+                        "afterLine": 16,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "    def test_post_returns_405_and_allow_header(self):"
+                        }
+                      },
+                      {
+                        "afterLine": 17,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "        status, _, headers = response_for(\"POST\", \"/\")"
+                        }
+                      },
+                      {
+                        "afterLine": 18,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "        self.assertEqual(status, 405)"
+                        }
+                      },
+                      {
+                        "afterLine": 19,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "        self.assertEqual(headers[\"Allow\"], \"GET\")"
+                        }
+                      },
+                      {
+                        "afterLine": 20,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": ""
+                        }
+                      },
+                      {
+                        "afterLine": 21,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": ""
+                        }
+                      },
+                      {
+                        "afterLine": 22,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "if __name__ == \"__main__\":"
+                        }
+                      },
+                      {
+                        "afterLine": 23,
+                        "kind": "added",
+                        "line": {
+                          "ending": "lf",
+                          "text": "    unittest.main()"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "operation": "add",
+                "removedLines": 0,
+                "sourcePath": null,
+                "targetPath": {
+                  "displayPath": "tests/test_server.py",
+                  "pathHex": "74657374732f746573745f7365727665722e7079"
+                }
+              }
+            ],
+            "inspectionId": "7ccdf18398908ab392f1c02a9b481619a9d1e8fe1f9f6bd1e02e37ea81374a59",
+            "retainedBytes": "1747",
+            "runId": "0505050505050505050505050505050505050505050505050505050505050505",
+            "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab",
+            "stepId": "0606060606060606060606060606060606060606060606060606060606060606",
+            "verificationSpecId": "0606060606060606060606060606060606060606060606060606060606060606"
+          },
+          "processes": [],
+          "verification": {
+            "criteria": [
+              {
+                "criterionId": "0101010101010101010101010101010101010101010101010101010101010101",
+                "proofState": "pending",
+                "proofs": [],
+                "requirement": "must",
+                "statement": "the server files exist and all local tests pass"
+              }
+            ],
+            "goalRevision": 1,
+            "ledgerRevision": 1,
+            "ledgerStoreVersion": "2",
+            "publishedSnapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab",
+            "steps": [
+              {
+                "attempts": [],
+                "intendedOutcome": "run the created project tests",
+                "method": "deferredCommand",
+                "staleCause": null,
+                "status": "pending",
+                "stepId": "0404040404040404040404040404040404040404040404040404040404040404",
+                "verificationSpecId": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              {
+                "attempts": [],
+                "intendedOutcome": "create the server and its tests",
+                "method": "diffInvariant",
+                "staleCause": null,
+                "status": "awaitingApproval",
+                "stepId": "0606060606060606060606060606060606060606060606060606060606060606",
+                "verificationSpecId": "0606060606060606060606060606060606060606060606060606060606060606"
+              }
+            ]
+          }
+        },
+        "status": "available"
+      }
+    }
+  },
+  {
+    "kind": "approval",
+    "response": {
+      "protocolVersion": 1,
+      "result": {
+        "approval": {
+          "action": {
+            "kind": "patch",
+            "patch": {
+              "files": [
+                {
+                  "operation": "add",
+                  "sourcePath": null,
+                  "targetPath": {
+                    "displayPath": "server.py",
+                    "pathHex": "7365727665722e7079"
+                  }
+                },
+                {
+                  "operation": "add",
+                  "sourcePath": null,
+                  "targetPath": {
+                    "displayPath": "tests/__init__.py",
+                    "pathHex": "74657374732f5f5f696e69745f5f2e7079"
+                  }
+                },
+                {
+                  "operation": "add",
+                  "sourcePath": null,
+                  "targetPath": {
+                    "displayPath": "tests/test_server.py",
+                    "pathHex": "74657374732f746573745f7365727665722e7079"
+                  }
+                }
+              ],
+              "rationale": "create the requested server and executable regression tests"
+            }
+          },
+          "actionClass": "write",
+          "approvalRevision": "1",
+          "canAllowOnce": true,
+          "canContinue": false,
+          "canDeny": true,
+          "canRevoke": false,
+          "controllerState": "awaitApproval",
+          "expiresAtUnixMillis": "1790090618554",
+          "ledgerRevision": 1,
+          "ledgerStoreVersion": "2",
+          "reason": "systemPolicy",
+          "requestedAtUnixMillis": "1790090018554",
+          "risk": "moderate",
+          "scopeDigest": "ecd0fbc046db926f555b06625103eccb144ab8898fd89eae766a79c85362cd28",
+          "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab",
+          "status": "pending",
+          "stepId": "0606060606060606060606060606060606060606060606060606060606060606",
+          "stepStatus": "awaitingApproval"
+        },
+        "status": "available"
+      }
+    }
+  },
+  {
+    "kind": "workPlan",
+    "response": {
+      "protocolVersion": 1,
+      "result": {
+        "ledgerRevision": 2,
+        "ledgerStoreVersion": "7",
+        "status": "available",
+        "steps": [
+          {
+            "intendedOutcome": "create the server and its tests",
+            "status": "completed",
+            "stepId": "0606060606060606060606060606060606060606060606060606060606060606"
+          },
+          {
+            "intendedOutcome": "run the created project tests",
+            "status": "awaitingApproval",
+            "stepId": "42024c2eb3a6b48c1d1f184c0b83048e55e307b24c9d7858e43e244d99493f99"
+          }
+        ],
+        "task": {
+          "goalRevision": 1,
+          "objective": "create a tested Hello World Python server",
+          "taskId": "0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      }
+    }
+  },
+  {
+    "kind": "activity",
+    "response": {
+      "protocolVersion": 1,
+      "result": {
+        "activity": {
+          "blockers": [
+            {
+              "reason": "exact mutation approval is required",
+              "status": "awaitingApproval",
+              "stepId": "42024c2eb3a6b48c1d1f184c0b83048e55e307b24c9d7858e43e244d99493f99"
+            }
+          ],
+          "currentLedgerRevision": 2,
+          "ledgerStoreVersion": "7",
+          "run": {
+            "attemptNumber": 1,
+            "budget": {
+              "actionLimit": 128,
+              "durationLimitMillis": "7200000",
+              "outputTokenLimit": "524288",
+              "promptTokenLimit": "2097152",
+              "repairLimit": 32,
+              "turnLimit": 128
+            },
+            "createdAtUnixMillis": "1790090018251",
+            "currentSnapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65",
+            "earlierEventsOmitted": false,
+            "ledgerRevision": 2,
+            "ledgerRevisionMatchesCurrent": true,
+            "runId": "0505050505050505050505050505050505050505050505050505050505050505",
+            "state": "awaitApproval",
+            "stepId": "42024c2eb3a6b48c1d1f184c0b83048e55e307b24c9d7858e43e244d99493f99",
+            "terminal": false,
+            "timeline": [
+              {
+                "code": "none",
+                "event": {
+                  "kind": "runStarted"
+                },
+                "occurredAtUnixMillis": "1790090018251",
+                "outcome": null,
+                "sequence": "1",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "intake",
+                  "kind": "stateTransition",
+                  "to": "localize"
+                },
+                "occurredAtUnixMillis": "1790090018266",
+                "outcome": "succeeded",
+                "sequence": "2",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "localize",
+                  "kind": "stateTransition",
+                  "to": "plan"
+                },
+                "occurredAtUnixMillis": "1790090018279",
+                "outcome": "succeeded",
+                "sequence": "3",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "plan",
+                  "kind": "stateTransition",
+                  "to": "execute"
+                },
+                "occurredAtUnixMillis": "1790090018292",
+                "outcome": "succeeded",
+                "sequence": "4",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "kind": "modelInteraction",
+                  "turn": {
+                    "outputTokens": 40,
+                    "promptTokens": 200,
+                    "repairUsed": false,
+                    "selectedAction": "applyPatch"
+                  }
+                },
+                "occurredAtUnixMillis": "1790090018339",
+                "outcome": "succeeded",
+                "sequence": "5",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "policyDecision",
+                "event": {
+                  "kind": "approvalRecorded"
+                },
+                "occurredAtUnixMillis": "1790090018554",
+                "outcome": "denied",
+                "sequence": "6",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "execute",
+                  "kind": "stateTransition",
+                  "to": "awaitApproval"
+                },
+                "occurredAtUnixMillis": "1790090018554",
+                "outcome": "succeeded",
+                "sequence": "7",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "userRequest",
+                "event": {
+                  "kind": "approvalRecorded"
+                },
+                "occurredAtUnixMillis": "1790090018747",
+                "outcome": "succeeded",
+                "sequence": "8",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "policyDecision",
+                "event": {
+                  "kind": "approvalRecorded"
+                },
+                "occurredAtUnixMillis": "1790090018881",
+                "outcome": "succeeded",
+                "sequence": "9",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "awaitApproval",
+                  "kind": "stateTransition",
+                  "to": "execute"
+                },
+                "occurredAtUnixMillis": "1790090018881",
+                "outcome": "succeeded",
+                "sequence": "10",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "none",
+                "event": {
+                  "kind": "toolAction"
+                },
+                "occurredAtUnixMillis": "1790090018881",
+                "outcome": "succeeded",
+                "sequence": "11",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "execute",
+                  "kind": "stateTransition",
+                  "to": "verify"
+                },
+                "occurredAtUnixMillis": "1790090018881",
+                "outcome": "succeeded",
+                "sequence": "12",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "fromRevision": 1,
+                  "kind": "ledgerUpdated",
+                  "toRevision": 2
+                },
+                "occurredAtUnixMillis": "1790090019069",
+                "outcome": "succeeded",
+                "sequence": "13",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "verify",
+                  "kind": "stateTransition",
+                  "to": "execute"
+                },
+                "occurredAtUnixMillis": "1790090019083",
+                "outcome": "succeeded",
+                "sequence": "14",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "kind": "modelInteraction",
+                  "turn": {
+                    "outputTokens": 20,
+                    "promptTokens": 100,
+                    "repairUsed": false,
+                    "selectedAction": "run"
+                  }
+                },
+                "occurredAtUnixMillis": "1790090019115",
+                "outcome": "succeeded",
+                "sequence": "15",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              },
+              {
+                "code": "policyDecision",
+                "event": {
+                  "kind": "approvalRecorded"
+                },
+                "occurredAtUnixMillis": "1790090019362",
+                "outcome": "denied",
+                "sequence": "16",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "execute",
+                  "kind": "stateTransition",
+                  "to": "awaitApproval"
+                },
+                "occurredAtUnixMillis": "1790090019362",
+                "outcome": "succeeded",
+                "sequence": "17",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              }
+            ],
+            "updatedAtUnixMillis": "1790090019362",
+            "usage": {
+              "actionCount": 2,
+              "elapsedAtLastEventMillis": "1111",
+              "outputTokens": "60",
+              "promptTokens": "300",
+              "repairCount": 0,
+              "turnCount": 2
+            }
+          }
+        },
+        "status": "available"
+      }
+    }
+  },
+  {
+    "kind": "inspection",
+    "response": {
+      "protocolVersion": 1,
+      "result": {
+        "inspection": {
+          "inspectionRevision": null,
+          "patch": null,
+          "processes": [],
+          "verification": {
+            "criteria": [
+              {
+                "criterionId": "0101010101010101010101010101010101010101010101010101010101010101",
+                "proofState": "pending",
+                "proofs": [],
+                "requirement": "must",
+                "statement": "the server files exist and all local tests pass"
+              }
+            ],
+            "goalRevision": 1,
+            "ledgerRevision": 2,
+            "ledgerStoreVersion": "7",
+            "publishedSnapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65",
+            "steps": [
+              {
+                "attempts": [
+                  {
+                    "evidence": [
+                      {
+                        "detail": {
+                          "baseSnapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab",
+                          "changedPaths": [
+                            {
+                              "displayPath": "server.py",
+                              "pathHex": "7365727665722e7079"
+                            },
+                            {
+                              "displayPath": "tests/__init__.py",
+                              "pathHex": "74657374732f5f5f696e69745f5f2e7079"
+                            },
+                            {
+                              "displayPath": "tests/test_server.py",
+                              "pathHex": "74657374732f746573745f7365727665722e7079"
+                            }
+                          ],
+                          "complete": true,
+                          "kind": "diff",
+                          "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65",
+                          "source": "patchChangeSet"
+                        },
+                        "evaluation": {
+                          "status": "passed"
+                        },
+                        "evidenceId": "b23dfd043ccd9d2a9c7085691d060e6c4f1ba28e51603b2a87a82644a7395aea",
+                        "freshness": {
+                          "status": "fresh"
+                        },
+                        "method": "diffInvariant",
+                        "runId": "0505050505050505050505050505050505050505050505050505050505050505",
+                        "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+                      }
+                    ],
+                    "number": 1,
+                    "outcome": {
+                      "status": "passed"
+                    }
+                  }
+                ],
+                "intendedOutcome": "create the server and its tests",
+                "method": "diffInvariant",
+                "staleCause": null,
+                "status": "completed",
+                "stepId": "0606060606060606060606060606060606060606060606060606060606060606",
+                "verificationSpecId": "0606060606060606060606060606060606060606060606060606060606060606"
+              },
+              {
+                "attempts": [],
+                "intendedOutcome": "run the created project tests",
+                "method": "test",
+                "staleCause": null,
+                "status": "awaitingApproval",
+                "stepId": "42024c2eb3a6b48c1d1f184c0b83048e55e307b24c9d7858e43e244d99493f99",
+                "verificationSpecId": "78202079df6a342e3c7cd93ed98492f1977d43ea38a5888fabac1b05a4dd17ad"
+              }
+            ]
+          }
+        },
+        "status": "available"
+      }
+    }
+  },
+  {
+    "kind": "approval",
+    "response": {
+      "protocolVersion": 1,
+      "result": {
+        "approval": {
+          "action": {
+            "kind": "process",
+            "process": {
+              "arguments": ["-B", "-m", "unittest", "discover", "-s", "tests"],
+              "environmentAllowlist": ["PATH", "SYSTEMROOT", "TEMP", "TMP", "TMPDIR"],
+              "executable": "python",
+              "executionMode": "knownSafe",
+              "network": {
+                "kind": "denied"
+              },
+              "planBinding": {
+                "kind": "validated",
+                "stepId": "42024c2eb3a6b48c1d1f184c0b83048e55e307b24c9d7858e43e244d99493f99"
+              },
+              "processKind": "test",
+              "specificationId": "f3122967128438dd5d59e1ad3d19d561e48baa8d9b871577598ed35ea1f9c47d",
+              "stderrLimit": 1048576,
+              "stdoutLimit": 1048576,
+              "timeoutMillis": "120000",
+              "workingDirectory": {
+                "kind": "root"
+              }
+            }
+          },
+          "actionClass": "executeSafe",
+          "approvalRevision": "3",
+          "canAllowOnce": true,
+          "canContinue": false,
+          "canDeny": true,
+          "canRevoke": false,
+          "controllerState": "awaitApproval",
+          "expiresAtUnixMillis": "1790090619362",
+          "ledgerRevision": 2,
+          "ledgerStoreVersion": "7",
+          "reason": "workspacePolicy",
+          "requestedAtUnixMillis": "1790090019362",
+          "risk": "moderate",
+          "scopeDigest": "76c685cd6532b75fa9c52274a07bff1a806e6b66e48516daa9b20deaf1e2cee4",
+          "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65",
+          "status": "pending",
+          "stepId": "42024c2eb3a6b48c1d1f184c0b83048e55e307b24c9d7858e43e244d99493f99",
+          "stepStatus": "awaitingApproval"
+        },
+        "status": "available"
+      }
+    }
+  },
+  {
+    "kind": "workPlan",
+    "response": {
+      "protocolVersion": 1,
+      "result": {
+        "ledgerRevision": 2,
+        "ledgerStoreVersion": "9",
+        "status": "available",
+        "steps": [
+          {
+            "intendedOutcome": "create the server and its tests",
+            "status": "completed",
+            "stepId": "0606060606060606060606060606060606060606060606060606060606060606"
+          },
+          {
+            "intendedOutcome": "run the created project tests",
+            "status": "completed",
+            "stepId": "42024c2eb3a6b48c1d1f184c0b83048e55e307b24c9d7858e43e244d99493f99"
+          }
+        ],
+        "task": {
+          "goalRevision": 1,
+          "objective": "create a tested Hello World Python server",
+          "taskId": "0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      }
+    }
+  },
+  {
+    "kind": "activity",
+    "response": {
+      "protocolVersion": 1,
+      "result": {
+        "activity": {
+          "blockers": [],
+          "currentLedgerRevision": 2,
+          "ledgerStoreVersion": "9",
+          "run": {
+            "attemptNumber": 1,
+            "budget": {
+              "actionLimit": 128,
+              "durationLimitMillis": "7200000",
+              "outputTokenLimit": "524288",
+              "promptTokenLimit": "2097152",
+              "repairLimit": 32,
+              "turnLimit": 128
+            },
+            "createdAtUnixMillis": "1790090018251",
+            "currentSnapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65",
+            "earlierEventsOmitted": false,
+            "ledgerRevision": 2,
+            "ledgerRevisionMatchesCurrent": true,
+            "runId": "0505050505050505050505050505050505050505050505050505050505050505",
+            "state": "done",
+            "stepId": "42024c2eb3a6b48c1d1f184c0b83048e55e307b24c9d7858e43e244d99493f99",
+            "terminal": true,
+            "timeline": [
+              {
+                "code": "none",
+                "event": {
+                  "kind": "runStarted"
+                },
+                "occurredAtUnixMillis": "1790090018251",
+                "outcome": null,
+                "sequence": "1",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "intake",
+                  "kind": "stateTransition",
+                  "to": "localize"
+                },
+                "occurredAtUnixMillis": "1790090018266",
+                "outcome": "succeeded",
+                "sequence": "2",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "localize",
+                  "kind": "stateTransition",
+                  "to": "plan"
+                },
+                "occurredAtUnixMillis": "1790090018279",
+                "outcome": "succeeded",
+                "sequence": "3",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "plan",
+                  "kind": "stateTransition",
+                  "to": "execute"
+                },
+                "occurredAtUnixMillis": "1790090018292",
+                "outcome": "succeeded",
+                "sequence": "4",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "kind": "modelInteraction",
+                  "turn": {
+                    "outputTokens": 40,
+                    "promptTokens": 200,
+                    "repairUsed": false,
+                    "selectedAction": "applyPatch"
+                  }
+                },
+                "occurredAtUnixMillis": "1790090018339",
+                "outcome": "succeeded",
+                "sequence": "5",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "policyDecision",
+                "event": {
+                  "kind": "approvalRecorded"
+                },
+                "occurredAtUnixMillis": "1790090018554",
+                "outcome": "denied",
+                "sequence": "6",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "execute",
+                  "kind": "stateTransition",
+                  "to": "awaitApproval"
+                },
+                "occurredAtUnixMillis": "1790090018554",
+                "outcome": "succeeded",
+                "sequence": "7",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "userRequest",
+                "event": {
+                  "kind": "approvalRecorded"
+                },
+                "occurredAtUnixMillis": "1790090018747",
+                "outcome": "succeeded",
+                "sequence": "8",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "policyDecision",
+                "event": {
+                  "kind": "approvalRecorded"
+                },
+                "occurredAtUnixMillis": "1790090018881",
+                "outcome": "succeeded",
+                "sequence": "9",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "awaitApproval",
+                  "kind": "stateTransition",
+                  "to": "execute"
+                },
+                "occurredAtUnixMillis": "1790090018881",
+                "outcome": "succeeded",
+                "sequence": "10",
+                "snapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab"
+              },
+              {
+                "code": "none",
+                "event": {
+                  "kind": "toolAction"
+                },
+                "occurredAtUnixMillis": "1790090018881",
+                "outcome": "succeeded",
+                "sequence": "11",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "execute",
+                  "kind": "stateTransition",
+                  "to": "verify"
+                },
+                "occurredAtUnixMillis": "1790090018881",
+                "outcome": "succeeded",
+                "sequence": "12",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "fromRevision": 1,
+                  "kind": "ledgerUpdated",
+                  "toRevision": 2
+                },
+                "occurredAtUnixMillis": "1790090019069",
+                "outcome": "succeeded",
+                "sequence": "13",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "verify",
+                  "kind": "stateTransition",
+                  "to": "execute"
+                },
+                "occurredAtUnixMillis": "1790090019083",
+                "outcome": "succeeded",
+                "sequence": "14",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "kind": "modelInteraction",
+                  "turn": {
+                    "outputTokens": 20,
+                    "promptTokens": 100,
+                    "repairUsed": false,
+                    "selectedAction": "run"
+                  }
+                },
+                "occurredAtUnixMillis": "1790090019115",
+                "outcome": "succeeded",
+                "sequence": "15",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              },
+              {
+                "code": "policyDecision",
+                "event": {
+                  "kind": "approvalRecorded"
+                },
+                "occurredAtUnixMillis": "1790090019362",
+                "outcome": "denied",
+                "sequence": "16",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "execute",
+                  "kind": "stateTransition",
+                  "to": "awaitApproval"
+                },
+                "occurredAtUnixMillis": "1790090019362",
+                "outcome": "succeeded",
+                "sequence": "17",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              },
+              {
+                "code": "userRequest",
+                "event": {
+                  "kind": "approvalRecorded"
+                },
+                "occurredAtUnixMillis": "1790090019556",
+                "outcome": "succeeded",
+                "sequence": "18",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              },
+              {
+                "code": "policyDecision",
+                "event": {
+                  "kind": "approvalRecorded"
+                },
+                "occurredAtUnixMillis": "1790090019685",
+                "outcome": "succeeded",
+                "sequence": "19",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "awaitApproval",
+                  "kind": "stateTransition",
+                  "to": "execute"
+                },
+                "occurredAtUnixMillis": "1790090019685",
+                "outcome": "succeeded",
+                "sequence": "20",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              },
+              {
+                "code": "none",
+                "event": {
+                  "kind": "toolAction"
+                },
+                "occurredAtUnixMillis": "1790090019685",
+                "outcome": "succeeded",
+                "sequence": "21",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "execute",
+                  "kind": "stateTransition",
+                  "to": "verify"
+                },
+                "occurredAtUnixMillis": "1790090019685",
+                "outcome": "succeeded",
+                "sequence": "22",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              },
+              {
+                "code": "controllerDecision",
+                "event": {
+                  "from": "verify",
+                  "kind": "stateTransition",
+                  "to": "done"
+                },
+                "occurredAtUnixMillis": "1790090020185",
+                "outcome": "succeeded",
+                "sequence": "23",
+                "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+              }
+            ],
+            "updatedAtUnixMillis": "1790090020185",
+            "usage": {
+              "actionCount": 2,
+              "elapsedAtLastEventMillis": "1934",
+              "outputTokens": "60",
+              "promptTokens": "300",
+              "repairCount": 0,
+              "turnCount": 2
+            }
+          }
+        },
+        "status": "available"
+      }
+    }
+  },
+  {
+    "kind": "inspection",
+    "response": {
+      "protocolVersion": 1,
+      "result": {
+        "inspection": {
+          "inspectionRevision": null,
+          "patch": null,
+          "processes": [],
+          "verification": {
+            "criteria": [
+              {
+                "criterionId": "0101010101010101010101010101010101010101010101010101010101010101",
+                "proofState": "proven",
+                "proofs": [
+                  {
+                    "evidenceIds": [
+                      "b23dfd043ccd9d2a9c7085691d060e6c4f1ba28e51603b2a87a82644a7395aea"
+                    ],
+                    "stepId": "0606060606060606060606060606060606060606060606060606060606060606"
+                  },
+                  {
+                    "evidenceIds": [
+                      "fe6878030d6c6a9d111e01d1154ec46e0033ac6a8f4931f0a63b787f790850a5"
+                    ],
+                    "stepId": "42024c2eb3a6b48c1d1f184c0b83048e55e307b24c9d7858e43e244d99493f99"
+                  }
+                ],
+                "requirement": "must",
+                "statement": "the server files exist and all local tests pass"
+              }
+            ],
+            "goalRevision": 1,
+            "ledgerRevision": 2,
+            "ledgerStoreVersion": "9",
+            "publishedSnapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65",
+            "steps": [
+              {
+                "attempts": [
+                  {
+                    "evidence": [
+                      {
+                        "detail": {
+                          "baseSnapshotId": "23c9bc00a7c4a636abdc4563aa48622ff666bd86cfa41790bdd40f4616252bab",
+                          "changedPaths": [
+                            {
+                              "displayPath": "server.py",
+                              "pathHex": "7365727665722e7079"
+                            },
+                            {
+                              "displayPath": "tests/__init__.py",
+                              "pathHex": "74657374732f5f5f696e69745f5f2e7079"
+                            },
+                            {
+                              "displayPath": "tests/test_server.py",
+                              "pathHex": "74657374732f746573745f7365727665722e7079"
+                            }
+                          ],
+                          "complete": true,
+                          "kind": "diff",
+                          "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65",
+                          "source": "patchChangeSet"
+                        },
+                        "evaluation": {
+                          "status": "passed"
+                        },
+                        "evidenceId": "b23dfd043ccd9d2a9c7085691d060e6c4f1ba28e51603b2a87a82644a7395aea",
+                        "freshness": {
+                          "status": "fresh"
+                        },
+                        "method": "diffInvariant",
+                        "runId": "0505050505050505050505050505050505050505050505050505050505050505",
+                        "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+                      }
+                    ],
+                    "number": 1,
+                    "outcome": {
+                      "status": "passed"
+                    }
+                  }
+                ],
+                "intendedOutcome": "create the server and its tests",
+                "method": "diffInvariant",
+                "staleCause": null,
+                "status": "completed",
+                "stepId": "0606060606060606060606060606060606060606060606060606060606060606",
+                "verificationSpecId": "0606060606060606060606060606060606060606060606060606060606060606"
+              },
+              {
+                "attempts": [
+                  {
+                    "evidence": [
+                      {
+                        "detail": {
+                          "cases": [
+                            {
+                              "name": "unittest-case-000001",
+                              "outcome": "passed"
+                            },
+                            {
+                              "name": "unittest-case-000002",
+                              "outcome": "passed"
+                            },
+                            {
+                              "name": "unittest-case-000003",
+                              "outcome": "passed"
+                            }
+                          ],
+                          "casesTruncated": false,
+                          "command": {
+                            "commandId": "49bec956d650f40c9981b6a351f88c4588d01669103601b37c09398022c090ee",
+                            "durationMillis": "384",
+                            "stderr": {
+                              "digest": "b2225bb2208fc227615d5aa94847ddb37a06982f4c8db8c0ef2ac3cb4178f12c",
+                              "observedBytes": "106",
+                              "redaction": null,
+                              "retainedLimit": 1048576,
+                              "sourceTruncated": false
+                            },
+                            "stdout": {
+                              "digest": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+                              "observedBytes": "0",
+                              "redaction": null,
+                              "retainedLimit": 1048576,
+                              "sourceTruncated": false
+                            },
+                            "termination": {
+                              "code": 0,
+                              "kind": "exited",
+                              "success": true
+                            }
+                          },
+                          "failed": "0",
+                          "ignored": "0",
+                          "kind": "test",
+                          "passed": "3"
+                        },
+                        "evaluation": {
+                          "status": "passed"
+                        },
+                        "evidenceId": "fe6878030d6c6a9d111e01d1154ec46e0033ac6a8f4931f0a63b787f790850a5",
+                        "freshness": {
+                          "status": "fresh"
+                        },
+                        "method": "test",
+                        "runId": "0505050505050505050505050505050505050505050505050505050505050505",
+                        "snapshotId": "2a869e81f2dfc0eb57944eb8487e9db8a563ac56284d2e2c0b3bb3bb05567c65"
+                      }
+                    ],
+                    "number": 1,
+                    "outcome": {
+                      "status": "passed"
+                    }
+                  }
+                ],
+                "intendedOutcome": "run the created project tests",
+                "method": "test",
+                "staleCause": null,
+                "status": "completed",
+                "stepId": "42024c2eb3a6b48c1d1f184c0b83048e55e307b24c9d7858e43e244d99493f99",
+                "verificationSpecId": "78202079df6a342e3c7cd93ed98492f1977d43ea38a5888fabac1b05a4dd17ad"
+              }
+            ]
+          }
+        },
+        "status": "available"
+      }
+    }
+  }
+]
