@@ -36,6 +36,7 @@ impl AgentContextCompiler for RepeatStagedCompiler {
             0,
             false,
         )
+        .with_action_generation(t.action_generation())
         .with_original_sources(t.original_sources().to_vec());
         Box::pin(async move { result })
     }
@@ -95,6 +96,41 @@ mod source_guidance;
 
 const SEARCH_CHOICE: &str = r#"{"version":1,"choice":"search"}"#;
 const SEARCH_ARGUMENTS: &str = r#"{"version":1,"parameters":{"query":"increment","limit":3}}"#;
+
+#[test]
+fn staged_budget_envelope_cannot_be_sent_as_a_single_action_request() -> Result<(), Box<dyn Error>>
+{
+    let fixture = staged_fixture(&[])?;
+    let compiler = RepeatStagedCompiler {
+        template: fixture
+            .compiled
+            .with_action_generation(AgentActionGeneration::SourceGuided),
+        calls: AtomicUsize::new(0),
+        change_after: None,
+    };
+    let provider = ScriptedProvider {
+        provider_id: fixture.profile.provider_id().clone(),
+        responses: Mutex::new(fixture.responses),
+    };
+    let tools = CountingReadTools {
+        calls: AtomicUsize::new(0),
+    };
+    let recovery = TestRecoveryStore::default();
+    assert!(matches!(
+        futures::executor::block_on(
+            ExecuteAgentTurn::new(&compiler, &provider, &tools, &recovery).execute(
+                &fixture.run,
+                &fixture.input,
+                timestamp(4)?,
+                &TestControl
+            )
+        ),
+        Err(ExecuteAgentTurnFailure::ContextMismatch)
+    ));
+    assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(recovery.begins.load(Ordering::SeqCst), 0);
+    Ok(())
+}
 
 #[derive(Debug)]
 struct StagedDeadlineProvider {

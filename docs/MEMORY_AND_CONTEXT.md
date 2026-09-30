@@ -466,7 +466,7 @@ unverändert; neue Replan-Reads verwenden ebenfalls statusfreies V5 nach
 [ADR-0091](adrs/0091-statusfreie-replan-lokalisierung.md). Die davon getrennte
 Replan-Analyse verwendet den oben beschriebenen eingeschränkten V7-Vertrag.
 
-`ContextCompilerPolicyVersion::V9` behält den vollständigen kompakten L0-Repository-Anchor aus V2
+`ContextCompilerPolicyVersion::V10` behält den vollständigen kompakten L0-Repository-Anchor aus V2
 vor allen optionalen gerankten L1-/L2-Einträgen. Package- und Entrypointmengen erscheinen in L0 als
 Anzahlen; konkrete IDs werden nicht dort und später erneut bezahlt, sondern bleiben in den
 evidenzgebundenen Modul- und Symboleinträgen. Die relative Retrievalreihenfolge innerhalb der
@@ -483,6 +483,18 @@ Metadaten. V9 hält vom Research-Handoff nur Warnung sowie IDs und Status der Pf
 untrunkierbar. Vollständige Outcomes und Resultate bleiben frisch/evidencegebunden, werden aber
 optional gerankt, damit sie Goal, aktuellen Schritt und Verifikation in kleinen Kontextfenstern
 nicht verdrängen.
+
+V10 bindet zusätzlich die vom Composition Root gewählte Aktionsgenerierung an Input,
+Digest und Folgekompilierung nach Mutationen. Für gestufte Coding-Turns zählt der Compiler
+den größten tatsächlich möglichen Phasenvertrag: Systemtext, Schema im Formatfeld,
+optionale exakte Wiederholung und 64 Tokens Protokollabstand. Das vollständige AgentAction-
+Schema bleibt Core-Metadatum für Hydration und unabhängigen Decoder und wird in diesem
+Pfad nie als Wirevertrag gesendet. Ein gestuft budgetierter Pack darf nicht über den
+SingleAction-Executor gesendet werden. SingleAction und die eingeschränkten Replan-Verträge
+behalten ihre bisherigen Systemverträge. Jeder tatsächliche Phasenaufruf prüft weiterhin
+Kontextfenster, kumulative Runbudgets und Frist unabhängig. Pflichtanker, aktuelle
+Fehlermemory, originale Quellen mit Freshnessprüfung und Output-/Sicherheitsreserven
+behalten ihre bestehenden Grenzen; es gibt keine automatische Profilvergrößerung.
 
 Packregeln:
 

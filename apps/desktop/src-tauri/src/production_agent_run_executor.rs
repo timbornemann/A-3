@@ -294,7 +294,8 @@ impl ProductionAgentRunExecutor {
             profile.clone(),
             Vec::new(),
             Vec::new(),
-        );
+        )
+        .with_action_generation(self.action_generation);
         let mut context_results = Vec::new();
         let mut read_evidence: Option<AgentToolEvidenceSet> = None;
         let mut pending_replan_reason: Option<TaskReplanReason> = None;

@@ -300,6 +300,7 @@ pub struct AgentContextCompileInput {
     task_ledger: TaskLedger,
     current_step_id: TaskStepId,
     model_profile: ModelProfile,
+    action_generation: crate::AgentActionGeneration,
     run_memory: Option<RunMemoryCheckpoint>,
     execution_checkpoint: Option<crate::AgentExecutionCheckpoint>,
     research_handoff: Option<ResearchHandoff>,
@@ -310,6 +311,23 @@ pub struct AgentContextCompileInput {
 }
 
 impl AgentContextCompileInput {
+    /// Binds context reservation to the generation path selected by the composition root.
+    #[must_use]
+    pub fn with_action_generation(mut self, generation: crate::AgentActionGeneration) -> Self {
+        self.action_generation = generation;
+        self
+    }
+
+    /// Replan uses its existing single-request contracts regardless of coding generation.
+    #[must_use]
+    pub fn action_generation(&self) -> crate::AgentActionGeneration {
+        if self.replan_localization.is_some() || self.replan_research.is_some() {
+            crate::AgentActionGeneration::SingleAction
+        } else {
+            self.action_generation
+        }
+    }
+
     /// Validates durable goal/ledger ownership and canonical bounded optional inputs.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -371,6 +389,7 @@ impl AgentContextCompileInput {
             task_ledger,
             current_step_id,
             model_profile,
+            action_generation: crate::AgentActionGeneration::SingleAction,
             run_memory,
             execution_checkpoint: None,
             research_handoff: None,
@@ -546,6 +565,7 @@ impl Error for AgentContextCompileInputError {}
 /// Complete validated Context Pack and provider-neutral request for exactly one turn.
 pub struct CompiledAgentContext {
     request: ModelProviderRequest,
+    action_generation: crate::AgentActionGeneration,
     policy_version: ContextCompilerPolicyVersion,
     digest: ContextDigest,
     goal_contract: GoalContractReference,
@@ -584,6 +604,7 @@ impl CompiledAgentContext {
     ) -> Self {
         Self {
             request,
+            action_generation: crate::AgentActionGeneration::SingleAction,
             policy_version,
             digest,
             goal_contract,
@@ -625,7 +646,20 @@ impl CompiledAgentContext {
         &self.original_sources
     }
 
-    /// Returns the request ready for the neutral ModelProvider port.
+    /// Binds a staged envelope so it cannot be sent through the single-action executor.
+    #[must_use]
+    pub fn with_action_generation(mut self, generation: crate::AgentActionGeneration) -> Self {
+        self.action_generation = generation;
+        self
+    }
+
+    /// Returns the generation strategy whose overhead was reserved.
+    #[must_use]
+    pub const fn action_generation(&self) -> crate::AgentActionGeneration {
+        self.action_generation
+    }
+
+    /// Returns the compiled envelope. Staged execution projects its schema before sending.
     #[must_use]
     pub const fn request(&self) -> &ModelProviderRequest {
         &self.request

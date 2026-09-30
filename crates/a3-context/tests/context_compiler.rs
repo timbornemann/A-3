@@ -701,6 +701,107 @@ fn small_context_and_low_output_keep_full_mandatory_anchors() -> Result<(), Box<
 }
 
 #[test]
+fn staged_execution_fits_a_detailed_step_in_unchanged_16k_repeat_schema_profile()
+-> Result<(), Box<dyn Error>> {
+    use a3_application::AgentActionGeneration;
+    let fixture = Fixture::new()?;
+    let calls = Mutex::new(Vec::new());
+    let store = StubStore {
+        published: fixture.published.clone(),
+        symbol_id: fixture.symbol_id,
+        module_id: fixture.module_id,
+        calls: &calls,
+    };
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(&store, &store, &store),
+        &UnavailableSource,
+    );
+    let base = input(fixture.snapshot_id)?;
+    let profile = profile_with_grounding(
+        16_384,
+        2_048,
+        ModelPromptSchemaGrounding::RepeatSchemaInPrompt,
+    )?;
+    // Materialized greenfield slices can carry several KiB of reviewed implementation
+    // requirements. They must remain whole rather than disappear to fit a wire schema
+    // that the staged executor never sends.
+    let outcome = "Implementiere server.py mit ThreadingHTTPServer und BaseHTTPRequestHandler. GET / liefert HTTP 200 und eine HTML-Seite mit Hello World. Binde standardmäßig an 127.0.0.1:8000; Host und Port sind über argparse konfigurierbar. Schließe Socket und Ressourcen bei KeyboardInterrupt; melde ungültige Argumente verständlich. Verwende ausschließlich die Standardbibliothek und erstelle keine Testdateien. ".repeat(7);
+    let definition = base
+        .task_ledger()
+        .step(base.current_step_id())
+        .ok_or("step")?
+        .definition();
+    let mut ledger = TaskLedger::new(
+        base.goal_contract().reference(),
+        vec![TaskStepDefinition::new(
+            base.current_step_id(),
+            None,
+            TaskStepOutcome::try_from_string(outcome.clone())?,
+            TaskStepRationale::try_from_string(
+                "Implement the reviewed greenfield slice".to_owned(),
+            )?,
+            Vec::new(),
+            vec![ExpectedTaskEvidence::try_from_string(
+                "Applied server implementation".to_owned(),
+            )?],
+            definition.verification_spec().clone(),
+        )?],
+        TaskLedgerTimestamp::from_unix_millis(1)?,
+    )?;
+    ledger.start_step(
+        base.current_step_id(),
+        AgentRunId::from_bytes([42; 32]),
+        TaskLedgerTimestamp::from_unix_millis(10)?,
+    )?;
+    let input = AgentContextCompileInput::new(
+        base.project().clone(),
+        base.goal_contract().clone(),
+        ledger,
+        base.current_step_id(),
+        profile.clone(),
+        None,
+        Vec::new(),
+        Vec::new(),
+    )?;
+    assert!(matches!(
+        block_on(compiler.compile(&input, &RecordingControl::default())),
+        Err(ContextCompileFailure::Budget(_))
+    ));
+    for generation in [
+        AgentActionGeneration::SelectThenFill,
+        AgentActionGeneration::ReviewThenSelect,
+        AgentActionGeneration::SourceGuided,
+    ] {
+        let staged_input = input.clone().with_action_generation(generation);
+        let compiled = block_on(compiler.compile(&staged_input, &RecordingControl::default()))?;
+        assert_eq!(compiled.action_generation(), generation);
+        assert_eq!(compiled.request().profile(), &profile);
+        assert!(
+            compiled
+                .request()
+                .messages()
+                .last()
+                .ok_or("context")?
+                .content()
+                .contains(outcome.trim())
+        );
+        assert!(
+            compiled.budget_usage().prompt_total()
+                + compiled.budget_plan().safety_reserve()
+                + compiled.budget_plan().output_reserve()
+                <= 16_384
+        );
+        assert_eq!(compiled.budget_plan().output_reserve(), 3_605);
+        assert_eq!(compiled.budget_plan().safety_reserve(), 900);
+        assert_eq!(
+            compiled.digest(),
+            block_on(compiler.compile(&staged_input, &RecordingControl::default()))?.digest()
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn context_pack_is_fresh_bounded_and_deterministic() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     let calls = Mutex::new(Vec::new());
@@ -722,7 +823,7 @@ fn context_pack_is_fresh_bounded_and_deterministic() -> Result<(), Box<dyn Error
 
     assert_eq!(first.digest(), second.digest());
     assert_eq!(first.request(), second.request());
-    assert_eq!(first.policy_version(), ContextCompilerPolicyVersion::V9);
+    assert_eq!(first.policy_version(), ContextCompilerPolicyVersion::V10);
     assert_eq!(first.snapshot_id(), fixture.snapshot_id);
     assert_eq!(first.excluded_stale_claims(), 1);
     assert_eq!(first.budget_plan().context_limit(), 16_384);

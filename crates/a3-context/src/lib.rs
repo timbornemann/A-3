@@ -76,14 +76,12 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
         } else {
             AgentPromptContract::prepare_current_step(profile, input.project(), current_step)
         }
+        .and_then(|prompt| prompt.for_action_generation(profile, input.action_generation()))
         .map_err(|_| ContextCompileFailure::PromptUnavailable)?;
+        let system_tokens = prompt
+            .system_budget_tokens(profile)
+            .map_err(|_| ContextCompileFailure::PromptUnavailable)?;
         let (system_message, schema_grounding, structured_output) = prompt.into_parts();
-        let system_tokens = count(profile, system_message.content())?
-            .checked_add(match schema_grounding.as_ref() {
-                Some(message) => count(profile, message.content())?,
-                None => 0,
-            })
-            .ok_or(ContextCompileFailure::InvalidPack)?;
         let command_profile = input
             .research_handoff()
             .and_then(|handoff| handoff.command())
@@ -396,6 +394,7 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
             lens.excluded_stale_claims(),
             run_memory.truncated || packed.truncated || lens.truncated(),
         )
+        .with_action_generation(input.action_generation())
         .with_original_sources(originals.delivered)
     }
 }

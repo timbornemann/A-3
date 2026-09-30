@@ -107,3 +107,49 @@ Synchrone lokale Dateisystemaufrufe besitzen kein hartes OS-I/O-Zeitlimit. Masch
 ersetzen keine Repository-Verifikation und werden nach Neustart nicht als dauerhaft bestätigte
 Originalausgaben rekonstruiert. Die 16K-Repeat-Schema-Fixture kann optionale Originale weiterhin
 ehrlich auslassen. Diese Grenzen sind im Detaildokument mit dem tatsächlichen Vertrag beschrieben.
+
+## Nachbesserung: Kontextüberlauf vor der ersten Umsetzung (2026-09-30)
+
+Der Nutzer meldete einen echten Full-machine-Lauf, der nach der Planmaterialisierung
+vor dem ersten Coding-Turn mit zu großem Pflichtkontext anhielt. Das konfigurierte
+Profil war OpenAI `gpt-5.6-luna`, 16384 Kontext, 2048 Ausgabe, Schemawiederholung.
+Die bisherige Abnahme verwendete hier geskriptete Coding-Fixtures und aktivierte
+den kombinierten Live-Providernachweis nicht; sie deckte diesen Fehler nicht ab.
+
+Der Compiler budgetierte den vollständigen AgentAction-V6-Vertrag, obwohl SourceGuided
+ihn vor jedem Provideraufruf durch kleinere Phasenverträge ersetzt. V10 zählt den
+größten tatsächlichen Phasenvertrag einschließlich Formatfeldschema und Wiederholung.
+Die Generation bleibt auch nach Mutationen und in der Digestbindung erhalten. Ein
+gestuft budgetierter Pack darf nicht als SingleAction gesendet werden. Replan behält
+seinen bisherigen eigenen Vertrag. Pflichtanker und Reserven werden nicht verkleinert,
+gespeicherte Modellprofile nicht vergrößert.
+
+- [x] Langer aktueller Schritt: Vollschema überläuft, alle drei gestuften Strategien
+  passen mit vollständigem Schritt bei unveränderten 16K/2K und Reserven.
+- [x] Aktuelle Originale, langes Ziel und offene Fehlermemory bleiben bei gestufter
+  Schemawiederholung sowohl mit 16K als auch mit 32K gemeinsam lieferbar.
+- [x] Echter kombinierter Lauf: Modellrecherche, Materialisierung, produktiver
+  Executor, echte Dateien/Prozesse und unabhängiger HTTP-Prüfer im selben leeren
+  Worktree. Einfacher und ausführlicher Auftrag erreichen `Done` ohne Freigaben,
+  neue Testdateien oder Testabhängigkeiten. Der ausführliche Live-Nachweis enthielt
+  einen aktuellen Schritt mit 1806 UTF-8-Bytes; beide Fälle bestehen erneut mit V10.
+
+Ausgeführte gezielte Prüfungen:
+
+- `cargo test -p a3-context --test context_compiler --locked --offline`: 28 bestanden.
+- `cargo test -p a3-application --lib agent_turn::tests --locked --offline`: 38 bestanden.
+- `cargo test -p a3-domain --lib context_pack::tests --locked --offline`: 7 bestanden.
+- `configured_model_full_machine_hello_world_without_tests` und
+  `configured_model_full_machine_detailed_hello_world_without_tests`: echte
+  konfigurierte Luna-Läufe mit HTTP 200/Hello World, ausführlich zusätzlich 404/405.
+  Windows verwendet die vorhandene native libSQL-Prozessisolation mit Completion-Marker.
+- Rustformatierung der geänderten Crates und finaler Diff-Audit.
+- `pnpm --filter @a3/desktop tauri build --no-bundle` mit `CARGO_NET_OFFLINE=true`:
+  aktualisierte Windows-App unter `target/release/a3-desktop.exe` erfolgreich gebaut.
+- `git diff --check`: bestanden; keine historischen ADRs, Abhängigkeiten oder
+  gespeicherten Nutzereinstellungen geändert.
+
+Der Nutzer hat für diese gezielte Fehlerbehebung die langen Abschlussgates ausdrücklich
+ausgenommen. Clippy, vollständige Workspace-/Frontend-CI und Plattformtests auf
+Linux/macOS wurden für diese Nachbesserung nicht ausgeführt. Die Logs liegen unter
+`target/hello-world-*`; sie enthalten Profil-/Ablaufmetadaten und keine Zugangsdaten.

@@ -38,7 +38,7 @@ impl ContextCompilerPolicyVersion {
     pub const V6: Self = Self(6);
 
     /// Policy emitted by the current deterministic compiler implementation.
-    pub const CURRENT: Self = Self::V9;
+    pub const CURRENT: Self = Self::V10;
 
     /// ADR-0093 materializes bounded current originals before optional context.
     pub const V7: Self = Self(7);
@@ -48,6 +48,9 @@ impl ContextCompilerPolicyVersion {
 
     /// ADR-0115 keeps only handoff identity/status mandatory; detailed outcomes remain optional.
     pub const V9: Self = Self(9);
+
+    /// Reserves the largest actual staged wire contract instead of the Core action schema.
+    pub const V10: Self = Self(10);
 
     /// Returns the stable persisted integer.
     #[must_use]
@@ -527,7 +530,7 @@ mod tests {
     -> Result<(), Box<dyn Error>> {
         assert_eq!(
             ContextCompilerPolicyVersion::CURRENT,
-            ContextCompilerPolicyVersion::V9
+            ContextCompilerPolicyVersion::V10
         );
         let plan = ContextBudgetPlan::for_profile(&profile(16_384, 4_096)?)?;
         assert_eq!(plan.allowance(ContextSection::SystemAndTools), 900);

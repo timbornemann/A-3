@@ -1128,6 +1128,8 @@ try:
     assert "text/html" in response.getheader("Content-Type", "").lower()
     assert "hello" in body.lower() and "world" in body.lower()
     connection.close()
+    if sys.argv[2] == "basic":
+        raise SystemExit(0)
 
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     connection.request("GET", "/a3-missing")
@@ -1150,11 +1152,12 @@ finally:
     assert not thread.is_alive()
 "#;
 
-fn run_combined_http_oracle(root: &std::path::Path) -> Result<bool, Box<dyn Error>> {
+fn run_combined_http_oracle(root: &std::path::Path, strict: bool) -> Result<bool, Box<dyn Error>> {
     run_combined_check(
         std::process::Command::new("python")
             .args(["-I", "-B", "-c", COMBINED_HTTP_ORACLE])
             .arg(root)
+            .arg(if strict { "strict" } else { "basic" })
             .current_dir(root),
     )
 }
@@ -1189,6 +1192,23 @@ fn run_combined_check(command: &mut std::process::Command) -> Result<bool, Box<d
 #[ignore = "Requires explicit approval for the configured provider and A3_CONFIGURED_RESEARCH_CATALOG"]
 fn configured_model_empty_project_research_handoff_completes_verified_project()
 -> Result<(), Box<dyn Error>> {
+    configured_model_greenfield(false, false)
+}
+
+#[test]
+#[ignore = "Requires explicit configured-provider approval and A3_CONFIGURED_RESEARCH_CATALOG"]
+fn configured_model_full_machine_hello_world_without_tests() -> Result<(), Box<dyn Error>> {
+    configured_model_greenfield(true, false)
+}
+
+#[test]
+#[ignore = "Requires explicit configured-provider approval and A3_CONFIGURED_RESEARCH_CATALOG"]
+fn configured_model_full_machine_detailed_hello_world_without_tests() -> Result<(), Box<dyn Error>>
+{
+    configured_model_greenfield(true, true)
+}
+
+fn configured_model_greenfield(full_machine: bool, detailed: bool) -> Result<(), Box<dyn Error>> {
     if std::env::var_os("A3_CONFIGURED_RESEARCH_CATALOG").is_none() {
         return Err("configured catalog opt-in missing".into());
     }
@@ -1203,6 +1223,14 @@ fn configured_model_empty_project_research_handoff_completes_verified_project()
                     .await?,
             );
             store.record_opened_project(&project).await?;
+            if full_machine {
+                a3_application::AgentPermissionStore::update_agent_permissions(
+                    store.as_ref(),
+                    a3_domain::AgentPermissionRevision::INITIAL,
+                    a3_domain::AgentPermissionMode::FullMachine,
+                )
+                .await?;
+            }
             RefreshRepositoryIndex::new(
                 Arc::new(Blake3RepositorySnapshotBuilder::new()),
                 store.clone(),
@@ -1238,7 +1266,13 @@ fn configured_model_empty_project_research_handoff_completes_verified_project()
             });
             let session_id = AgentSessionId::from_bytes([91; 32]);
             let time = timestamp()?;
-            let objective = "erstelle einen kleinen python server mit einer hello world webseite";
+            let objective = if detailed {
+                "Erstelle einen kleinen Python-Server mit einer Hello-World-Webseite in server.py. Verwende nur die Standardbibliothek: ThreadingHTTPServer und BaseHTTPRequestHandler. Standardadresse 127.0.0.1:8000, optional --host und --port. GET / antwortet mit Status 200, Content-Type text/html; charset=utf-8 und einer einfachen HTML-Seite mit Hello, World!. Andere Pfade liefern eine HTML-Fehlerseite mit Status 404. POST liefert 405 mit Allow: GET. python server.py läuft bis zum Abbruch und schließt Socket und Ressourcen sauber. Ungültige Argumente oder ein nicht bindbarer Host/Port liefern eine verständliche Fehlermeldung und einen Fehlerexit. Keine Testdateien oder Testabhängigkeiten."
+            } else if full_machine {
+                "erstelle einen kleinen python server mit einer hello world webseite"
+            } else {
+                "erstelle einen kleinen python server mit einer hello world webseite und passenden unittest-Tests"
+            };
             let session = AgentSession::from_parts(
                 session_id,
                 AgentSessionRevision::new(1)?,
@@ -1310,6 +1344,24 @@ fn configured_model_empty_project_research_handoff_completes_verified_project()
                 })
                 .await?;
             let task_id = task.work_item.task_id();
+            eprintln!(
+                "combined live research materialized: full_machine={full_machine}, plan_bytes={}",
+                result.markdown.len()
+            );
+            let initial_ledger = store
+                .load_task_ledger(&project, task_id)
+                .await?
+                .ok_or("initial ledger")?;
+            for step in initial_ledger
+                .ledger()
+                .steps()
+                .filter(|step| step.is_active_plan_step())
+            {
+                eprintln!(
+                    "combined live materialized step bytes: {}",
+                    step.definition().intended_outcome().as_str().len()
+                );
+            }
             let plan_sequence = AgentSessionSequence::FIRST.next()?;
             let completed_at = timestamp()?;
             let published_session = successor(
@@ -1358,7 +1410,8 @@ fn configured_model_empty_project_research_handoff_completes_verified_project()
             let executor = Arc::new(crate::ProductionAgentRunExecutor::new(
                 crate::ProductionAgentRunPorts {
                     ledgers: store.clone(),
-                    permissions: None,
+                    permissions: full_machine
+                        .then(|| store.clone() as Arc<dyn a3_application::AgentPermissionStore>),
                     workspace: store.clone(),
                     journal: store.clone(),
                     actions: store.clone(),
@@ -1411,6 +1464,7 @@ fn configured_model_empty_project_research_handoff_completes_verified_project()
                     .load_agent_run(&project, current_run_id)
                     .await?
                     .ok_or("agent run")?;
+                eprintln!("combined live execution state: {:?}", run.state());
                 if run.state() == a3_domain::AgentControllerState::Done {
                     break;
                 }
@@ -1418,6 +1472,9 @@ fn configured_model_empty_project_research_handoff_completes_verified_project()
                     return Err("combined research-to-agent run reached Failed".into());
                 }
                 assert_eq!(run.state(), a3_domain::AgentControllerState::AwaitApproval);
+                if full_machine {
+                    return Err("Full machine fixture unexpectedly requires approval".into());
+                }
                 let observed_at = agent_timestamp(now_millis()?)?;
                 let a3_application::AgentApprovalLoadResult::Available(center) = query
                     .execute(&project, task_id, observed_at, &CombinedWorkspaceControl)
@@ -1488,6 +1545,24 @@ fn configured_model_empty_project_research_handoff_completes_verified_project()
                     })
             );
             assert!(repository.path().join("server.py").is_file());
+            if full_machine {
+                for forbidden in [
+                    "tests",
+                    "test_server.py",
+                    "pyproject.toml",
+                    "requirements.txt",
+                ] {
+                    assert!(
+                        !repository.path().join(forbidden).exists(),
+                        "unexpected test/support artifact: {forbidden}"
+                    );
+                }
+                assert!(run_combined_http_oracle(repository.path(), detailed)?);
+                eprintln!(
+                    "combined live acceptance: Done, no approvals, no tests, HTTP 200 Hello World"
+                );
+                return Ok(());
+            }
             let test_root = if repository.path().join("tests/test_server.py").is_file() {
                 Some("tests")
             } else if repository.path().join("test_server.py").is_file() {
@@ -1496,7 +1571,7 @@ fn configured_model_empty_project_research_handoff_completes_verified_project()
                 return Err("combined run did not create a discoverable test_server.py".into());
             };
             assert!(run_combined_locked_tests(repository.path(), test_root)?);
-            assert!(run_combined_http_oracle(repository.path())?);
+            assert!(run_combined_http_oracle(repository.path(), true)?);
             Ok(())
         },
         true,

@@ -102,11 +102,19 @@ impl MutationExecutionIds {
 pub struct MutationContextSeed {
     goal_contract: GoalContract,
     model_profile: ModelProfile,
+    action_generation: crate::AgentActionGeneration,
     supplemental_seeds: Vec<TaskLensSeed>,
     tool_results: Vec<ContextToolResult>,
 }
 
 impl MutationContextSeed {
+    /// Retains the execution strategy when recompiling after a real mutation.
+    #[must_use]
+    pub fn with_action_generation(mut self, generation: crate::AgentActionGeneration) -> Self {
+        self.action_generation = generation;
+        self
+    }
+
     /// Retains only authoritative Goal/Profile state plus bounded optional retrieval inputs.
     #[must_use]
     pub fn new(
@@ -118,6 +126,7 @@ impl MutationContextSeed {
         Self {
             goal_contract,
             model_profile,
+            action_generation: crate::AgentActionGeneration::SingleAction,
             supplemental_seeds,
             tool_results,
         }
@@ -139,6 +148,7 @@ impl MutationContextSeed {
             self.supplemental_seeds.clone(),
             self.tool_results.clone(),
         )
+        .map(|input| input.with_action_generation(self.action_generation))
         .map_err(|_| MutationControllerFailure::InvalidContextSeed)
     }
 }

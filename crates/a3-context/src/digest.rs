@@ -6,7 +6,7 @@ use a3_domain::{
     ContextSection, ModelProfile, TaskLens,
 };
 
-const CONTEXT_DIGEST_DOMAIN: &[u8] = b"a3.context-pack.v4";
+const CONTEXT_DIGEST_DOMAIN: &[u8] = b"a3.context-pack.v5";
 
 pub(super) fn context_digest(
     profile: &ModelProfile,
@@ -18,6 +18,12 @@ pub(super) fn context_digest(
     structured_schema: &str,
 ) -> ContextDigest {
     let mut hasher = blake3::Hasher::new();
+    hasher.update(&[match input.action_generation() {
+        a3_application::AgentActionGeneration::SingleAction => 0,
+        a3_application::AgentActionGeneration::SelectThenFill => 1,
+        a3_application::AgentActionGeneration::ReviewThenSelect => 2,
+        a3_application::AgentActionGeneration::SourceGuided => 3,
+    }]);
     hash_bytes(&mut hasher, CONTEXT_DIGEST_DOMAIN);
     hash_u32(&mut hasher, ContextCompilerPolicyVersion::CURRENT.get());
     hash_bytes(&mut hasher, profile.id().as_bytes());

@@ -23,7 +23,7 @@ use std::time::Duration;
 mod after_change;
 mod source_guidance;
 mod staged;
-mod staged_contract;
+pub(crate) mod staged_contract;
 
 /// Explicit generation strategy. Product composition roots select their reviewed default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -469,11 +469,15 @@ impl<'a> ExecuteAgentTurn<'a> {
             AgentControllerControl::is_cancelled(control),
         )?;
         validate_turn_input(run, input)?;
+        let generation_input = input.clone().with_action_generation(self.generation);
+        let input = &generation_input;
         let compiled = self.compiler.compile(input, control).await?;
         if AgentControllerControl::is_cancelled(control) {
             return Err(ExecuteAgentTurnFailure::Cancelled);
         }
-        if compiled.goal_contract() != run.goal_contract()
+        if (compiled.action_generation() != AgentActionGeneration::SingleAction
+            && compiled.action_generation() != self.generation)
+            || compiled.goal_contract() != run.goal_contract()
             || compiled.ledger_revision() != run.task_ledger_revision()
             || compiled.current_step_id() != input.current_step_id()
             || compiled.snapshot_id() != run.current_snapshot_id()

@@ -401,3 +401,70 @@ pub(super) fn request(
     )
     .ok()
 }
+
+/// Reserve the largest real phase, including format-field and repeated schema.
+/// The full action schema remains Core hydration metadata, never a staged wire schema.
+pub(crate) fn budget_contract(
+    profile: &a3_domain::ModelProfile,
+    full_schema: &Value,
+) -> Option<(ModelMessage, Option<ModelMessage>, u32)> {
+    let base = ModelProviderRequest::new(
+        profile.clone(),
+        vec![
+            ModelMessage::try_from_string(ModelMessageRole::System, SAFETY.to_owned()).ok()?,
+            ModelMessage::try_from_string(ModelMessageRole::User, "budget projection".to_owned())
+                .ok()?,
+        ],
+        Some(StructuredOutputSchema::new(full_schema.clone()).ok()?),
+    )
+    .ok()?;
+    let mut contracts = Vec::new();
+    for scope in [
+        ChoiceScope::All,
+        ChoiceScope::Changes,
+        ChoiceScope::Evidence,
+    ] {
+        contracts.push((choice_schema_for(scope), scope.prompt().to_owned()));
+    }
+    for index in 0..CHOICES.len() {
+        let args = Arguments::new(full_schema, Choice(index))?;
+        contracts.push((args.schema, args.prompt));
+    }
+    contracts.push((
+        super::after_change::schema(),
+        super::after_change::PROMPT.to_owned(),
+    ));
+    for verify in [false, true] {
+        for read in [false, true] {
+            for source in [false, true] {
+                contracts.push((
+                    super::source_guidance::schema(verify, read),
+                    super::source_guidance::prompt(verify, read, source).to_owned(),
+                ));
+            }
+        }
+    }
+    let counter = profile.settings().token_counting();
+    let mut largest = None;
+    let mut largest_tokens = 0;
+    for (schema, prompt) in contracts {
+        let phase = request(&base, schema, &prompt, None)?;
+        let schema_tokens = counter
+            .count_text(&phase.structured_output()?.value().to_string())
+            .ok()?
+            .get();
+        let mut tokens = schema_tokens.checked_add(64)?;
+        for message in &phase.messages()[..phase.messages().len().checked_sub(1)?] {
+            tokens = tokens.checked_add(counter.count_text(message.content()).ok()?.get())?;
+        }
+        if tokens > largest_tokens {
+            largest_tokens = tokens;
+            largest = Some((
+                phase.messages().first()?.clone(),
+                (phase.messages().len() == 3).then(|| phase.messages()[1].clone()),
+                schema_tokens.checked_add(64)?,
+            ));
+        }
+    }
+    largest
+}

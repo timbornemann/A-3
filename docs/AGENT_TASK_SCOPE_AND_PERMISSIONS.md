@@ -159,6 +159,7 @@ Ihre bestehende CI-Matrix bleibt erhalten. Die vollständigen A^3-Qualitätsgate
 die konkreten lokalen Ergebnisse werden im [Planpaket](plans/21-TASK-SCOPE-AND-PERMISSIONS.md)
 festgehalten.
 
+Die folgenden Kapazitätsmessungen betreffen den vollständigen SingleAction-Vertrag.
 Das vollständige V6-Schema ist größer als V5. Gemeinsame skalare Schematypen und der
 aktuelle Schrittanker werden einmal definiert; das statische Systembudget bleibt
 unverändert. Die reproduzierbare Kontextfixture mit 16K Fenster, langem Ziel, offener
@@ -170,3 +171,13 @@ reicht das verbleibende Budget weiterhin nicht. Er wird ehrlich ausgelassen und 
 Pack als unvollständig markiert. Dieselbe Fixture mit 32K liefert den aktuellen
 Quelltext. Die 8K-/16K-Fixtures mit Schema im Formatfeld behalten aktuelle Originale.
 Output-/Sicherheitsreserven und Tokenzählstrategie werden dafür nicht verkleinert.
+
+Die produktive SourceGuided-Ausführung verwendet kleine Phasenverträge statt dieses
+vollständigen Wire-Schemas. ContextCompilerPolicyVersion V10 reserviert deshalb den
+größten möglichen tatsächlichen Phasenvertrag einschließlich Formatfeldschema und
+Schemawiederholung. Die Generation ist auch an Mutation-Folgekontexte und Digest gebunden;
+vor jedem Provideraufruf gelten weiterhin die konkreten Budgetprüfungen. Lange aktuelle
+Schritte werden vollständig bewahrt. Die entsprechende 16K-/32K-Repeat-Schema-Regression
+liefert aktuelle Originale zusammen mit langem Ziel und offener Fehlermemory. Replan
+behält seinen eigenen eingeschränkten Vertrag. Die gespeicherten Modellprofile und
+beide Reserven werden nicht verändert.

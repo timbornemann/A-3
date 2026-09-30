@@ -250,6 +250,43 @@ fn oversized_page_is_not_partially_injected_or_replaced_by_old_preview()
 }
 
 #[test]
+fn staged_repeat_schema_keeps_current_originals_and_open_memory_at_16k_and_32k()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let objective = "Keep open failures and all original goal constraints. ".repeat(18);
+    for context in [16_384, 32_768] {
+        let (input, _, _) = input_with_run_memory_goal(
+            &fixture,
+            "prior verified work",
+            profile_with_grounding(
+                context,
+                2_048,
+                ModelPromptSchemaGrounding::RepeatSchemaInPrompt,
+            )?,
+            &objective,
+        )?;
+        let input =
+            input.with_action_generation(a3_application::AgentActionGeneration::SourceGuided);
+        let source = Source::new("fn compile_context() {\n    deliver_original();\n}");
+        let compiled = compile(&source, &input)?;
+        let text = pack(&compiled);
+        assert!(text.contains(input.goal_contract().draft().objective().as_str()));
+        assert!(text.contains("kind=verification_failed"));
+        assert!(text.contains("deliver_original();"));
+        assert!(!compiled.original_sources().is_empty());
+        assert_eq!(compiled.request().profile(), input.model_profile());
+        assert!(
+            compiled.budget_usage().prompt_total()
+                + compiled.budget_plan().output_reserve()
+                + compiled.budget_plan().safety_reserve()
+                <= context
+        );
+        assert_eq!(compiled.digest(), compile(&source, &input)?.digest());
+    }
+    Ok(())
+}
+
+#[test]
 fn oversized_multiline_original_is_retried_as_a_smaller_complete_page() -> Result<(), Box<dyn Error>>
 {
     let base = input(Fixture::new()?.snapshot_id)?;

@@ -295,6 +295,7 @@ impl AgentPromptContract {
         Ok(PreparedAgentPrompt {
             version: self.version,
             static_tokens,
+            phase_format_tokens: 0,
             system_message,
             schema_grounding,
             structured_output,
@@ -326,12 +327,54 @@ fn bind_schema_identity(
 pub struct PreparedAgentPrompt {
     version: AgentActionSchemaVersion,
     static_tokens: ModelTokenCount,
+    phase_format_tokens: u32,
     system_message: ModelMessage,
     schema_grounding: Option<ModelMessage>,
     structured_output: StructuredOutputSchema,
 }
 
 impl PreparedAgentPrompt {
+    /// Reserves a real staged envelope, retaining the full schema only for Core hydration.
+    /// Every staged provider exchange replaces that schema with its strict phase contract.
+    pub fn for_action_generation(
+        mut self,
+        profile: &ModelProfile,
+        generation: crate::AgentActionGeneration,
+    ) -> Result<Self, AgentPromptPrepareError> {
+        if generation != crate::AgentActionGeneration::SingleAction {
+            let (system, grounding, format_tokens) =
+                crate::agent_turn::staged_contract::budget_contract(
+                    profile,
+                    self.structured_output.value(),
+                )
+                .ok_or(AgentPromptPrepareError::SchemaEncoding)?;
+            self.system_message = system;
+            self.schema_grounding = grounding;
+            self.phase_format_tokens = format_tokens;
+        }
+        Ok(self)
+    }
+
+    /// Includes staged format-schema/protocol cost as well as actual message bytes.
+    pub fn system_budget_tokens(
+        &self,
+        profile: &ModelProfile,
+    ) -> Result<u32, AgentPromptPrepareError> {
+        let counter = profile.settings().token_counting();
+        let mut total = self.phase_format_tokens;
+        for message in std::iter::once(&self.system_message).chain(self.schema_grounding.iter()) {
+            total = total
+                .checked_add(
+                    counter
+                        .count_text(message.content())
+                        .map_err(AgentPromptPrepareError::TokenCount)?
+                        .get(),
+                )
+                .ok_or(AgentPromptPrepareError::SchemaEncoding)?;
+        }
+        Ok(total)
+    }
+
     /// Returns the action schema version shared by prompt and decoder.
     #[must_use]
     pub const fn version(&self) -> AgentActionSchemaVersion {
