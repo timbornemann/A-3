@@ -47,6 +47,12 @@ impl ProcessHostEnvironment {
         Self::new(values)
     }
 
+    /// Exposes only admitted variable names; values remain inside the process adapter.
+    #[must_use]
+    pub fn admitted_names(&self) -> Vec<ProcessEnvironmentVariable> {
+        self.values.keys().cloned().collect()
+    }
+
     pub(crate) fn value(&self, name: &ProcessEnvironmentVariable) -> Option<&OsStr> {
         self.values.get(name).map(OsString::as_os_str)
     }

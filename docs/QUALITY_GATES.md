@@ -7,6 +7,21 @@ Stand: 2026-08-11
 
 Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreiche Kompilierung oder eine LLM-Einschätzung reichen nicht als Abschlussnachweis.
 
+## Auftragsbezogene Produktverifikation
+
+[ADR-0117](adrs/0117-auftragsbezogene-tests-und-verifikation.md) betrifft die vom Agenten
+umgesetzten Nutzerprojekte: neue Tests nur auf Auftrag oder mit konkreter Risiko-
+begründung; expliziter Verzicht hat Vorrang. Vorhandene Checks und kurze Prüfungen sind
+weiterhin erlaubt. Diese Regel reduziert die Entwicklungsregressionen von A^3 selbst nicht.
+
+[Plan 21](plans/21-TASK-SCOPE-AND-PERMISSIONS.md) verlangt echte Patch-/Prozess-/Dateieffekte,
+getrennte Änderungsevidence und Laufzeitbelege, beide Berechtigungsmodi, wartende Aktionen,
+Neustart/CAS/stale Autorisierungen und erhaltene Ask-/Plan-Grenzen. Die HTTP-Abnahme des
+kleinen Python-Servers darf keine Testartefakte oder Testabhängigkeiten hinterlassen.
+Neue Settings-IPC-Verträge brauchen Rust-/TypeScript-Negativtests; der Schalter bleibt bei
+Freigaben sichtbar und per Tastatur bedienbar. Für diesen Auftrag hat Tim Windows als
+Abnahmeplattform festgelegt; Linux/macOS-Nachweise sind aktuell nicht erforderlich.
+
 ## Gate pro Änderung
 
 ### Rust

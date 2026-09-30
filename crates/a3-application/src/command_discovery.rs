@@ -479,7 +479,44 @@ fn discover_python(
     }
     if !has_python_manifest {
         discover_python_unittest(index, commands)?;
+        discover_python_syntax(index, commands)?;
     }
+    Ok(())
+}
+
+fn discover_python_syntax(
+    index: &PublishedIndex,
+    commands: &mut Vec<DiscoveredCommand>,
+) -> Result<(), CommandDiscoveryFailure> {
+    let mut sources = index
+        .publication()
+        .graph()
+        .files()
+        .iter()
+        .filter(|revision| file_name(revision.path()).ends_with(b".py"))
+        .collect::<Vec<_>>();
+    sources.sort_by(|left, right| left.path().cmp(right.path()));
+    if sources.is_empty() || sources.len() > 16 {
+        return Ok(());
+    }
+    let mut arguments = strings(&["-I", "-B", "-c", a3_domain::PYTHON_SYNTAX_CHECK]);
+    for source in &sources {
+        let Ok(path) = std::str::from_utf8(source.path().as_bytes()) else {
+            return Ok(());
+        };
+        arguments.push(path.to_owned());
+    }
+    commands.push(DiscoveredCommand::try_new(
+        DiscoveredCommandKind::Lint,
+        WorkspaceDirectory::Root,
+        "python".to_owned(),
+        arguments,
+        sources
+            .into_iter()
+            .cloned()
+            .map(CommandDiscoveryEvidence::File)
+            .collect(),
+    )?);
     Ok(())
 }
 
@@ -718,8 +755,12 @@ mod tests {
         let index = published_index(vec![source, test.clone()])?;
         let catalog =
             DiscoverProjectCommands.execute(a3_domain::WorktreeId::from_bytes([3; 32]), &index)?;
-        assert_eq!(catalog.commands().len(), 1);
-        let command = &catalog.commands()[0];
+        assert_eq!(catalog.commands().len(), 2);
+        let command = catalog
+            .commands()
+            .iter()
+            .find(|command| command.kind() == DiscoveredCommandKind::Test)
+            .ok_or("missing unittest check")?;
         assert_eq!(command.kind(), DiscoveredCommandKind::Test);
         assert_eq!(command.executable().as_str(), "python");
         assert_eq!(
@@ -749,7 +790,18 @@ mod tests {
         let index = published_index(vec![source, unsupported_name])?;
         let catalog =
             DiscoverProjectCommands.execute(a3_domain::WorktreeId::from_bytes([8; 32]), &index)?;
-        assert!(catalog.commands().is_empty());
+        assert!(
+            catalog
+                .commands()
+                .iter()
+                .all(|command| command.kind() != DiscoveredCommandKind::Test)
+        );
+        assert!(
+            catalog
+                .commands()
+                .iter()
+                .any(a3_domain::DiscoveredCommand::is_core_owned_check)
+        );
         Ok(())
     }
 
@@ -774,22 +826,54 @@ mod tests {
             DiscoverProjectCommands
                 .execute(worktree, &without_source)?
                 .commands()
-                .is_empty()
+                .iter()
+                .all(|command| command.kind() != DiscoveredCommandKind::Test)
         );
         let multiple_roots = published_index(vec![source, test_a.clone(), test_b.clone()])?;
         let catalog = DiscoverProjectCommands.execute(worktree, &multiple_roots)?;
-        assert_eq!(catalog.commands().len(), 1);
+        assert_eq!(catalog.commands().len(), 2);
         assert_eq!(
-            catalog.commands()[0]
+            catalog
+                .commands()
+                .iter()
+                .find(|command| command.kind() == DiscoveredCommandKind::Test)
+                .ok_or("missing unittest check")?
                 .arguments()
                 .iter()
                 .map(|argument| argument.as_str())
                 .collect::<Vec<_>>(),
             ["-B", "-m", "unittest", "spec/test_b.py", "tests/test_a.py"]
         );
-        assert_eq!(catalog.commands()[0].evidence().len(), 2);
-        assert_eq!(catalog.commands()[0].evidence()[0].revision(), &test_b);
-        assert_eq!(catalog.commands()[0].evidence()[1].revision(), &test_a);
+        assert_eq!(
+            catalog
+                .commands()
+                .iter()
+                .find(|command| command.kind() == DiscoveredCommandKind::Test)
+                .ok_or("missing unittest check")?
+                .evidence()
+                .len(),
+            2
+        );
+        assert_eq!(
+            catalog
+                .commands()
+                .iter()
+                .find(|command| command.kind() == DiscoveredCommandKind::Test)
+                .ok_or("missing unittest check")?
+                .evidence()[0]
+                .revision(),
+            &test_b
+        );
+        assert_eq!(
+            catalog
+                .commands()
+                .iter()
+                .find(|command| command.kind() == DiscoveredCommandKind::Test)
+                .ok_or("missing unittest check")?
+                .evidence()[1]
+                .revision(),
+            &test_a
+        );
         Ok(())
     }
 

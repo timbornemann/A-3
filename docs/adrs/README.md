@@ -141,6 +141,9 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0115](0115-ausfuehrbarer-plananker-im-modellkontext.md) | Ausführbarer Plananker im konfigurierten Modellkontext |
 | [0116](0116-kompakter-agentenverlauf-und-entscheidungsdock.md) | Kompakter Agentenverlauf und Entscheidungsbereich |
 
+| [0117](0117-auftragsbezogene-tests-und-verifikation.md) | Auftragsbezogene Testerstellung und Verifikation |
+| [0118](0118-appweite-agent-berechtigungsmodi.md) | Appweite Agent-Berechtigungsmodi |
+
 ## Neue ADRs
 
 Kopiere [0000-template.md](0000-template.md), verwende die nächste vierstellige Nummer und ergänze betroffene Dokumente und Pläne.

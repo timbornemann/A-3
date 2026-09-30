@@ -1,6 +1,25 @@
 //! Application use cases and ports for A^3.
 
 mod agent_action_codec;
+mod agent_machine_codec;
+mod agent_permissions;
+mod machine_file_tool;
+mod machine_network;
+mod machine_process;
+pub use agent_permissions::{
+    AgentPermissionFuture, AgentPermissionStore, AgentPermissionStoreFailure,
+};
+pub use machine_file_tool::{
+    AuthorizedMachineFileAction, MachineFileControl, MachineFileReceipt, MachineFileTool,
+    MachineFileToolFailure, MachineFileToolFuture, PreparedMachineFileAction,
+};
+pub use machine_network::{
+    AuthorizedMachineHttpGet, MachineHttpReceipt, MachineNetworkFailure, MachineNetworkFuture,
+    MachineNetworkTool,
+};
+pub use machine_process::{
+    MachineProcessPreparationError, PrepareMachineProcess, classify_machine_process,
+};
 mod agent_actions;
 mod agent_activity;
 mod agent_approval;
@@ -189,7 +208,7 @@ pub use agent_read_result::{AgentReadResult, AgentReadResultError, RecordedAgent
 pub use agent_recovery::{
     AgentMutationResultRecord, AgentRecoveryChoice, AgentRecoveryError, AgentRecoveryInspection,
     AgentRecoveryOutcome, AgentRecoveryOutcomeKind, AgentRecoveryStore, AgentRecoveryStoreFailure,
-    AgentRecoveryStoreFuture, InspectAgentRunRecovery, RecoverAgentRun,
+    AgentRecoveryStoreFuture, InspectAgentRunRecovery, MachineEffectScope, RecoverAgentRun,
 };
 pub use agent_research_controller::{
     BeginResearchDecision, BoundedResearchController, ResearchActionBatch, ResearchControllerError,
@@ -197,8 +216,8 @@ pub use agent_research_controller::{
     ResearchMemoryFindingKind, memory_finding_from_note,
 };
 pub use agent_runtime::{
-    AgentRunExecutionFailure, AgentRunExecutionFuture, AgentRunExecutionOutcome,
-    AgentRunExecutionRequest, AgentRunExecutionTrigger, AgentRunExecutor,
+    AgentPermissionChangeFuture, AgentRunExecutionFailure, AgentRunExecutionFuture,
+    AgentRunExecutionOutcome, AgentRunExecutionRequest, AgentRunExecutionTrigger, AgentRunExecutor,
 };
 pub use agent_session::{
     AgentSessionCommandPresentation, AgentSessionDetail, AgentSessionListQuery, AgentSessionPage,

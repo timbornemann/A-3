@@ -60,6 +60,423 @@ use support::{TempDirectory, run_libsql_test};
 const ORIGINAL_SOURCE: &[u8] = b"pub fn value() -> u32 { 1 }\n";
 const UPDATED_SOURCE: &[u8] = b"pub fn value() -> u32 { 2 }\n";
 
+struct MachineContractHttpServer {
+    url: String,
+    requests: Arc<AtomicUsize>,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+impl MachineContractHttpServer {
+    fn new() -> Result<Self, Box<dyn Error>> {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let url = format!("http://{}/", listener.local_addr()?);
+        listener.set_nonblocking(true)?;
+        let requests = Arc::new(AtomicUsize::new(0));
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopping = stop.clone();
+        let observed = requests.clone();
+        let worker = std::thread::spawn(move || {
+            while !stopping.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_nonblocking(false);
+                        let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+                        let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
+                        let mut request = [0; 4096];
+                        if stream.read(&mut request).is_ok_and(|bytes| bytes > 0) {
+                            observed.fetch_add(1, Ordering::SeqCst);
+                            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nHello machine");
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5))
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        Ok(Self {
+            url,
+            requests,
+            stop,
+            worker: Some(worker),
+        })
+    }
+}
+impl Drop for MachineContractHttpServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct PermissionsChangingAtToolBoundary(AtomicUsize);
+
+impl a3_application::AgentPermissionStore for PermissionsChangingAtToolBoundary {
+    fn load_agent_permissions(&self) -> a3_application::AgentPermissionFuture<'_> {
+        let read = self.0.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move {
+            let (revision, mode) = if read < 2 {
+                (1, a3_domain::AgentPermissionMode::FullMachine)
+            } else {
+                (2, a3_domain::AgentPermissionMode::AskPermissions)
+            };
+            let revision = a3_domain::AgentPermissionRevision::new(revision)
+                .map_err(|_| a3_application::AgentPermissionStoreFailure::InvalidStoredData)?;
+            Ok(a3_domain::AgentPermissionSettings::new(mode, revision))
+        })
+    }
+
+    fn update_agent_permissions(
+        &self,
+        _: a3_domain::AgentPermissionRevision,
+        _: a3_domain::AgentPermissionMode,
+    ) -> a3_application::AgentPermissionFuture<'_> {
+        Box::pin(async { Err(a3_application::AgentPermissionStoreFailure::Unavailable) })
+    }
+}
+
+#[test]
+fn real_machine_actions_use_exact_policy_scope_and_never_complete_repository_verification()
+-> Result<(), Box<dyn Error>> {
+    run_libsql_test(async {
+        use a3_application::AgentPermissionStore;
+        use a3_domain::{
+            AgentMachineAction, MachineFileAction, MachineFileOperation, MachineFilePath,
+        };
+        for scenario in [
+            AgentMutationKind::MachineFile,
+            AgentMutationKind::MachineProcess,
+            AgentMutationKind::MachineNetwork,
+        ] {
+            let fixture = Fixture::new().await?;
+            let external = TempDirectory::new()?;
+            let target = external.path().join("outside.txt");
+            let step = TaskStepId::from_bytes(id(21));
+            let mut durable = DurableMutation::new(
+                &fixture,
+                AcceptanceCriterionId::from_bytes(id(20)),
+                step,
+                VerificationSpec::user_confirm(
+                    VerificationSpecId::from_bytes(id(22)),
+                    requirement("confirm the planned result")?,
+                    PolicyResourceId::from_bytes(id(23)),
+                ),
+            )
+            .await?;
+            let server = MachineContractHttpServer::new()?;
+            let action = AgentAction::Machine(match scenario {
+                AgentMutationKind::MachineFile => AgentMachineAction::File(MachineFileAction::new(
+                    step,
+                    MachineFilePath::new(target.to_str().ok_or("path")?.to_owned())?,
+                    MachineFileOperation::Write {
+                        expected: None,
+                        content: PatchFileContent::try_from_bytes(b"external result".to_vec())?,
+                    },
+                )?),
+                AgentMutationKind::MachineProcess => {
+                    AgentMachineAction::Process(a3_domain::MachineProcessAction::new(
+                        step,
+                        a3_domain::ProcessExecutable::try_from_string("python".to_owned())?,
+                        vec![a3_domain::ProcessArgument::try_from_string(
+                            "--version".to_owned(),
+                        )?],
+                    )?)
+                }
+                AgentMutationKind::MachineNetwork => {
+                    AgentMachineAction::HttpGet(a3_domain::MachineHttpAction::new(
+                        step,
+                        a3_domain::MachineHttpUrl::new(server.url.clone())?,
+                    ))
+                }
+                _ => return Err("invalid fixture scenario".into()),
+            });
+            let files = a3_workspace::WorkspaceMachineFileTool::new(fixture.store.clone());
+            let network = a3_workspace::WorkspaceMachineNetworkTool::new(fixture.store.clone())?;
+            let coordinator = WorktreeMutationCoordinator::new();
+            let patch = WorkspacePatchAdapter::new();
+            let environment = a3_workspace::ProcessHostEnvironment::capture(
+                ["PATH", "SYSTEMROOT", "TEMP", "TMP", "TMPDIR"]
+                    .into_iter()
+                    .map(|name| {
+                        a3_domain::ProcessEnvironmentVariable::try_from_string(name.to_owned())
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            )?;
+            let names = environment.admitted_names();
+            let runner = a3_workspace::WorkspaceProcessRunner::new(environment);
+            let inspection = AgentInspectionBuffer::new();
+            let approval = AgentApprovalBuffer::new();
+            approval.activate_project(&fixture.project);
+            let context = DeterministicAgentContextCompiler::new(
+                CompileTaskLens::new(
+                    fixture.store.as_ref(),
+                    fixture.store.as_ref(),
+                    fixture.store.as_ref(),
+                ),
+                &a3_workspace::WorkspaceAgentSourceReader,
+            );
+            let refresh = refresh(fixture.store.clone());
+            let controller = ExecuteMutatingAgentAction::new(
+                &coordinator,
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                &inspection,
+                &approval,
+                &patch,
+                &runner,
+                &ConservativeProcessVerificationEvidenceFactory,
+                &context,
+                &refresh,
+            )
+            .with_permissions(fixture.store.as_ref())
+            .with_machine_tools(&files, &network, &names);
+            let seed = durable.context_seed();
+            let first = controller
+                .execute(
+                    &fixture.project,
+                    &mut durable.run,
+                    &mut durable.ledger,
+                    &mut durable.ledger_version,
+                    &fixture.published,
+                    action.clone(),
+                    None,
+                    &WorkspacePolicy::unrestricted(),
+                    None,
+                    mutation_ids(40),
+                    timestamp(100)?,
+                    timestamp(1000)?,
+                    &seed,
+                    &mut compiler()?,
+                    &NoopProcessEvents,
+                    &ActiveControl,
+                )
+                .await?;
+            assert!(matches!(
+                first,
+                MutationControllerOutcome::AwaitingApproval(_)
+            ));
+            assert!(!target.exists());
+            assert_eq!(server.requests.load(Ordering::SeqCst), 0);
+            assert!(
+                fixture
+                    .store
+                    .load_agent_mutation_attempts(&fixture.project, durable.run.id())
+                    .await?
+                    .is_empty()
+            );
+            fixture
+                .store
+                .update_agent_permissions(
+                    a3_domain::AgentPermissionRevision::INITIAL,
+                    a3_domain::AgentPermissionMode::FullMachine,
+                )
+                .await?;
+            let result = controller
+                .execute(
+                    &fixture.project,
+                    &mut durable.run,
+                    &mut durable.ledger,
+                    &mut durable.ledger_version,
+                    &fixture.published,
+                    action,
+                    None,
+                    &WorkspacePolicy::unrestricted(),
+                    None,
+                    mutation_ids(60),
+                    timestamp(200)?,
+                    timestamp(2000)?,
+                    &seed,
+                    &mut compiler()?,
+                    &NoopProcessEvents,
+                    &ActiveControl,
+                )
+                .await?;
+            let MutationControllerOutcome::MachineObserved(receipt) = result else {
+                return Err("machine observation missing".into());
+            };
+            match scenario {
+                AgentMutationKind::MachineFile => {
+                    assert!(receipt.preview().as_str().contains("changed=true"));
+                    assert!(
+                        receipt
+                            .preview()
+                            .as_str()
+                            .contains(blake3::hash(b"external result").to_hex().as_str())
+                    );
+                    assert_eq!(std::fs::read(&target)?, b"external result");
+                }
+                AgentMutationKind::MachineProcess => {
+                    assert!(receipt.preview().as_str().contains("Python "));
+                    assert!(!target.exists());
+                }
+                AgentMutationKind::MachineNetwork => {
+                    assert!(receipt.preview().as_str().contains("status=200"));
+                    assert!(receipt.preview().as_str().contains("Hello machine"));
+                    assert_eq!(server.requests.load(Ordering::SeqCst), 1);
+                    assert!(!target.exists());
+                }
+                _ => return Err("invalid fixture scenario".into()),
+            }
+            assert!(receipt.original_source().is_none());
+            assert_eq!(
+                durable.ledger.step(step).ok_or("step")?.status(),
+                TaskStepStatus::InProgress
+            );
+            let attempts = fixture
+                .store
+                .load_agent_mutation_attempts(&fixture.project, durable.run.id())
+                .await?;
+            assert_eq!(attempts.len(), 1);
+            assert_eq!(attempts[0].kind(), scenario);
+            assert_eq!(attempts[0].disposition(), AgentMutationDisposition::Applied);
+            let scope = fixture
+                .store
+                .load_machine_effect_scope(
+                    &fixture.project,
+                    attempts[0].tool_attempt().tool_run_id(),
+                    attempts[0].tool_attempt().attempt(),
+                )
+                .await?
+                .ok_or("scope")?;
+            assert_eq!(scope.step(), step);
+            assert_eq!(scope.kind(), scenario);
+            match scenario {
+                AgentMutationKind::MachineFile => {
+                    assert_eq!(scope.proposed(), Some(hash(b"external result")));
+                    assert_eq!(
+                        std::fs::canonicalize(scope.target())?,
+                        std::fs::canonicalize(&target)?
+                    );
+                }
+                AgentMutationKind::MachineProcess => assert_eq!(scope.target(), "python"),
+                AgentMutationKind::MachineNetwork => assert_eq!(scope.target(), server.url),
+                _ => return Err("invalid fixture scenario".into()),
+            }
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn switching_after_durable_attempt_prevents_the_obsolete_automatic_patch()
+-> Result<(), Box<dyn Error>> {
+    run_libsql_test(async {
+        let fixture = Fixture::new().await?;
+        let step_id = TaskStepId::from_bytes(id(21));
+        let spec_id = VerificationSpecId::from_bytes(id(22));
+        let spec = VerificationSpec::user_confirm(
+            spec_id,
+            requirement("the user confirms the indexed patch result")?,
+            PolicyResourceId::from_bytes(id(23)),
+        );
+        let mut durable = DurableMutation::new(
+            &fixture,
+            AcceptanceCriterionId::from_bytes(id(20)),
+            step_id,
+            spec,
+        )
+        .await?;
+        let action = PatchAction::new(
+            PatchActionSchemaVersion::V1,
+            durable.run.id(),
+            fixture.project.worktree().id(),
+            fixture.published.run().snapshot_id(),
+            step_id,
+            spec_id,
+            PatchRationale::try_from_string("exercise final permission admission".to_owned())?,
+            vec![PatchOperation::Update(PatchUpdate::new(
+                FileRevision::new(path("src/lib.rs")?, hash(ORIGINAL_SOURCE)),
+                PatchFileContent::try_from_bytes(UPDATED_SOURCE.to_vec())?,
+            )?)],
+        )?;
+        let refresh = refresh(fixture.store.clone());
+        let context = DeterministicAgentContextCompiler::new(
+            CompileTaskLens::new(
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+            ),
+            &a3_workspace::WorkspaceAgentSourceReader,
+        );
+        let coordinator = WorktreeMutationCoordinator::new();
+        let patch = WorkspacePatchAdapter::new();
+        let runner = FailingProcessRunner::default();
+        let inspection = AgentInspectionBuffer::new();
+        let approval = AgentApprovalBuffer::new();
+        let permissions = PermissionsChangingAtToolBoundary::default();
+        let controller = ExecuteMutatingAgentAction::new(
+            &coordinator,
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            &inspection,
+            &approval,
+            &patch,
+            &runner,
+            &ConservativeProcessVerificationEvidenceFactory,
+            &context,
+            &refresh,
+        )
+        .with_permissions(&permissions);
+        let seed = durable.context_seed();
+        let mut compiler = compiler()?;
+        let result = controller
+            .execute(
+                &fixture.project,
+                &mut durable.run,
+                &mut durable.ledger,
+                &mut durable.ledger_version,
+                &fixture.published,
+                AgentAction::ApplyPatch(Box::new(action)),
+                None,
+                &WorkspacePolicy::unrestricted(),
+                None,
+                mutation_ids(40),
+                timestamp(20)?,
+                timestamp(100)?,
+                &seed,
+                &mut compiler,
+                &NoopProcessEvents,
+                &ActiveControl,
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(MutationControllerFailure::PermissionsChanged)
+        ));
+        assert_eq!(permissions.0.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            std::fs::read(fixture.repository.path().join("src/lib.rs"))?,
+            ORIGINAL_SOURCE
+        );
+        let attempts = fixture
+            .store
+            .load_agent_mutation_attempts(&fixture.project, durable.run.id())
+            .await?;
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(
+            attempts[0].disposition(),
+            AgentMutationDisposition::NotApplied
+        );
+        assert_eq!(
+            attempts[0].tool_attempt().status(),
+            AgentToolAttemptStatus::Failed
+        );
+        Ok(())
+    })
+}
+
 #[test]
 fn patch_waits_for_approval_then_reindexes_before_compiling_context() -> Result<(), Box<dyn Error>>
 {

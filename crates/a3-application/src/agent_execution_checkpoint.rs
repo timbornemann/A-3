@@ -100,7 +100,10 @@ impl AgentExecutionCheckpoint {
             let mutation = match attempt.kind() {
                 AgentMutationKind::Patch => ExecutedAgentMutation::PatchApplied,
                 AgentMutationKind::Process => ExecutedAgentMutation::ProcessObserved,
-                AgentMutationKind::UnclassifiedLegacy => continue,
+                AgentMutationKind::MachineFile
+                | AgentMutationKind::MachineProcess
+                | AgentMutationKind::MachineNetwork
+                | AgentMutationKind::UnclassifiedLegacy => continue,
             };
             return Ok(Some(Self {
                 repository_id: project.repository().id(),

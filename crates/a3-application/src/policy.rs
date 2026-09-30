@@ -81,6 +81,7 @@ impl EvaluatedPolicyAction {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EvaluateActionPolicy {
     system: SystemPolicyV1,
+    permissions: Option<a3_domain::AgentPermissionSettings>,
 }
 
 impl EvaluateActionPolicy {
@@ -89,7 +90,18 @@ impl EvaluateActionPolicy {
     pub const fn new() -> Self {
         Self {
             system: SystemPolicyV1,
+            permissions: None,
         }
+    }
+
+    /// Binds a current app-wide permission revision to every resulting policy decision.
+    #[must_use]
+    pub const fn with_permissions(
+        mut self,
+        permissions: a3_domain::AgentPermissionSettings,
+    ) -> Self {
+        self.permissions = Some(permissions);
+        self
     }
 
     /// Evaluates one typed action and emits exactly one decision plus one run audit event.
@@ -102,8 +114,14 @@ impl EvaluateActionPolicy {
         context: PolicyEvaluationContext,
     ) -> Result<EvaluatedPolicyAction, EvaluateActionPolicyError> {
         preflight_run(run, context)?;
-        let baseline = self.system.disposition(action);
-        let effective = workspace_policy.apply(action.class(), baseline);
+        let baseline = self.permissions.map_or_else(
+            || self.system.disposition(action),
+            |settings| settings.disposition(action),
+        );
+        let mut effective = workspace_policy.apply(action.class(), baseline);
+        for class in action.additional_restrictions().into_iter().flatten() {
+            effective = workspace_policy.apply(class, effective);
+        }
 
         let (decision, request, consumed_approval) = match effective {
             PolicyDisposition::Automatic => (
@@ -170,6 +188,11 @@ impl EvaluateActionPolicy {
             },
         };
 
+        let decision = if let Some(settings) = self.permissions {
+            decision.with_permission_settings(settings)
+        } else {
+            decision
+        };
         let outcome = match decision.outcome() {
             PolicyDecisionOutcome::Allowed => RunEventOutcome::Succeeded,
             PolicyDecisionOutcome::ApprovalRequired | PolicyDecisionOutcome::Denied => {
@@ -425,6 +448,54 @@ mod tests {
             PolicyDecisionReason::WorkspaceDenied
         );
         assert_eq!(approval.status_at(timestamp(20)?), ApprovalStatus::Active);
+        Ok(())
+    }
+
+    #[test]
+    fn full_machine_never_erases_stricter_composite_file_restrictions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let full = a3_domain::AgentPermissionSettings::new(
+            a3_domain::AgentPermissionMode::FullMachine,
+            a3_domain::AgentPermissionRevision::new(2)?,
+        );
+        for (operation, restrictive_class) in [
+            (a3_domain::PathPolicyOperation::Write, ActionClass::Write),
+            (
+                a3_domain::PathPolicyOperation::Delete,
+                ActionClass::OutsideRoot,
+            ),
+        ] {
+            let mut run = run()?;
+            let action = PolicyAction::MachineFile {
+                worktree_id: WorktreeId::from_bytes([6; 32]),
+                step_id: a3_domain::TaskStepId::from_bytes([7; 32]),
+                resource_id: a3_domain::PolicyResourceId::from_bytes([8; 32]),
+                operation,
+                expected: Some(a3_domain::ContentHash::from_bytes([9; 32])),
+                proposed: if operation == a3_domain::PathPolicyOperation::Write {
+                    Some(a3_domain::ContentHash::from_bytes([10; 32]))
+                } else {
+                    None
+                },
+            };
+            let policy = WorkspacePolicy::new(vec![WorkspacePolicyRule::new(
+                restrictive_class,
+                WorkspacePolicyRestriction::Deny,
+            )])?;
+            let evaluated = EvaluateActionPolicy::new().with_permissions(full).execute(
+                &mut run,
+                &action,
+                &policy,
+                None,
+                context(20, 1_000)?,
+            )?;
+            assert_eq!(
+                evaluated.decision().outcome(),
+                PolicyDecisionOutcome::Denied
+            );
+            assert_eq!(evaluated.decision().permission_settings(), Some(full));
+            assert!(evaluated.decision().approval_id().is_none());
+        }
         Ok(())
     }
 

@@ -369,6 +369,30 @@ letzten bestätigten Stand, offene Details und die Leseposition. Das Folgen rich
 tatsächliche Verlaufsende. Siehe [Plan 20](docs/plans/20-AGENT-CONVERSATION-INTERACTION.md) und
 [ADR-0116](docs/adrs/0116-kompakter-agentenverlauf-und-entscheidungsdock.md).
 
+Am unteren Rand des Chatfensters bleibt die appweite Auswahl **Ask permissions** /
+**Full machine** sichtbar. Neue und migrierte Installationen starten mit Ask permissions;
+eine Auswahl wird sofort revisioniert gespeichert. Full machine erlaubt nichtdestruktive
+Patches, begrenzte externe Dateiwerkzeuge, HTTP-GET und eingeordnete Prozesse ohne
+Einzelabfrage. Unbekannte Skripte, Löschen und
+Veröffentlichen bleiben freigabepflichtig; strengere Workspace-Regeln bleiben wirksam.
+Fragen und Planen behalten ihre bisherigen Capability-Grenzen.
+
+Einfache Aufträge benötigen keine automatisch erzeugte Testsuite. Recherche und Arbeitsplan
+trennen Umsetzung von vorhandenen oder kurzen Prüfungen. Neue Tests benötigen einen
+expliziten Auftrag oder eine konkrete Begründung für komplexe Logik, Fehlerkorrektur oder
+Sicherheitsverhalten; ein Testverzicht hat Vorrang. Änderungsevidence beweist bearbeitete
+Dateien, Laufzeitaussagen benötigen operationale Evidence. Fehlende Prüfkommandos erzeugen
+keinen Auftrag zum Einbau eines Testframeworks. Siehe
+[Plan 21](docs/plans/21-TASK-SCOPE-AND-PERMISSIONS.md),
+[ADR-0117](docs/adrs/0117-auftragsbezogene-tests-und-verifikation.md) und
+[ADR-0118](docs/adrs/0118-appweite-agent-berechtigungsmodi.md).
+
+Maschinenaktionen verwenden geschlossene Core-Verträge. Unklare externe Wirkungen
+benötigen eine sichtbare Entscheidung über den exakten Scope und einen Replan;
+die ursprüngliche Aktion wird nicht wiederholt. Werkzeugumfang, Limits, IPC-/
+Storageversionen und verbleibende Grenzen beschreibt
+[Auftragsumfang und Berechtigungen](docs/AGENT_TASK_SCOPE_AND_PERMISSIONS.md).
+
 Die Mehrprovider-Einstellungen besitzen kompakte, unabhängig bedienbare Verbindungskarten.
 Adresse und API-Key werden neben dem jeweiligen Eingabefeld gespeichert. Modelle wählen
 Nutzer in einem nativen Dialog mit Suche, Anbieterfilter und separat scrollbarer Liste

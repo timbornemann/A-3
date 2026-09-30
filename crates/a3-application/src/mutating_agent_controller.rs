@@ -5,17 +5,17 @@ use crate::{
     AgentInspectionSink, AgentInspectionSinkFailure, AgentMutationResultRecord,
     AgentProcessInspectionKind, AgentRecoveryStore, AgentRecoveryStoreFailure, AppendRunEvent,
     ContextCompileControl, ContextCompileFailure, ContextToolResult, ContextToolResultDigest,
-    DiscoverProjectCommands, EvaluateActionPolicy, EvaluateActionPolicyError,
-    EvaluateStepVerification, EvaluateStepVerificationError, MutationActionFingerprint,
-    MutationActionFingerprintError, MutationFailureClass, MutationProgressDecision,
-    PatchApplyFailure, PatchAuthorizationError, PatchPreviewFailure, PersistPolicyEvaluation,
-    PolicyEvaluationContext, PolicyStore, PolicyStoreFailure, PrepareDiscoveredCommand,
-    ProcessAuthorizationError, ProcessEventSink, ProcessRunControl, ProcessRunFailure,
-    ProcessRunner, RefreshRepositoryIndex, RefreshRepositoryIndexError, RepositoryChangeBatch,
-    RepositoryChangeBatchError, RepositoryIndexCompiler, RepositoryIndexControl, RunJournalStore,
-    RunJournalStoreFailure, StoredProjectCommandAllowlist, TaskLedgerStoreVersion,
-    VerificationEvidenceStore, VerificationEvidenceStoreFailure, WorkspacePatchControl,
-    WorkspacePatchTool, WorktreeMutationBusy, WorktreeMutationCoordinator,
+    EvaluateActionPolicy, EvaluateActionPolicyError, EvaluateStepVerification,
+    EvaluateStepVerificationError, MutationActionFingerprint, MutationActionFingerprintError,
+    MutationFailureClass, MutationProgressDecision, PatchApplyFailure, PatchAuthorizationError,
+    PatchPreviewFailure, PersistPolicyEvaluation, PolicyEvaluationContext, PolicyStore,
+    PolicyStoreFailure, PrepareDiscoveredCommand, ProcessAuthorizationError, ProcessEventSink,
+    ProcessRunControl, ProcessRunFailure, ProcessRunner, RefreshRepositoryIndex,
+    RefreshRepositoryIndexError, RepositoryChangeBatch, RepositoryChangeBatchError,
+    RepositoryIndexCompiler, RepositoryIndexControl, RunJournalStore, RunJournalStoreFailure,
+    StoredProjectCommandAllowlist, TaskLedgerStoreVersion, VerificationEvidenceStore,
+    VerificationEvidenceStoreFailure, WorkspacePatchControl, WorkspacePatchTool,
+    WorktreeMutationBusy, WorktreeMutationCoordinator,
 };
 use a3_domain::{
     ActionClass, AgentAction, AgentControllerState, AgentMutationDisposition, AgentMutationKind,
@@ -38,6 +38,10 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::time::Duration;
+
+#[path = "mutating_agent_machine.rs"]
+mod machine;
+use machine::PreparedMachineMutation;
 
 const VERIFICATION_EVIDENCE_TIMEOUT: Duration = Duration::from_secs(30);
 const APPROVAL_WAIT_REASON: &str = "exact mutation approval is required";
@@ -424,6 +428,8 @@ pub enum MutationControllerOutcome {
     Denied,
     /// The action succeeded but verification requires another freshly compiled Execute turn.
     NextAction(Box<crate::CompiledAgentContext>),
+    /// Actual bounded machine observation; never repository verification evidence.
+    MachineObserved(Box<ContextToolResult>),
     /// Typed current evidence passed and completed the current Task Ledger step.
     StepVerified {
         /// Immutable evidence referenced by the completed step attempt.
@@ -463,6 +469,10 @@ impl fmt::Debug for MutationControllerOutcome {
                 formatter.debug_tuple("AwaitingApproval").field(id).finish()
             }
             Self::Denied => formatter.write_str("Denied"),
+            Self::MachineObserved(result) => formatter
+                .debug_tuple("MachineObserved")
+                .field(&result.digest())
+                .finish(),
             Self::NextAction(context) => formatter
                 .debug_struct("NextAction")
                 .field("context_digest", &context.digest())
@@ -508,6 +518,7 @@ impl fmt::Debug for MutationControllerOutcome {
 
 #[derive(Debug)]
 enum PreparedMutation {
+    Machine(Box<PreparedMachineMutation>),
     Patch(PatchAction),
     Run {
         action: AgentRunAction,
@@ -516,12 +527,14 @@ enum PreparedMutation {
         result_spec: a3_domain::ProcessSpec,
         dependencies: VerificationDependencies,
         approval_required: bool,
+        core_owned_check: bool,
     },
 }
 
 impl PreparedMutation {
     fn step_id(&self) -> TaskStepId {
         match self {
+            Self::Machine(action) => action.step_id(),
             Self::Patch(action) => action.task_step_id(),
             Self::Run { action, .. } => action.step_id(),
         }
@@ -529,6 +542,7 @@ impl PreparedMutation {
 
     fn policy_action(&self) -> a3_domain::PolicyAction {
         match self {
+            Self::Machine(action) => action.policy_action(),
             Self::Patch(action) => action.policy_action(),
             Self::Run { result_spec, .. } => result_spec.policy_action(),
         }
@@ -536,6 +550,7 @@ impl PreparedMutation {
 
     const fn kind(&self) -> AgentMutationKind {
         match self {
+            Self::Machine(action) => action.kind(),
             Self::Patch(_) => AgentMutationKind::Patch,
             Self::Run { .. } => AgentMutationKind::Process,
         }
@@ -556,6 +571,10 @@ impl PreparedMutation {
 /// context, journal, and ledger boundaries without creating a second controller loop.
 #[derive(Debug, Clone, Copy)]
 pub struct ExecuteMutatingAgentAction<'a> {
+    permissions: Option<&'a dyn crate::AgentPermissionStore>,
+    machine_files: Option<&'a dyn crate::MachineFileTool>,
+    machine_network: Option<&'a dyn crate::MachineNetworkTool>,
+    machine_environment: &'a [a3_domain::ProcessEnvironmentVariable],
     coordinator: &'a WorktreeMutationCoordinator,
     policy_store: &'a dyn PolicyStore,
     journal: &'a dyn RunJournalStore,
@@ -591,6 +610,10 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         refresh: &'a RefreshRepositoryIndex,
     ) -> Self {
         Self {
+            permissions: None,
+            machine_files: None,
+            machine_network: None,
+            machine_environment: &[],
             coordinator,
             policy_store,
             journal,
@@ -608,6 +631,31 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
     }
 
     /// Executes at most one patch or discovered command and resolves it through Verify.
+    /// Injects the app-owned durable permission source; absence preserves historical contracts.
+    #[must_use]
+    pub const fn with_permissions(
+        mut self,
+        permissions: &'a dyn crate::AgentPermissionStore,
+    ) -> Self {
+        self.permissions = Some(permissions);
+        self
+    }
+
+    /// Injects only the Core-owned closed machine tools, never a generic shell or filesystem API.
+    #[must_use]
+    pub const fn with_machine_tools(
+        mut self,
+        files: &'a dyn crate::MachineFileTool,
+        network: &'a dyn crate::MachineNetworkTool,
+        environment: &'a [a3_domain::ProcessEnvironmentVariable],
+    ) -> Self {
+        self.machine_files = Some(files);
+        self.machine_network = Some(network);
+        self.machine_environment = environment;
+        self
+    }
+
+    /// Executes one bounded action under current durable policy and evidence.
     #[allow(clippy::too_many_arguments)]
     pub async fn execute<C>(
         self,
@@ -636,7 +684,14 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             + WorkspacePatchControl,
     {
         let fingerprint = MutationActionFingerprint::from_action(&action)?;
-        let prepared = prepare_action(project, run, ledger, published, action, command)?;
+        let prepared = if let AgentAction::Machine(machine) = action {
+            PreparedMutation::Machine(Box::new(
+                self.prepare_machine(project, run, ledger, published, machine, control)
+                    .await?,
+            ))
+        } else {
+            prepare_action(project, run, ledger, published, action, command)?
+        };
         let step_id = prepared.step_id();
         let mutation_kind = prepared.kind();
         let lease = self
@@ -649,10 +704,26 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                     .preview(project, published, patch, control)
                     .await?,
             ),
-            PreparedMutation::Run { .. } => None,
+            PreparedMutation::Run { .. } | PreparedMutation::Machine(_) => None,
         };
 
-        let forced_policy = if prepared.requires_process_approval() {
+        let core_check_automatic = matches!(
+            &prepared,
+            PreparedMutation::Run {
+                core_owned_check: true,
+                ..
+            }
+        ) && if let Some(store) = self.permissions {
+            store
+                .load_agent_permissions()
+                .await
+                .map_err(|_| MutationControllerFailure::InvalidPolicyResult)?
+                .mode()
+                == a3_domain::AgentPermissionMode::FullMachine
+        } else {
+            false
+        };
+        let forced_policy = if prepared.requires_process_approval() && !core_check_automatic {
             let mut rules = workspace_policy.rules().to_vec();
             if !rules
                 .iter()
@@ -741,6 +812,20 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             PolicyDecisionOutcome::Allowed => {}
         }
 
+        // Admission is the start of this tool action. Later user selections govern the
+        // next action; no decision based on an older automatic mode may enter here.
+        if decision.reason() == a3_domain::PolicyDecisionReason::SystemAutomatic
+            && let Some(store) = self.permissions
+        {
+            let current = store
+                .load_agent_permissions()
+                .await
+                .map_err(|_| MutationControllerFailure::InvalidPolicyResult)?;
+            if decision.permission_settings() != Some(current) {
+                return Err(MutationControllerFailure::PermissionsChanged);
+            }
+        }
+
         if run.state() == AgentControllerState::AwaitApproval {
             self.resume_after_approval(
                 project,
@@ -755,21 +840,80 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             .await?;
         }
 
-        let attempt = self
-            .recovery
-            .begin_agent_mutation_attempt(
-                project,
-                run.id(),
-                run.current_snapshot_id(),
-                ids.tool_run_id,
-                fingerprint,
-                mutation_kind,
-                observed_at,
-            )
-            .await
-            .map_err(MutationControllerFailure::MutationStartStore)?;
+        let attempt = if let PreparedMutation::Machine(machine) = &prepared {
+            self.recovery
+                .begin_machine_mutation_attempt(
+                    project,
+                    run.id(),
+                    run.current_snapshot_id(),
+                    ids.tool_run_id,
+                    fingerprint,
+                    machine.scope(),
+                    observed_at,
+                )
+                .await
+        } else {
+            self.recovery
+                .begin_agent_mutation_attempt(
+                    project,
+                    run.id(),
+                    run.current_snapshot_id(),
+                    ids.tool_run_id,
+                    fingerprint,
+                    mutation_kind,
+                    observed_at,
+                )
+                .await
+        }
+        .map_err(MutationControllerFailure::MutationStartStore)?;
+
+        // Starting the durable attempt can yield to a settings writer. Revalidate again at
+        // the actual tool boundary; an obsolete automatic decision has no file/process effect.
+        if decision.reason() == a3_domain::PolicyDecisionReason::SystemAutomatic
+            && let Some(store) = self.permissions
+        {
+            let current = store.load_agent_permissions().await;
+            if current.as_ref().ok().copied() != decision.permission_settings() {
+                self.recovery
+                    .finish_agent_mutation_attempt(
+                        project,
+                        ids.tool_run_id,
+                        attempt.tool_attempt().attempt(),
+                        AgentToolAttemptStatus::Failed,
+                        AgentMutationDisposition::NotApplied,
+                        observed_at,
+                    )
+                    .await
+                    .map_err(MutationControllerFailure::MutationResultStore)?;
+                return Err(if current.is_ok() {
+                    MutationControllerFailure::PermissionsChanged
+                } else {
+                    MutationControllerFailure::InvalidPolicyResult
+                });
+            }
+        }
 
         match prepared {
+            PreparedMutation::Machine(machine) => {
+                self.execute_machine(
+                    project,
+                    run,
+                    ledger,
+                    ledger_version,
+                    step_id,
+                    *machine,
+                    &decision,
+                    ids,
+                    observed_at,
+                    context_seed,
+                    index_compiler,
+                    process_events,
+                    control,
+                    attempt.tool_attempt().attempt(),
+                    &lease,
+                )
+                .await
+            }
             PreparedMutation::Patch(patch) => {
                 let authorized = crate::AuthorizedPatchAction::new(patch, &decision)?;
                 let applied = self
@@ -847,21 +991,28 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         let spec = current_step_spec(ledger, step_id)?;
         let context = inspection_context(run, step_id, spec.id(), run.current_snapshot_id());
         match prepared {
+            PreparedMutation::Machine(machine) => machine
+                .record_approval(self.approval, project, context, &request, reason)
+                .map(|()| None)?,
             PreparedMutation::Patch(action) => self
                 .approval
-                .record_patch_request(project, context, &request, reason, action)?,
+                .record_patch_request(project, context, &request, reason, action)
+                .map(Some)?,
             PreparedMutation::Run {
                 command_kind,
                 result_spec,
                 ..
-            } => self.approval.record_process_request(
-                project,
-                context,
-                &request,
-                reason,
-                AgentProcessInspectionKind::classify(spec.method(), *command_kind),
-                result_spec,
-            )?,
+            } => self
+                .approval
+                .record_process_request(
+                    project,
+                    context,
+                    &request,
+                    reason,
+                    AgentProcessInspectionKind::classify(spec.method(), *command_kind),
+                    result_spec,
+                )
+                .map(Some)?,
         };
         Ok(())
     }
@@ -882,7 +1033,17 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         let mut next_approval = approval.as_deref().cloned();
         let timing = PolicyEvaluationTiming::new(observed_at, observed_at)
             .map_err(|_| MutationControllerFailure::InvalidTimestamp)?;
-        let evaluation = EvaluateActionPolicy::new().execute(
+        let engine = if let Some(store) = self.permissions {
+            EvaluateActionPolicy::new().with_permissions(
+                store
+                    .load_agent_permissions()
+                    .await
+                    .map_err(|_| MutationControllerFailure::InvalidPolicyResult)?,
+            )
+        } else {
+            EvaluateActionPolicy::new()
+        };
+        let evaluation = engine.execute(
             &mut next_run,
             action,
             workspace_policy,
@@ -1216,26 +1377,6 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         let current_index = current_index.ok_or(MutationControllerFailure::InvalidToolResult)?;
         let spec = current_step_spec(ledger, step_id)?;
         if spec.method() != VerificationMethod::DiffInvariant {
-            lease.record_success();
-            return self
-                .request_next_execution(
-                    project,
-                    run,
-                    ledger,
-                    step_id,
-                    ids,
-                    observed_at,
-                    context_seed,
-                    control,
-                )
-                .await;
-        }
-        if !deferred_command_is_available_after(
-            ledger,
-            step_id,
-            project.worktree().id(),
-            &current_index,
-        )? {
             lease.record_success();
             return self
                 .request_next_execution(
@@ -2210,40 +2351,6 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
     }
 }
 
-fn deferred_command_is_available_after(
-    ledger: &TaskLedger,
-    step_id: TaskStepId,
-    worktree_id: a3_domain::WorktreeId,
-    current_index: &PublishedIndex,
-) -> Result<bool, MutationControllerFailure> {
-    let deferred = ledger.steps().find_map(|step| {
-        (step.is_active_plan_step()
-            && step.status() == TaskStepStatus::Ready
-            && step
-                .definition()
-                .dependencies()
-                .iter()
-                .any(|dependency| dependency.prerequisite() == step_id))
-        .then(|| step.definition().verification_spec().target())
-        .and_then(|target| match target {
-            VerificationTarget::DeferredCommand(deferred) => Some(deferred),
-            _ => None,
-        })
-    });
-    let Some(deferred) = deferred else {
-        return Ok(true);
-    };
-    let catalog = DiscoverProjectCommands
-        .execute(worktree_id, current_index)
-        .map_err(|_| MutationControllerFailure::InvalidToolResult)?;
-    Ok(deferred.preferred_kinds().iter().any(|kind| {
-        catalog
-            .commands()
-            .iter()
-            .any(|command| command.kind() == *kind)
-    }))
-}
-
 fn prepare_action(
     project: &ProjectIdentity,
     run: &AgentRun,
@@ -2319,9 +2426,11 @@ fn prepare_action(
                 result_spec: spec,
                 dependencies,
                 approval_required,
+                core_owned_check: command.is_core_owned_check(),
             }
         }
-        AgentAction::Search(_)
+        AgentAction::Machine(_)
+        | AgentAction::Search(_)
         | AgentAction::Inspect(_)
         | AgentAction::UpdateLedger(_)
         | AgentAction::Finish(_) => return Err(MutationControllerFailure::NotMutatingAction),
@@ -2549,6 +2658,8 @@ const fn map_process_failure_disposition(failure: ProcessRunFailure) -> AgentMut
 /// Stable orchestration failure before a safe finite controller outcome was persisted.
 #[derive(Debug)]
 pub enum MutationControllerFailure {
+    /// A closed machine action could not be prepared before its effect.
+    MachinePreparation,
     /// Action was not ApplyPatch or Run.
     NotMutatingAction,
     /// Run, worktree, snapshot, step, verification, or publication anchor differed.
@@ -2569,6 +2680,8 @@ pub enum MutationControllerFailure {
     InvalidTimestamp,
     /// Central policy returned an internally inconsistent decision.
     InvalidPolicyResult,
+    /// Permission selection changed before automatic tool admission.
+    PermissionsChanged,
     /// A trusted tool returned data that violated its typed result contract.
     InvalidToolResult,
     /// Another action owns the worktree mutation boundary.
@@ -2622,6 +2735,7 @@ pub enum MutationControllerFailure {
 impl fmt::Display for MutationControllerFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::MachinePreparation => "machine action cannot be prepared safely",
             Self::NotMutatingAction => "controller action is not a mutation",
             Self::AnchorMismatch => "mutation action does not match current controller anchors",
             Self::CommandSelectionRequired => "run action requires current command selection",
@@ -2632,6 +2746,7 @@ impl fmt::Display for MutationControllerFailure {
             Self::InvalidStaticText => "controller-owned mutation text is invalid",
             Self::InvalidTimestamp => "mutation timestamp is invalid",
             Self::InvalidPolicyResult => "mutation policy result is invalid",
+            Self::PermissionsChanged => "agent permissions changed before tool admission",
             Self::InvalidToolResult => "mutation tool result is invalid",
             Self::Busy(_) => "worktree mutation boundary is busy",
             Self::Fingerprint(_) => "mutation action fingerprint is invalid",
@@ -2679,7 +2794,8 @@ impl MutationControllerFailure {
             | Self::Context(_)
             | Self::ExecutionCheckpoint(_)
             | Self::Run(_) => MutationApplicationState::Unknown,
-            Self::NotMutatingAction
+            Self::MachinePreparation
+            | Self::NotMutatingAction
             | Self::AnchorMismatch
             | Self::CommandSelectionRequired
             | Self::InvalidCommandSelection
@@ -2687,6 +2803,7 @@ impl MutationControllerFailure {
             | Self::InvalidStaticText
             | Self::InvalidTimestamp
             | Self::InvalidPolicyResult
+            | Self::PermissionsChanged
             | Self::Busy(_)
             | Self::Fingerprint(_)
             | Self::PatchPreview(_)
@@ -2729,7 +2846,8 @@ impl Error for MutationControllerFailure {
             Self::Context(error) => Some(error),
             Self::ExecutionCheckpoint(error) => Some(error),
             Self::Run(error) => Some(error),
-            Self::NotMutatingAction
+            Self::MachinePreparation
+            | Self::NotMutatingAction
             | Self::AnchorMismatch
             | Self::CommandSelectionRequired
             | Self::InvalidCommandSelection
@@ -2739,6 +2857,7 @@ impl Error for MutationControllerFailure {
             | Self::InvalidStaticText
             | Self::InvalidTimestamp
             | Self::InvalidPolicyResult
+            | Self::PermissionsChanged
             | Self::InvalidToolResult => None,
         }
     }

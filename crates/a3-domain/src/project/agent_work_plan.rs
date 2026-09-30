@@ -5,13 +5,16 @@ use std::fmt;
 pub const MAX_AGENT_WORK_PLAN_STEPS: usize = 64;
 const GREENFIELD_SLICE_MAX_BYTES: usize = 1_536;
 
+/// Closed research result meaning that no separate operational check was requested or selected.
+pub const NO_ADDITIONAL_AGENT_CHECKS: &str = "No additional checks are required.";
+
 /// Closed verification intent selected by the deterministic plan compiler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentWorkPlanVerificationIntent {
-    /// Verify one implementation or documentation change with a discovered project check.
+    /// Prove an implementation change; run an existing check when available.
     Change,
-    /// Prefer a discovered test command for an explicit test-plan step.
-    Test,
+    /// Execute a reviewed operational check; never authorize test creation.
+    Check,
 }
 
 /// One bounded, ordered step before Core-owned Task Ledger identities are assigned.
@@ -76,9 +79,8 @@ impl AgentWorkPlan {
         )
     }
 
-    /// Compiles an empty-repository plan into bounded mutation slices, explicit local test
-    /// implementation, and one final operational verification. The original ordered outcomes
-    /// remain present in the resulting slices.
+    /// Batches explicit implementation work without inventing tests or test scaffolding.
+    /// Operational checks remain the original separate steps; their absence is valid.
     pub fn into_greenfield_execution(self) -> Result<Self, AgentWorkPlanError> {
         let (changes, tests): (Vec<_>, Vec<_>) = self
             .steps
@@ -90,21 +92,7 @@ impl AgentWorkPlan {
             "Setzt zusammengehörige Ergebnisse des freigegebenen Greenfield-Plans in einem begrenzten Patch um.",
             "Aktuelle Änderungsevidence für alle im Slice genannten Ergebnisse",
         );
-        steps.extend(batched_steps(
-            tests.into_iter().map(|step| step.outcome),
-            "Implementiere lokale automatisierte Tests für diese freigegebenen Szenarien:",
-            "Erzeugt vor der Ausführung eine repository-lokale Testsuite aus dem freigegebenen Testplan.",
-            "Aktuelle Änderungsevidence für die genannten automatisierten Testszenarien",
-        ));
-        steps.push(AgentWorkPlanStep {
-            outcome: "Führe die repository-lokale automatisierte Testsuite aus und belege, dass alle freigegebenen Szenarien bestehen."
-                .to_owned(),
-            rationale: "Prüft das vollständige Greenfield-Ergebnis erst nach Quell- und Teständerungen operational."
-                .to_owned(),
-            expected_evidence: "Aktuelles strukturiertes Testergebnis für die vollständige lokale Testsuite"
-                .to_owned(),
-            verification_intent: AgentWorkPlanVerificationIntent::Test,
-        });
+        steps.extend(tests);
         if steps.len() > MAX_AGENT_WORK_PLAN_STEPS {
             return Err(AgentWorkPlanError::TooManySteps(steps.len()));
         }
@@ -114,9 +102,6 @@ impl AgentWorkPlan {
     fn from_items(changes: Vec<String>, tests: Vec<String>) -> Result<Self, AgentWorkPlanError> {
         if changes.is_empty() {
             return Err(AgentWorkPlanError::MissingImplementationSteps);
-        }
-        if tests.is_empty() {
-            return Err(AgentWorkPlanError::MissingTestSteps);
         }
 
         let mut steps = Vec::new();
@@ -134,17 +119,20 @@ impl AgentWorkPlan {
                 },
             );
         }
-        for outcome in tests {
+        for outcome in tests
+            .into_iter()
+            .filter(|item| item != NO_ADDITIONAL_AGENT_CHECKS)
+        {
             push_unique(
                 &mut steps,
                 AgentWorkPlanStep {
                     rationale:
-                        "Prüft die zuvor umgesetzten Ergebnisse mit einem ausdrücklichen Testziel."
+                        "Führt die im Plan ausgewählte vorhandene oder kurze Funktionsprüfung aus."
                             .to_owned(),
-                    expected_evidence: "Aktuelles Testergebnis für das im Plan benannte Verhalten"
-                        .to_owned(),
+                    expected_evidence:
+                        "Aktuelle operationale Evidence für die im Plan benannte Prüfung".to_owned(),
                     outcome,
-                    verification_intent: AgentWorkPlanVerificationIntent::Test,
+                    verification_intent: AgentWorkPlanVerificationIntent::Check,
                 },
             );
         }
@@ -329,8 +317,6 @@ fn push_item(items: &mut Vec<String>, value: String) {
 pub enum AgentWorkPlanError {
     /// The required implementation section contained no material result.
     MissingImplementationSteps,
-    /// The required test section contained no verification result.
-    MissingTestSteps,
     /// The plan exceeded the fixed step ceiling.
     TooManySteps(usize),
 }
@@ -341,7 +327,6 @@ impl fmt::Display for AgentWorkPlanError {
             Self::MissingImplementationSteps => {
                 formatter.write_str("reviewed Agent plan has no implementation steps")
             }
-            Self::MissingTestSteps => formatter.write_str("reviewed Agent plan has no test steps"),
             Self::TooManySteps(count) => write!(
                 formatter,
                 "reviewed Agent plan has {count} steps; maximum is {MAX_AGENT_WORK_PLAN_STEPS}"
@@ -370,7 +355,7 @@ mod tests {
         assert_eq!(plan.steps()[1].outcome(), "Adapter anbinden");
         assert_eq!(
             plan.steps()[2].verification_intent(),
-            AgentWorkPlanVerificationIntent::Test
+            AgentWorkPlanVerificationIntent::Check
         );
         Ok(())
     }
@@ -387,12 +372,9 @@ mod tests {
             ),
             Err(AgentWorkPlanError::MissingImplementationSteps)
         );
-        assert_eq!(
-            AgentWorkPlan::from_reviewed_markdown(
-                "## Implementation Changes\n- Änderung umsetzen\n## Test Plan\n\n## Assumptions\nAktuell"
-            ),
-            Err(AgentWorkPlanError::MissingTestSteps)
-        );
+        assert!(AgentWorkPlan::from_reviewed_markdown(
+            "## Implementation Changes\n- Änderung umsetzen\n## Test Plan\n\n## Assumptions\nAktuell"
+        ).is_ok_and(|plan| plan.steps().len() == 1));
     }
 
     #[test]
@@ -433,7 +415,7 @@ mod tests {
         assert_eq!(plan.steps()[2].outcome(), "Start prüfen");
         assert_eq!(
             plan.steps()[3].verification_intent(),
-            AgentWorkPlanVerificationIntent::Test
+            AgentWorkPlanVerificationIntent::Check
         );
         Ok(())
     }
@@ -452,7 +434,7 @@ mod tests {
         );
         assert_eq!(
             plan.steps()[1].verification_intent(),
-            AgentWorkPlanVerificationIntent::Test
+            AgentWorkPlanVerificationIntent::Check
         );
         Ok(())
     }
@@ -472,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn greenfield_execution_batches_changes_builds_tests_then_runs_once()
+    fn greenfield_execution_preserves_checks_without_creating_test_implementation()
     -> Result<(), Box<dyn std::error::Error>> {
         let plan = AgentWorkPlan::from_reviewed_markdown(
             "## Implementation Changes\n1. server.py anlegen\n2. Fehlerantworten ergänzen\n## Test Plan\n1. GET prüfen\n2. POST prüfen",
@@ -491,15 +473,58 @@ mod tests {
             AgentWorkPlanVerificationIntent::Change
         );
         assert!(plan.steps()[1].outcome().contains("GET prüfen"));
-        assert!(plan.steps()[1].outcome().contains("POST prüfen"));
+        assert!(plan.steps()[2].outcome().contains("POST prüfen"));
         assert_eq!(
             plan.steps()[1].verification_intent(),
-            AgentWorkPlanVerificationIntent::Change
+            AgentWorkPlanVerificationIntent::Check
         );
         assert_eq!(
             plan.steps()[2].verification_intent(),
-            AgentWorkPlanVerificationIntent::Test
+            AgentWorkPlanVerificationIntent::Check
         );
+        Ok(())
+    }
+
+    #[test]
+    fn small_greenfield_server_does_not_acquire_a_testsuite()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for checks in ["", super::NO_ADDITIONAL_AGENT_CHECKS] {
+            let plan = AgentWorkPlan::from_research_decisions("1. server.py anlegen", checks)?
+                .into_greenfield_execution()?;
+            assert_eq!(plan.steps().len(), 1);
+            assert!(plan.steps()[0].outcome().contains("server.py"));
+            assert!(!plan.steps()[0].outcome().contains("Tests"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn requested_and_risk_justified_test_changes_remain_distinct_from_running_checks()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for implementation in [
+            "1. Requested unit tests for the response mapping implementieren",
+            "1. Regressionstest für den konkreten Fehler anlegen: negative Werte wurden falsch akzeptiert",
+        ] {
+            let plan = AgentWorkPlan::from_research_decisions(
+                implementation,
+                "1. Vorhandenen begrenzten Testcommand ausführen",
+            )?
+            .into_greenfield_execution()?;
+            assert_eq!(plan.steps().len(), 2);
+            assert!(
+                plan.steps()[0]
+                    .outcome()
+                    .contains(implementation.trim_start_matches("1. "))
+            );
+            assert_eq!(
+                plan.steps()[0].verification_intent(),
+                AgentWorkPlanVerificationIntent::Change
+            );
+            assert_eq!(
+                plan.steps()[1].verification_intent(),
+                AgentWorkPlanVerificationIntent::Check
+            );
+        }
         Ok(())
     }
 }

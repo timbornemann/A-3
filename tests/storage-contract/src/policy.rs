@@ -242,6 +242,36 @@ where
         .execute(&project, denied_sequence, &run, &denied)
         .await?;
 
+    let settings = a3_domain::AgentPermissionSettings::new(
+        a3_domain::AgentPermissionMode::FullMachine,
+        a3_domain::AgentPermissionRevision::new(2)?,
+    );
+    let sequence = run.last_event_sequence();
+    let automatic = EvaluateActionPolicy::new()
+        .with_permissions(settings)
+        .execute(
+            &mut run,
+            &write_action(worktree_id, "src/automatic.rs")?,
+            &WorkspacePolicy::unrestricted(),
+            None,
+            evaluation_context(210, 211, 212, snapshot_id, 4_010, 5_000)?,
+        )?;
+    assert_eq!(
+        automatic.decision().reason(),
+        PolicyDecisionReason::SystemAutomatic
+    );
+    assert!(automatic.approval_request().is_none());
+    PersistPolicyEvaluation::new(&reopened)
+        .execute(&project, sequence, &run, &automatic)
+        .await?;
+    assert_eq!(
+        reopened
+            .load_policy_decision(&project, automatic.decision().id())
+            .await?,
+        Some(automatic.decision().clone())
+    );
+    assert_eq!(automatic.decision().permission_settings(), Some(settings));
+
     let durable_before_conflict = reopened
         .load_agent_run(&project, run.id())
         .await?

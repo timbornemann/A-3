@@ -72,6 +72,27 @@ export type AgentApprovalActionV1 =
       };
     };
 
+export type AgentApprovalActionV2 =
+  | AgentApprovalActionV1
+  | {
+      kind: 'machine';
+      version: 1;
+      resourceKind: 'file' | 'http';
+      target: string;
+      operation: 'read' | 'write' | 'delete';
+      resourceId: string;
+      expectedHash: string | null;
+      proposedHash: string | null;
+    };
+export type AgentApprovalV2 = Omit<AgentApprovalV1, 'action'> & { action: AgentApprovalActionV2 };
+export type AgentApprovalResultV2 =
+  | Exclude<AgentApprovalResultV1, { status: 'available' }>
+  | { status: 'available'; approval: AgentApprovalV2 };
+export interface AgentApprovalResponseV2 {
+  protocolVersion: 2;
+  result: AgentApprovalResultV2;
+}
+
 export interface AgentApprovalV1 {
   approvalRevision: string;
   ledgerRevision: number;
@@ -145,9 +166,28 @@ export async function queryAgentApproval(
   );
 }
 
+export async function queryAgentApprovalV2(
+  taskId: string,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<AgentApprovalResponseV2> {
+  if (!STABLE_ID.test(taskId)) throw invalid();
+  return parseAgentApprovalResponseV2(
+    await invokeCommand('query_agent_approval_v2', { request: { protocolVersion: 2, taskId } }),
+  );
+}
+export function parseAgentApprovalResponseV2(payload: unknown): AgentApprovalResponseV2 {
+  if (
+    !isRecord(payload) ||
+    !hasExactKeys(payload, ['protocolVersion', 'result']) ||
+    payload.protocolVersion !== 2
+  )
+    throw invalid();
+  return { protocolVersion: 2, result: parseQueryResult(payload.result, true) };
+}
+
 export async function controlAgentApproval(
   taskId: string,
-  approval: AgentApprovalV1,
+  approval: AgentApprovalV1 | AgentApprovalV2,
   action: AgentApprovalControlActionV1,
   invokeCommand: InvokeCommand = invokeThroughTauri,
 ): Promise<AgentApprovalControlResponseV1> {
@@ -190,7 +230,9 @@ function parseEnvelope(payload: unknown): unknown {
   return payload.result;
 }
 
-function parseQueryResult(value: unknown): AgentApprovalResultV1 {
+function parseQueryResult(value: unknown): AgentApprovalResultV1;
+function parseQueryResult(value: unknown, machine: true): AgentApprovalResultV2;
+function parseQueryResult(value: unknown, machine = false): AgentApprovalResultV2 {
   if (!isRecord(value) || typeof value.status !== 'string') throw invalid();
   if (
     ['noProject', 'taskNotFound', 'ledgerUnavailable', 'activityChanged', 'unavailable'].includes(
@@ -214,7 +256,7 @@ function parseQueryResult(value: unknown): AgentApprovalResultV1 {
     };
   }
   if (value.status === 'available' && hasExactKeys(value, ['approval', 'status'])) {
-    return { approval: parseApproval(value.approval), status: 'available' };
+    return { approval: parseApproval(value.approval, machine), status: 'available' };
   }
   throw invalid();
 }
@@ -255,7 +297,7 @@ function parseControlResult(value: unknown): AgentApprovalControlResultV1 {
   throw invalid();
 }
 
-function parseApproval(value: unknown): AgentApprovalV1 {
+function parseApproval(value: unknown, machine = false): AgentApprovalV2 {
   const keys = [
     'action',
     'actionClass',
@@ -311,7 +353,20 @@ function parseApproval(value: unknown): AgentApprovalV1 {
     (!['pending', 'active'].includes(status) && (pendingControls || activeControls))
   )
     throw invalid();
-  const action = parseAction(value.action);
+  const action = parseAction(value.action, machine);
+  if (action.kind === 'machine') {
+    const expectedClass =
+      action.resourceKind === 'http'
+        ? 'network'
+        : action.operation === 'delete'
+          ? 'destructive'
+          : 'outsideRoot';
+    if (
+      value.actionClass !== expectedClass ||
+      value.risk !== (expectedClass === 'network' ? 'high' : 'critical')
+    )
+      throw invalid();
+  }
   if (
     action.kind === 'process' &&
     action.process.planBinding.kind === 'validated' &&
@@ -321,7 +376,7 @@ function parseApproval(value: unknown): AgentApprovalV1 {
   return { ...(value as Omit<AgentApprovalV1, 'action'>), action };
 }
 
-function parseAction(value: unknown): AgentApprovalActionV1 {
+function parseAction(value: unknown, machine = false): AgentApprovalActionV2 {
   if (!isRecord(value) || typeof value.kind !== 'string') throw invalid();
   if (
     value.kind === 'patch' &&
@@ -340,6 +395,36 @@ function parseAction(value: unknown): AgentApprovalActionV1 {
   }
   if (value.kind === 'process' && hasExactKeys(value, ['kind', 'process'])) {
     return { kind: 'process', process: parseProcess(value.process) };
+  }
+  if (
+    machine &&
+    value.kind === 'machine' &&
+    hasExactKeys(value, [
+      'kind',
+      'version',
+      'resourceKind',
+      'target',
+      'operation',
+      'resourceId',
+      'expectedHash',
+      'proposedHash',
+    ]) &&
+    value.version === 1 &&
+    ['file', 'http'].includes(String(value.resourceKind)) &&
+    isBoundedText(value.target, 4096) &&
+    !Array.from(value.target).some(
+      (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
+    ) &&
+    ['read', 'write', 'delete'].includes(String(value.operation)) &&
+    STABLE_ID.test(String(value.resourceId)) &&
+    (value.expectedHash === null || STABLE_ID.test(String(value.expectedHash))) &&
+    (value.proposedHash === null || STABLE_ID.test(String(value.proposedHash))) &&
+    (value.operation !== 'delete' || value.expectedHash !== null) &&
+    (value.operation === 'write' ? value.proposedHash !== null : value.proposedHash === null) &&
+    (value.resourceKind !== 'http' ||
+      (value.operation === 'read' && value.expectedHash === null && value.proposedHash === null))
+  ) {
+    return value as AgentApprovalActionV2;
   }
   throw invalid();
 }

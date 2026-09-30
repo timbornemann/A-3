@@ -1976,7 +1976,7 @@ mod tests {
             (4100, false),
             (-50, false),
         ] {
-            let document = json!({"schema_version":5,"action":{
+            let document = json!({"schema_version":6,"action":{
                 "kind":"inspect","target":{"kind":"function_flow","symbol_id":"a".repeat(64),
                 "call_path":[],"view":{"kind":"steps","offset":offset}}}});
             assert_eq!(

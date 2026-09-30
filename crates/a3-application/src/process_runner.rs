@@ -71,7 +71,10 @@ impl AuthorizedProcessSpec {
         }
         let valid_reason = match decision.reason() {
             PolicyDecisionReason::SystemAutomatic => {
-                SystemPolicyV1.disposition(&action) == PolicyDisposition::Automatic
+                decision.permission_settings().map_or_else(
+                    || SystemPolicyV1.disposition(&action),
+                    |settings| settings.disposition(&action),
+                ) == PolicyDisposition::Automatic
             }
             PolicyDecisionReason::ApprovalGranted => true,
             _ => false,

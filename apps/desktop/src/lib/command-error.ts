@@ -56,6 +56,8 @@ export type ErrorCodeV1 =
   | 'deepMapAlreadyPending'
   | 'deepMapNotRunning'
   | 'deepMapNotPaused'
+  | 'agentPermissionsChanged'
+  | 'agentPermissionsUnavailable'
   | 'invalidSettingsRequest'
   | 'modelEndpointInvalid'
   | 'modelProbeAlreadyActive'
@@ -127,6 +129,8 @@ const ERROR_CODES = new Set<ErrorCodeV1>([
   'deepMapAlreadyPending',
   'deepMapNotRunning',
   'deepMapNotPaused',
+  'agentPermissionsChanged',
+  'agentPermissionsUnavailable',
   'invalidSettingsRequest',
   'modelEndpointInvalid',
   'modelProbeAlreadyActive',

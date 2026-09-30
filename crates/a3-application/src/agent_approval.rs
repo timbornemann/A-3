@@ -316,6 +316,13 @@ pub enum AgentApprovalAction {
     Patch(AgentApprovalPatch),
     /// One complete E4 direct-process specification.
     Process(AgentApprovalProcess),
+    /// Exact bounded machine-file or HTTP scope, without source content.
+    Machine {
+        /// Exact canonical resource descriptor.
+        scope: crate::MachineEffectScope,
+        /// Complete-file operation or HTTP read.
+        operation: a3_domain::PathPolicyOperation,
+    },
 }
 
 /// Volatile lifecycle marker; durable grant state remains authoritative in `PolicyStore`.
@@ -442,6 +449,19 @@ pub trait AgentApprovalSink: fmt::Debug + Send + Sync {
         kind: AgentProcessInspectionKind,
         spec: &ProcessSpec,
     ) -> Result<AgentApprovalRevision, AgentApprovalSinkFailure>;
+    /// Retains a Core-prepared machine scope only after its exact durable request exists.
+    fn record_machine_request(
+        &self,
+        project: &ProjectIdentity,
+        context: AgentInspectionContext,
+        request: &ApprovalRequest,
+        reason: PolicyDecisionReason,
+        action: &PolicyAction,
+        scope: &crate::MachineEffectScope,
+    ) -> Result<AgentApprovalRevision, AgentApprovalSinkFailure> {
+        let _ = (project, context, request, reason, action, scope);
+        Err(AgentApprovalSinkFailure::AnchorMismatch)
+    }
 }
 
 /// Bounded in-memory approval owner instantiated and lifecycle-managed by the composition root.
@@ -643,6 +663,41 @@ impl AgentApprovalSink for AgentApprovalBuffer {
             AgentApprovalAction::Process(AgentApprovalProcess::from_spec(kind, spec)),
         )
     }
+    fn record_machine_request(
+        &self,
+        project: &ProjectIdentity,
+        context: AgentInspectionContext,
+        request: &ApprovalRequest,
+        reason: PolicyDecisionReason,
+        action: &PolicyAction,
+        scope: &crate::MachineEffectScope,
+    ) -> Result<AgentApprovalRevision, AgentApprovalSinkFailure> {
+        let operation = match action {
+            PolicyAction::MachineFile {
+                step_id,
+                resource_id,
+                operation: actual,
+                ..
+            } if *step_id == context.step_id() && *resource_id == scope.resource() => *actual,
+            PolicyAction::MachineHttpGet {
+                step_id, target_id, ..
+            } if *step_id == context.step_id() && *target_id == scope.resource() => {
+                a3_domain::PathPolicyOperation::Read
+            }
+            _ => return Err(AgentApprovalSinkFailure::AnchorMismatch),
+        };
+        self.record(
+            project,
+            context,
+            request,
+            reason,
+            action,
+            AgentApprovalAction::Machine {
+                scope: scope.clone(),
+                operation,
+            },
+        )
+    }
 }
 
 #[derive(Default)]
@@ -716,8 +771,12 @@ fn action_worktree(action: &PolicyAction) -> Option<WorktreeId> {
             a3_domain::PolicyPathScope::OutsideRoot { .. } => None,
         },
         PolicyAction::Patch(patch) => Some(patch.worktree_id()),
-        PolicyAction::Process(process) => Some(process.worktree_id()),
+        PolicyAction::Process(process) | PolicyAction::MachineProcess { process, .. } => {
+            Some(process.worktree_id())
+        }
         PolicyAction::Network { .. } => None,
+        PolicyAction::MachineFile { worktree_id, .. }
+        | PolicyAction::MachineHttpGet { worktree_id, .. } => Some(*worktree_id),
     }
 }
 

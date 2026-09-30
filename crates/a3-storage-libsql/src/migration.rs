@@ -505,6 +505,7 @@ const CATALOG_MIGRATIONS: &[Migration] = &[
             SELECT RAISE(ABORT, 'desktop provider settings are append-only');
           END;",
     },
+    Migration { version: 10, name: "agent_permission_settings", sql: include_str!("migrations/catalog_v10.sql") },
 ];
 
 const KNOWLEDGE_BOOTSTRAP_MIGRATION: Migration = Migration {
@@ -3344,6 +3345,16 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
         name: "deferred_greenfield_verification",
         sql: include_str!("migrations/knowledge_v40.sql"),
     },
+    Migration {
+        version: 41,
+        name: "policy_permission_context",
+        sql: include_str!("migrations/knowledge_v41.sql"),
+    },
+    Migration {
+        version: 42,
+        name: "machine_tool_audit_and_effect_scopes",
+        sql: include_str!("migrations/knowledge_v42.sql"),
+    },
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -3355,7 +3366,7 @@ pub struct CatalogSchemaVersion(u32);
 
 impl CatalogSchemaVersion {
     /// Current schema version understood by this build.
-    pub const CURRENT: Self = Self::new(9);
+    pub const CURRENT: Self = Self::new(10);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -3376,7 +3387,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(40);
+    pub const CURRENT: Self = Self::new(42);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -3737,6 +3748,146 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
+    fn knowledge_v42_preserves_existing_mutations_and_rolls_back_table_replacement()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            for conflict in [false, true] {
+                let database = libsql::Builder::new_local(":memory:").build().await?;
+                let connection = database.connect()?;
+                // Real V22/V42 mutation SQL against minimal referenced parents, with FKs on.
+                connection.execute_batch("PRAGMA foreign_keys=ON;
+                    CREATE TABLE snapshots(snapshot_id BLOB PRIMARY KEY);
+                    CREATE TABLE tool_run_attempts(tool_run_id BLOB,attempt_sequence INTEGER,status TEXT,
+                        PRIMARY KEY(tool_run_id,attempt_sequence));
+                    CREATE TABLE run_events(event_kind TEXT,turn_action_kind TEXT,turn_action_kind_v2 TEXT);
+                    CREATE TABLE policy_decisions(policy_decision_id BLOB PRIMARY KEY);
+                    CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,name TEXT,checksum BLOB);
+                    PRAGMA user_version=41;").await?;
+                connection
+                    .execute_batch(KNOWLEDGE_MIGRATIONS[21].sql)
+                    .await?;
+                let snapshot = vec![19u8; 32];
+                connection
+                    .execute(
+                        "INSERT INTO snapshots VALUES (?1)",
+                        params![snapshot.clone()],
+                    )
+                    .await?;
+                for (index, kind, state, reconciliation) in [
+                    (1u8, "patch", "applied", "not_required"),
+                    (2, "process", "not_applied", "not_required"),
+                    (3, "unclassified_legacy", "unknown", "required"),
+                    (4, "patch", "unknown", "reconciled"),
+                    (5, "process", "unknown", "replanned"),
+                ] {
+                    let id = vec![index; 32];
+                    connection
+                        .execute(
+                            "INSERT INTO tool_run_attempts VALUES (?1,1,'in_flight')",
+                            params![id.clone()],
+                        )
+                        .await?;
+                    let reconciled = matches!(reconciliation, "reconciled" | "replanned");
+                    connection
+                        .execute(
+                            "INSERT INTO mutation_attempts VALUES (?1,1,?1,?2,?3,?4,?5,?6)",
+                            params![
+                                id,
+                                kind,
+                                state,
+                                reconciliation,
+                                reconciled.then(|| snapshot.clone()),
+                                reconciled.then_some(7i64)
+                            ],
+                        )
+                        .await?;
+                }
+                let original = query_string(&connection, "SELECT group_concat(row_text,'|') FROM
+                    (SELECT hex(tool_run_id)||':'||attempt_sequence||':'||hex(action_fingerprint)||':'||action_kind||':'||application_state||':'||reconciliation_state||':'||coalesce(hex(reconciled_snapshot_id),'')||':'||coalesce(reconciled_at_unix_millis,'') AS row_text
+                    FROM mutation_attempts ORDER BY tool_run_id)").await?;
+                if conflict {
+                    // Failure after copying and dropping the old table must restore all of it.
+                    connection
+                        .execute("CREATE TABLE machine_effect_scopes(conflict INTEGER)", ())
+                        .await?;
+                }
+                let result = super::apply_migration(
+                    &connection,
+                    &KNOWLEDGE_MIGRATIONS[41],
+                    super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+                )
+                .await;
+                if conflict {
+                    assert!(matches!(
+                        result,
+                        Err(MigrationError::Apply { version: 42, .. })
+                    ));
+                    assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 41);
+                    assert_eq!(query_i64(&connection,"SELECT COUNT(*) FROM pragma_table_info('run_events') WHERE name='turn_action_kind_v3'").await?,0);
+                    assert_eq!(
+                        query_i64(
+                            &connection,
+                            "SELECT COUNT(*) FROM schema_migrations WHERE version=42"
+                        )
+                        .await?,
+                        0
+                    );
+                } else {
+                    result?;
+                    assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 42);
+                    assert_eq!(
+                        query_i64(
+                            &connection,
+                            "SELECT COUNT(*) FROM schema_migrations WHERE version=42"
+                        )
+                        .await?,
+                        1
+                    );
+                    assert_eq!(
+                        query_i64(
+                            &connection,
+                            "SELECT COUNT(*) FROM sqlite_master WHERE name='mutation_attempts_v22'"
+                        )
+                        .await?,
+                        0
+                    );
+                    assert!(
+                        connection
+                            .execute(
+                                "INSERT INTO run_events VALUES ('tool_action',NULL,NULL,'machine')",
+                                ()
+                            )
+                            .await
+                            .is_err()
+                    );
+                    connection.execute("INSERT INTO run_events VALUES ('model_interaction',NULL,NULL,'machine')",()).await?;
+                }
+                assert_eq!(query_string(&connection, "SELECT group_concat(row_text,'|') FROM
+                    (SELECT hex(tool_run_id)||':'||attempt_sequence||':'||hex(action_fingerprint)||':'||action_kind||':'||application_state||':'||reconciliation_state||':'||coalesce(hex(reconciled_snapshot_id),'')||':'||coalesce(reconciled_at_unix_millis,'') AS row_text
+                    FROM mutation_attempts ORDER BY tool_run_id)").await?,original);
+                assert_eq!(
+                    query_i64(&connection, "SELECT COUNT(*) FROM pragma_foreign_key_check").await?,
+                    0
+                );
+                assert!(
+                    connection
+                        .execute("DELETE FROM mutation_attempts", ())
+                        .await
+                        .is_err()
+                );
+                assert!(
+                    connection
+                        .execute("UPDATE mutation_attempts SET action_kind='process'", ())
+                        .await
+                        .is_err()
+                );
+                assert_eq!(query_i64(&connection,"SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('mutation_attempts_insert_guard','mutation_attempts_update_guard','mutation_attempts_delete_guard')").await?,3);
+            }
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
     fn catalog_migration_definitions_are_contiguous_and_uniquely_named() {
         assert_migration_definitions(CATALOG_MIGRATIONS, CatalogSchemaVersion::CURRENT.get());
     }
@@ -4012,6 +4163,8 @@ mod tests {
         (knowledge_upgrades_from_v37, 37),
         (knowledge_upgrades_from_v38, 38),
         (knowledge_upgrades_from_v39, 39),
+        (knowledge_upgrades_from_v40, 40),
+        (knowledge_upgrades_from_v41, 41),
     );
 
     #[test]

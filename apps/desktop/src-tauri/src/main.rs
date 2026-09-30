@@ -547,6 +547,8 @@ mod tests {
             capability.get("permissions"),
             Some(&json!([
                 "allow-query-function-flows",
+                "allow-query-agent-permissions",
+                "allow-update-agent-permissions",
                 "allow-activate-catalog-project",
                 "allow-cancel-model-probe",
                 "allow-list-recent-projects",
@@ -575,6 +577,9 @@ mod tests {
                 "allow-query-deep-map-runs",
                 "allow-query-agent-activity",
                 "allow-query-agent-approval",
+                "allow-query-agent-approval-v2",
+                "allow-query-agent-machine-recovery",
+                "allow-recover-agent-machine-effect",
                 "allow-query-agent-ask-research-turns",
                 "allow-query-agent-ask-research-detail",
                 "allow-query-agent-ask-research-sources",

@@ -57,7 +57,7 @@ pub(super) fn decode(raw: &str) -> Option<NextWork> {
 
 /// A validated work request selects known IDs; the independent action decoder still admits it.
 pub(super) fn verification_wire(command: &AgentRunAction) -> String {
-    json!({"schema_version":5,"action":{"kind":"run",
+    json!({"schema_version":6,"action":{"kind":"run",
         "step_id":command.step_id().to_string(),"command_id":command.command_id().to_string()
     }})
     .to_string()

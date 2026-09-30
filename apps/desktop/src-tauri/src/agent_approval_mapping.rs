@@ -16,10 +16,50 @@ use a3_protocol::{
     AgentInspectionProcessKindV1, TaskLensStepStatusV1,
 };
 
-pub(crate) fn map_agent_approval_to_v1(value: &AgentApprovalCenter) -> AgentApprovalV1 {
+pub(crate) fn map_agent_approval_to_v1(value: &AgentApprovalCenter) -> Option<AgentApprovalV1> {
+    Some(map_details(
+        value,
+        map_action(value.presentation().action())?,
+    ))
+}
+
+pub(crate) fn map_agent_approval_to_v2(
+    value: &AgentApprovalCenter,
+) -> Option<a3_protocol::AgentApprovalV2> {
+    use a3_protocol::{
+        AgentApprovalActionV2 as V2, AgentMachineFileOperationV2 as Op,
+        AgentMachineResourceKindV2 as Resource,
+    };
+    let action = match value.presentation().action() {
+        AgentApprovalAction::Machine { scope, operation } => V2::Machine {
+            version: 1,
+            resource_kind: if scope.kind() == a3_domain::AgentMutationKind::MachineFile {
+                Resource::File
+            } else {
+                Resource::Http
+            },
+            target: scope.target().to_owned(),
+            resource_id: scope.resource().to_string(),
+            operation: match operation {
+                a3_domain::PathPolicyOperation::Read => Op::Read,
+                a3_domain::PathPolicyOperation::Write => Op::Write,
+                a3_domain::PathPolicyOperation::Delete => Op::Delete,
+            },
+            expected_hash: scope.expected().map(|h| encode_hex(h.as_bytes())),
+            proposed_hash: scope.proposed().map(|h| encode_hex(h.as_bytes())),
+        },
+        other => match map_action(other)? {
+            AgentApprovalActionV1::Patch { patch } => V2::Patch { patch },
+            AgentApprovalActionV1::Process { process } => V2::Process { process },
+        },
+    };
+    Some(map_details(value, action))
+}
+
+fn map_details<A>(value: &AgentApprovalCenter, action: A) -> a3_protocol::AgentApprovalDetails<A> {
     let presentation = value.presentation();
     let context = presentation.context();
-    AgentApprovalV1::new(
+    a3_protocol::AgentApprovalDetails::new(
         presentation.revision().get().to_string(),
         value.ledger_revision(),
         value.ledger_store_version().get().to_string(),
@@ -41,7 +81,7 @@ pub(crate) fn map_agent_approval_to_v1(value: &AgentApprovalCenter) -> AgentAppr
             a3_application::AgentApprovalStatus::Expired => AgentApprovalStatusV1::Expired,
             a3_application::AgentApprovalStatus::Denied => AgentApprovalStatusV1::Denied,
         },
-        map_action(presentation.action()),
+        action,
         value.can_allow_once(),
         value.can_deny(),
         value.can_continue(),
@@ -49,8 +89,8 @@ pub(crate) fn map_agent_approval_to_v1(value: &AgentApprovalCenter) -> AgentAppr
     )
 }
 
-fn map_action(value: &AgentApprovalAction) -> AgentApprovalActionV1 {
-    match value {
+fn map_action(value: &AgentApprovalAction) -> Option<AgentApprovalActionV1> {
+    Some(match value {
         AgentApprovalAction::Patch(patch) => AgentApprovalActionV1::Patch {
             patch: AgentApprovalPatchV1::new(
                 patch.rationale().to_owned(),
@@ -121,7 +161,8 @@ fn map_action(value: &AgentApprovalAction) -> AgentApprovalActionV1 {
                 process.specification_id().to_string(),
             ),
         },
-    }
+        AgentApprovalAction::Machine { .. } => return None,
+    })
 }
 
 fn map_path(value: &RepositoryPath) -> AgentInspectionPathV1 {

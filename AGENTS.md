@@ -54,7 +54,7 @@ Never mark work complete based only on compilation, an LLM judgment, or a mocked
 - A file change invalidates dependent evidence before new LLM reasoning can rely on it.
 - Only one mutating agent action may execute per worktree at a time.
 - Cloud connectivity, telemetry, and synchronization are off by default.
-- No autonomous git push, merge, release, destructive command, external write, or network access.
+- No autonomous git push, merge, release or destructive command. Classified non-destructive external writes and network actions in the A^3 product require its explicit app-wide Full machine selection; Ask permissions requires exact approval. Follow ADR-0118 and SECURITY_AND_EXECUTION.md.
 
 ## Code quality rules
 
@@ -92,14 +92,14 @@ Never mark work complete based only on compilation, an LLM judgment, or a mocked
 - Resolve and validate canonical paths after symlink traversal. Deny access outside approved roots.
 - Use argv-based process execution without a shell by default.
 - Never log secrets, full environment dumps, auth headers, raw credentials, or unrestricted source content.
-- Package installation, network use, shell mode, destructive operations, access outside the workspace, and publishing always require explicit user approval.
+- Product package installation, network and outside-root access require Ask-mode exact approval or a closed Core classification authorized by the current Full machine revision. Unknown scripts, shell mode, destructive operations and publishing always require exact approval. Full machine never elevates OS rights or relaxes path, secret, cancellation or recovery boundaries.
 - Do not weaken a permission or safety boundary to make a test pass.
 
 ## Testing and completion
 
 Apply docs/QUALITY_GATES.md. At minimum, changed Rust code requires formatting, targeted tests, workspace tests, and Clippy with warnings denied. Changed frontend code requires formatting, linting, type checking, and relevant tests. Boundary changes require integration or contract tests.
 
-Every bug fix must add a regression test unless technically impossible; document the reason if impossible.
+Every A^3 bug fix must add a regression test unless technically impossible; document the reason if impossible. For user projects implemented by A^3, ADR-0117 applies: new tests need an explicit request or a concrete complexity, regression or security risk with a short reason; an explicit no-tests instruction takes precedence. Existing checks and brief functional verification remain allowed.
 
 Every new adapter must pass the same contract suite as existing adapters.
 

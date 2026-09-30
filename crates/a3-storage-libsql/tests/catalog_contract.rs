@@ -317,6 +317,93 @@ async fn set_user_version(
     Ok(())
 }
 
+#[test]
+fn permission_migration_persistence_and_competing_revisions()
+-> Result<(), Box<dyn std::error::Error>> {
+    block_on(async {
+        use a3_application::{AgentPermissionStore, AgentPermissionStoreFailure};
+        use a3_domain::{AgentPermissionMode, AgentPermissionSettings};
+        let temporary = TempDirectory::new()?;
+        let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
+        let store = LibsqlKnowledgeStore::open(&layout).await?;
+        assert_eq!(
+            store.load_agent_permissions().await?,
+            AgentPermissionSettings::INITIAL
+        );
+        drop(store);
+        // Reconstruct the exact previous schema, preserving all historical checksums.
+        let database = libsql::Builder::new_local(layout.catalog_path())
+            .build()
+            .await?;
+        let connection = database.connect()?;
+        connection.execute_batch("DROP TABLE agent_permission_revisions; DELETE FROM schema_migrations WHERE version = 10; PRAGMA user_version = 9;").await?;
+        drop(connection);
+        drop(database);
+        let store = LibsqlKnowledgeStore::open(&layout).await?;
+        let initial = store.load_agent_permissions().await?;
+        assert_eq!(initial, AgentPermissionSettings::INITIAL);
+        let full = store
+            .update_agent_permissions(initial.revision(), AgentPermissionMode::FullMachine)
+            .await?;
+        assert_eq!(full.revision().get(), 2);
+        assert_eq!(
+            store
+                .update_agent_permissions(initial.revision(), AgentPermissionMode::AskPermissions)
+                .await,
+            Err(AgentPermissionStoreFailure::Conflict)
+        );
+        assert_eq!(
+            store
+                .update_agent_permissions(full.revision(), AgentPermissionMode::FullMachine)
+                .await?,
+            full
+        );
+        drop(store);
+        let reopened = LibsqlKnowledgeStore::open(&layout).await?;
+        assert_eq!(reopened.load_agent_permissions().await?, full);
+        let ask = reopened
+            .update_agent_permissions(full.revision(), AgentPermissionMode::AskPermissions)
+            .await?;
+        assert_eq!(ask.revision().get(), 3);
+        let other = LibsqlKnowledgeStore::open(&layout).await?;
+        let barrier = std::sync::Barrier::new(2);
+        let results = std::thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                barrier.wait();
+                block_on(
+                    reopened
+                        .update_agent_permissions(ask.revision(), AgentPermissionMode::FullMachine),
+                )
+            });
+            let second = scope.spawn(|| {
+                barrier.wait();
+                block_on(
+                    other
+                        .update_agent_permissions(ask.revision(), AgentPermissionMode::FullMachine),
+                )
+            });
+            (first.join(), second.join())
+        });
+        let first = results
+            .0
+            .map_err(|_| std::io::Error::other("settings worker failed"))?;
+        let second = results
+            .1
+            .map_err(|_| std::io::Error::other("settings worker failed"))?;
+        assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
+        assert!(matches!(
+            (first, second),
+            (Ok(_), Err(AgentPermissionStoreFailure::Conflict))
+                | (Err(AgentPermissionStoreFailure::Conflict), Ok(_))
+        ));
+        let concurrent = reopened.load_agent_permissions().await?;
+        assert_eq!(concurrent.revision().get(), 4);
+        assert_eq!(concurrent.mode(), AgentPermissionMode::FullMachine);
+        assert_eq!(other.load_agent_permissions().await?, concurrent);
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
 async fn read_user_version(layout: &StorageLayout) -> Result<u32, Box<dyn std::error::Error>> {
     let database = libsql::Builder::new_local(layout.catalog_path())
         .build()

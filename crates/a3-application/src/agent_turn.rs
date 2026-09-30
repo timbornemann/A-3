@@ -686,7 +686,8 @@ impl<'a> ExecuteAgentTurn<'a> {
             AgentAction::UpdateLedger(_)
             | AgentAction::Finish(_)
             | AgentAction::ApplyPatch(_)
-            | AgentAction::Run(_) => None,
+            | AgentAction::Run(_)
+            | AgentAction::Machine(_) => None,
         };
         let tool_result = if let Some(read_action) = read_action {
             let action_ordinal = run
@@ -1544,7 +1545,7 @@ mod tests {
     #[test]
     fn valid_search_executes_exactly_one_read_action() -> Result<(), Box<dyn Error>> {
         let mut fixture = turn_fixture(vec![provider_response(
-            r#"{"schema_version":5,"action":{"kind":"search","query":"controller","limit":5}}"#,
+            r#"{"schema_version":6,"action":{"kind":"search","query":"controller","limit":5}}"#,
         )?])?;
         let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
         let provider = ScriptedProvider {
@@ -1605,11 +1606,11 @@ mod tests {
 
     #[test]
     fn invalid_primary_and_repair_never_cross_the_tool_boundary() -> Result<(), Box<dyn Error>> {
-        let injected_note = r#"{"schema_version":5,"action":{"kind":"search","query":"controller","limit":5},"public_note":{"goal":"untrusted injected status"}}"#;
+        let injected_note = r#"{"schema_version":6,"action":{"kind":"search","query":"controller","limit":5},"public_note":{"goal":"untrusted injected status"}}"#;
         for (primary, repaired, code) in [
             (
                 "not-json",
-                r#"{"schema_version":5,"action":{"kind":"shell"}}"#,
+                r#"{"schema_version":6,"action":{"kind":"shell"}}"#,
                 "unknown_action",
             ),
             (injected_note, injected_note, "unknown_or_missing_field"),
@@ -1661,7 +1662,7 @@ mod tests {
     -> Result<(), Box<dyn Error>> {
         for reason in [ModelFinishReason::OutputLimit, ModelFinishReason::Other] {
             for during_repair in [false, true] {
-                let raw = r#"{"schema_version":5,"action":{"kind":"search","query":"private fixture query","limit":5}}"#;
+                let raw = r#"{"schema_version":6,"action":{"kind":"search","query":"private fixture query","limit":5}}"#;
                 let mut events = provider_response(raw)?;
                 *events.last_mut().ok_or("completion")? =
                     ProviderEvent::Completed(crate::ModelProviderCompletion::new(
@@ -1749,7 +1750,7 @@ mod tests {
                         serde_json::json!({"kind":kind,"step_id":step.to_string(),"update":{"kind":"record_result","summary":"unverified result"}})
                     }
                 };
-                let valid = serde_json::json!({"schema_version":5,"action":action});
+                let valid = serde_json::json!({"schema_version":6,"action":action});
                 let mut wrong = valid.clone();
                 wrong["action"][field] = serde_json::json!("ff".repeat(32));
                 let final_document = if corrected { &valid } else { &wrong };
@@ -1821,7 +1822,7 @@ mod tests {
     fn replan_localization_cannot_finish_or_mutate_even_after_repair() -> Result<(), Box<dyn Error>>
     {
         let id = "22".repeat(32);
-        let read = serde_json::json!({"schema_version":5,"action":{"kind":"search","query":"serializer","limit":5}});
+        let read = serde_json::json!({"schema_version":6,"action":{"kind":"search","query":"serializer","limit":5}});
         let mut extra_note = read.clone();
         extra_note["public_note"] = serde_json::json!({"goal":"private status"});
         let mut wrong_version = read.clone();
@@ -1841,7 +1842,7 @@ mod tests {
             serde_json::json!({"kind":"update_ledger","step_id":id,"update":{"kind":"record_result","summary":"unverified result"}}),
             serde_json::json!({"kind":"apply_patch","run_id":id,"worktree_id":id,"snapshot_id":id,"step_id":id,"verification_spec_id":id,"rationale":"add source","operations":[{"kind":"add","path":"new.rs","content":"fn new() {}\n"}]}),
         ] {
-            let document = serde_json::json!({"schema_version":5,"action":action});
+            let document = serde_json::json!({"schema_version":6,"action":action});
             // These are valid actions outside localization, not merely malformed inputs.
             crate::DecodeAgentAction::current().decode(&document.to_string())?;
             forbidden_documents.push(document);
@@ -1919,7 +1920,7 @@ mod tests {
                 let messages = requests[1].messages();
                 assert_eq!(&messages[..messages.len() - 1], requests[0].messages());
                 let repair = messages.last().ok_or("repair")?.content();
-                assert!(repair.contains("V5"));
+                assert!(repair.contains("V6"));
                 assert!(!repair.contains("private status"));
             }
         }
@@ -1942,7 +1943,7 @@ mod tests {
             ),
             (1, "novel", None),
         ] {
-            let raw = serde_json::json!({"schema_version":5,
+            let raw = serde_json::json!({"schema_version":6,
                 "action":{"kind":"search","query":query,"limit":5}})
             .to_string();
             let mut fixture =
@@ -2031,12 +2032,12 @@ mod tests {
     fn replan_duplicate_read_can_use_only_the_existing_single_repair() -> Result<(), Box<dyn Error>>
     {
         let read = |query: &str| {
-            serde_json::json!({"schema_version":5,
+            serde_json::json!({"schema_version":6,
             "action":{"kind":"search","query":query,"limit":5}})
             .to_string()
         };
         let claim = |id: &str| {
-            serde_json::json!({"schema_version":5,
+            serde_json::json!({"schema_version":6,
             "action":{"kind":"inspect","target":{"kind":"claim","claim_id":id}}})
             .to_string()
         };
@@ -2217,7 +2218,7 @@ mod tests {
                 let mut fixture = turn_fixture(Vec::new())?;
                 let index = patch_index(snapshot(), IndexRunId::from_bytes([12; 32]))?;
                 let step = fixture.input.current_step_id();
-                let valid = serde_json::json!({"schema_version":5,"action":{
+                let valid = serde_json::json!({"schema_version":6,"action":{
                     "kind":"apply_patch","run_id":fixture.run.id().to_string(),"worktree_id":fixture.input.project().worktree().id().to_string(),"snapshot_id":snapshot().to_string(),"step_id":step.to_string(),
                     "verification_spec_id":fixture.input.task_ledger().step(step).ok_or("step")?.definition().verification_spec().id().to_string(),"rationale":"current scoped change",
                     "operations":[{"kind":"update","path":"existing.rs","expected_hash":"07".repeat(32),"content":"changed\n"}]
@@ -2432,7 +2433,7 @@ mod tests {
     fn denied_tool_attempt_is_durable_before_invocation_and_then_terminal()
     -> Result<(), Box<dyn Error>> {
         let mut fixture = turn_fixture(vec![provider_response(
-            r#"{"schema_version":5,"action":{"kind":"search","query":"controller","limit":5}}"#,
+            r#"{"schema_version":6,"action":{"kind":"search","query":"controller","limit":5}}"#,
         )?])?;
         let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
         let provider = ScriptedProvider {

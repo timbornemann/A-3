@@ -443,6 +443,8 @@ impl AgentRunBudget {
 /// Coarse class of the sole optional model-selected action in one turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AgentTurnActionClass {
+    /// One closed machine tool proposal classified and authorized independently by Core.
+    Machine,
     /// Deterministic bounded retrieval.
     Search,
     /// Targeted bounded read-only inspection.
@@ -462,6 +464,7 @@ impl AgentTurnActionClass {
     #[must_use]
     pub const fn from_action(action: &AgentAction) -> Self {
         match action {
+            AgentAction::Machine(_) => Self::Machine,
             AgentAction::Search(_) => Self::Search,
             AgentAction::Inspect(_) => Self::Inspect,
             AgentAction::UpdateLedger(_) => Self::UpdateLedger,

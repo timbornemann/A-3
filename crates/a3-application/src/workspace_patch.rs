@@ -70,7 +70,12 @@ impl AuthorizedPatchAction {
             return Err(PatchAuthorizationError::RunMismatch);
         }
         if decision.outcome() != PolicyDecisionOutcome::Allowed
-            || decision.reason() != PolicyDecisionReason::ApprovalGranted
+            || !(decision.reason() == PolicyDecisionReason::ApprovalGranted
+                || (decision.reason() == PolicyDecisionReason::SystemAutomatic
+                    && decision.permission_settings().is_some_and(|settings| {
+                        settings.disposition(&policy_action)
+                            == a3_domain::PolicyDisposition::Automatic
+                    })))
         {
             return Err(PatchAuthorizationError::NotExplicitlyApproved);
         }

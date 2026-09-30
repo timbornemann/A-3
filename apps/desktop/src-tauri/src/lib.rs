@@ -9,6 +9,8 @@ mod agent_approval_metadata;
 mod agent_conversation_runtime;
 mod agent_goal_metadata;
 mod agent_inspection_mapping;
+mod agent_machine_recovery_commands;
+mod agent_permission_commands;
 mod agent_recovery_metadata;
 mod agent_run_manager;
 mod agent_runtime_recovery;
@@ -222,7 +224,7 @@ use a3_storage_libsql::{
 use a3_workspace::{
     RepositoryInspector, WorkspaceAgentSourceReader, WorkspaceEmptyWorktreeInitializer,
 };
-use agent_approval_mapping::map_agent_approval_to_v1;
+use agent_approval_mapping::{map_agent_approval_to_v1, map_agent_approval_to_v2};
 use agent_approval_metadata::SystemAgentApprovalMetadata;
 use agent_goal_metadata::SystemAgentGoalMetadata;
 use agent_inspection_mapping::{
@@ -269,6 +271,7 @@ const MAX_PROJECT_PATH_DISPLAY_CHARS: usize = 32_768;
 /// Owns the concrete application use cases used by the desktop process.
 #[derive(Debug)]
 pub struct CompositionRoot {
+    agent_permissions: Option<Arc<dyn a3_application::AgentPermissionStore>>,
     health_query: GetHealth,
     model_settings: Option<ModelSettingsManager>,
     project_settings: Option<ProjectSettingsManager>,
@@ -320,6 +323,7 @@ pub struct CompositionRoot {
     deep_map_dashboard_index: Option<Arc<dyn KnowledgeIndexStore>>,
     function_flow_index: Option<Arc<dyn KnowledgeIndexStore>>,
     agent_run_manager: Option<Arc<AgentRunManager>>,
+    machine_recovery_executor: Option<Arc<ProductionAgentRunExecutor>>,
     agent_sessions: Option<AgentSessionManager>,
     ui_preferences: Option<Arc<dyn UiPreferencesStore>>,
     _job_scheduler: JobScheduler,
@@ -3391,9 +3395,78 @@ impl CompositionRoot {
             },
             AgentApprovalLoadResult::ActivityChanged => AgentApprovalResultV1::ActivityChanged,
             AgentApprovalLoadResult::ApprovalUnavailable => AgentApprovalResultV1::Unavailable,
-            AgentApprovalLoadResult::Available(approval) => AgentApprovalResultV1::Available {
-                approval: Box::new(map_agent_approval_to_v1(&approval)),
+            AgentApprovalLoadResult::Available(approval) => {
+                match map_agent_approval_to_v1(&approval) {
+                    Some(approval) => AgentApprovalResultV1::Available {
+                        approval: Box::new(approval),
+                    },
+                    None => AgentApprovalResultV1::Unavailable,
+                }
+            }
+        }))
+    }
+
+    /// Loads the exact task-bound approval action and its current durable lifecycle.
+    pub async fn query_agent_approval_v2(
+        &self,
+        task_id: TaskId,
+    ) -> Result<a3_protocol::AgentApprovalResponseV2, CommandErrorV1> {
+        let Some(_operation) = self.try_acquire_agent_task_operation() else {
+            return Ok(a3_protocol::AgentApprovalResponseV2::new(
+                a3_protocol::AgentApprovalResultV2::ActivityChanged,
+            ));
+        };
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(a3_protocol::AgentApprovalResponseV2::new(
+                a3_protocol::AgentApprovalResultV2::NoProject,
+            ));
+        };
+        let reader = self
+            .agent_approval_query
+            .as_ref()
+            .ok_or_else(agent_approval_unavailable)?;
+        let observed_at = self
+            .agent_approval_metadata
+            .now()
+            .map_err(|_| agent_approval_unavailable())?;
+        let result = reader
+            .execute(
+                &active.project,
+                task_id,
+                observed_at,
+                &DesktopBoundedReadControl::new(),
+            )
+            .await
+            .map_err(|_| agent_approval_unavailable())?;
+        Ok(a3_protocol::AgentApprovalResponseV2::new(match result {
+            AgentApprovalLoadResult::TaskNotFound => {
+                a3_protocol::AgentApprovalResultV2::TaskNotFound
+            }
+            AgentApprovalLoadResult::LedgerUnavailable => {
+                a3_protocol::AgentApprovalResultV2::LedgerUnavailable
+            }
+            AgentApprovalLoadResult::GoalRevisionMismatch {
+                current_revision,
+                ledger_revision,
+            } => a3_protocol::AgentApprovalResultV2::GoalRevisionMismatch {
+                current_revision,
+                ledger_revision,
             },
+            AgentApprovalLoadResult::ActivityChanged => {
+                a3_protocol::AgentApprovalResultV2::ActivityChanged
+            }
+            AgentApprovalLoadResult::ApprovalUnavailable => {
+                a3_protocol::AgentApprovalResultV2::Unavailable
+            }
+            AgentApprovalLoadResult::Available(approval) => {
+                match map_agent_approval_to_v2(&approval) {
+                    Some(approval) => a3_protocol::AgentApprovalResultV2::Available {
+                        approval: Box::new(approval),
+                    },
+                    None => a3_protocol::AgentApprovalResultV2::Unavailable,
+                }
+            }
         }))
     }
 
@@ -5374,6 +5447,7 @@ struct CompositionBase {
 
 #[derive(Default)]
 struct OptionalCompositionPorts {
+    agent_permissions: Option<Arc<dyn a3_application::AgentPermissionStore>>,
     settings_store: Option<Arc<dyn a3_application::DesktopSettingsStore>>,
     credential_store: Option<Arc<dyn a3_application::ProviderCredentialStore>>,
     agent_session_store: Option<Arc<dyn AgentSessionStore>>,
@@ -5413,6 +5487,7 @@ struct OptionalCompositionPorts {
 }
 
 struct IndexingCompositionPorts {
+    agent_permissions: Arc<dyn a3_application::AgentPermissionStore>,
     settings_store: Arc<dyn a3_application::DesktopSettingsStore>,
     credential_store: Arc<dyn a3_application::ProviderCredentialStore>,
     agent_session_store: Arc<dyn AgentSessionStore>,
@@ -5504,6 +5579,7 @@ impl CompositionBase {
             store,
             OptionalCompositionPorts {
                 settings_store: Some(ports.settings_store),
+                agent_permissions: Some(ports.agent_permissions),
                 credential_store: Some(ports.credential_store),
                 agent_session_store: Some(ports.agent_session_store),
                 ask_research_store: Some(ports.ask_research_store),
@@ -5716,6 +5792,11 @@ impl CompositionBase {
             ) => Some(Arc::new(
                 ProductionAgentRunExecutor::new(
                     ProductionAgentRunPorts {
+                        ledgers: ports
+                            .task_ledger_store
+                            .clone()
+                            .ok_or(CompositionRootError::AgentRunManagerUnavailable)?,
+                        permissions: ports.agent_permissions.clone(),
                         workspace: Arc::clone(workspace),
                         journal: Arc::clone(journal),
                         actions: Arc::clone(actions),
@@ -5738,7 +5819,7 @@ impl CompositionBase {
                     agent_session_reporter.clone(),
                 )
                 .map_err(|_| CompositionRootError::AgentRunManagerUnavailable)?,
-            ) as Arc<dyn AgentRunExecutor>),
+            )),
             _ => None,
         };
         let approval_read_ports = ports
@@ -5845,7 +5926,11 @@ impl CompositionBase {
         } else {
             None
         };
-        let agent_run_executor = ports.agent_run_executor.or(production_agent_run_executor);
+        let agent_run_executor = ports.agent_run_executor.or_else(|| {
+            production_agent_run_executor
+                .clone()
+                .map(|executor| executor as Arc<dyn AgentRunExecutor>)
+        });
         let agent_run_manager = match (
             agent_run_executor,
             agent_task_recovery.clone(),
@@ -5915,6 +6000,7 @@ impl CompositionBase {
         let empty_worktree_initializer: Arc<dyn EmptyWorktreeInitializer> =
             Arc::new(WorkspaceEmptyWorktreeInitializer::new());
         Ok(CompositionRoot {
+            agent_permissions: ports.agent_permissions,
             health_query: self.health_query,
             model_settings,
             project_settings,
@@ -5980,6 +6066,7 @@ impl CompositionBase {
             function_flow_index: ports.index_store.clone(),
             deep_map_dashboard_index: ports.index_store,
             agent_run_manager,
+            machine_recovery_executor: production_agent_run_executor,
             agent_sessions,
             ui_preferences,
             _job_scheduler: self.job_scheduler,
@@ -6044,6 +6131,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             let deep_map_publication_state: Arc<dyn a3_application::DeepMapPublicationStateStore> =
                 store.clone();
             let deep_map_journal: Arc<dyn a3_application::DeepMapRunJournalStore> = store.clone();
+            let agent_permissions: Arc<dyn a3_application::AgentPermissionStore> = store.clone();
             let module_card_publisher: Arc<dyn a3_application::VerifiedModuleCardPublisher> = store;
             let deep_map_runtime = DeepMapRuntime::new(
                 Arc::clone(&settings_store),
@@ -6063,6 +6151,7 @@ pub fn run() -> Result<(), DesktopRunError> {
                 Arc::new(NativeProjectReconciliationConfirmer::new(native_handle)),
                 catalog_store,
                 IndexingCompositionPorts {
+                    agent_permissions,
                     settings_store,
                     credential_store,
                     agent_session_store,
@@ -6153,6 +6242,9 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_module_tree,
             commands::query_agent_activity,
             commands::query_agent_approval,
+            commands::query_agent_approval_v2,
+            agent_machine_recovery_commands::query_agent_machine_recovery,
+            agent_machine_recovery_commands::recover_agent_machine_effect,
             commands::query_agent_session,
             commands::query_agent_session_v2,
             commands::query_agent_session_v3,
@@ -6182,6 +6274,8 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_repository_tree,
             commands::query_health,
             commands::query_settings_v2,
+            commands::query_agent_permissions,
+            commands::update_agent_permissions,
             commands::query_settings_recovery,
             commands::recover_invalid_model_profiles,
             commands::query_ui_preferences,
@@ -9070,7 +9164,7 @@ fn map_agent_event_to_v1(event: &RunEvent) -> AgentActivityEventV1 {
             RunEventKind::ModelInteraction => AgentActivityEventKindV1::ModelInteraction {
                 turn: event.turn_charge().map(|charge| {
                     AgentActivityTurnV1::new(
-                        charge.action().map(map_agent_selected_action_to_v1),
+                        charge.action().and_then(map_agent_selected_action_to_v1),
                         charge.prompt_tokens().get(),
                         charge.output_tokens().get(),
                         matches!(charge.repair(), AgentTurnRepairUsage::One),
@@ -9106,15 +9200,32 @@ const fn map_agent_controller_state_to_v1(state: AgentControllerState) -> AgentC
     }
 }
 
-const fn map_agent_selected_action_to_v1(action: AgentTurnActionClass) -> AgentSelectedActionV1 {
-    match action {
+const fn map_agent_selected_action_to_v1(
+    action: AgentTurnActionClass,
+) -> Option<AgentSelectedActionV1> {
+    Some(match action {
         AgentTurnActionClass::Search => AgentSelectedActionV1::Search,
         AgentTurnActionClass::Inspect => AgentSelectedActionV1::Inspect,
         AgentTurnActionClass::UpdateLedger => AgentSelectedActionV1::UpdateLedger,
         AgentTurnActionClass::Finish => AgentSelectedActionV1::Finish,
         AgentTurnActionClass::ApplyPatch => AgentSelectedActionV1::ApplyPatch,
         AgentTurnActionClass::Run => AgentSelectedActionV1::Run,
-    }
+        // V1 has no machine kind. Keep its closed enum rather than backport V6 authority.
+        AgentTurnActionClass::Machine => return None,
+    })
+}
+
+#[cfg(test)]
+#[test]
+fn machine_actions_do_not_extend_the_closed_activity_v1_enum() {
+    assert_eq!(
+        map_agent_selected_action_to_v1(AgentTurnActionClass::Machine),
+        None
+    );
+    assert_eq!(
+        map_agent_selected_action_to_v1(AgentTurnActionClass::Search),
+        Some(AgentSelectedActionV1::Search)
+    );
 }
 
 const fn map_agent_event_code_to_v1(code: RunEventCode) -> AgentActivityCodeV1 {

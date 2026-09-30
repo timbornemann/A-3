@@ -23,13 +23,11 @@ use a3_application::{
 use a3_context::{DeterministicAgentContextCompiler, DeterministicAgentReadTools};
 use a3_domain::{
     AgentAction, AgentControllerState, AgentRun, AgentRunTimestamp, AgentToolEvidenceSet,
-    ApprovalGrant, ApprovalRequestId, DiffInvariantMode, DiffInvariantVerification,
-    DiscoveredCommand, ExpectedTaskEvidence, MinimumTestCaseCount, PolicyDecisionId,
+    ApprovalGrant, ApprovalRequestId, DiscoveredCommand, MinimumTestCaseCount, PolicyDecisionId,
     ProcessEnvironmentVariable, ProcessEvent, Progress, ProjectIdentity, RunEventId,
     RunMemoryCheckpoint, StepDependency, StepVerificationId, TaskId, TaskLedger, TaskReplanReason,
-    TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale, TaskStepStatus,
-    TestCaseSelector, ToolRunId, VerificationRequirement, VerificationRunId, VerificationSpec,
-    VerificationSpecId, VerificationTarget, WorkspacePolicy,
+    TaskStepDefinition, TaskStepId, TaskStepRationale, TaskStepStatus, TestCaseSelector, ToolRunId,
+    VerificationRunId, VerificationSpec, VerificationSpecId, VerificationTarget, WorkspacePolicy,
 };
 use a3_repo_index::{
     Blake3IndexRunIdFactory, Blake3RepositorySnapshotBuilder, BuiltinIncrementalIndexCompiler,
@@ -43,6 +41,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+#[path = "production_machine_recovery.rs"]
+mod machine_recovery;
 
 const MAX_AGENT_TURNS_PER_ATTEMPT: u64 = 64;
 const MAX_AUTOMATIC_REPLANS_PER_RUN: usize = 8;
@@ -70,7 +71,9 @@ enum AgentAttemptHaltReason {
 /// Narrow production capabilities used by the existing deterministic Agent harness.
 #[derive(Clone)]
 pub(crate) struct ProductionAgentRunPorts {
+    pub(crate) permissions: Option<Arc<dyn a3_application::AgentPermissionStore>>,
     pub(crate) workspace: Arc<dyn TaskLensWorkspaceStore>,
+    pub(crate) ledgers: Arc<dyn a3_application::TaskLedgerStore>,
     pub(crate) journal: Arc<dyn RunJournalStore>,
     pub(crate) actions: Arc<dyn AgentActionStore>,
     pub(crate) recovery: Arc<dyn AgentRecoveryStore>,
@@ -171,12 +174,20 @@ impl ProductionAgentRunExecutor {
             return Err(AgentRunExecutionFailure::AnchorsChanged);
         }
         let (mut ledger, mut ledger_version) = stored.into_parts();
-        let mut step_id = active_step_id(&ledger)?;
-        let run_id = ledger
-            .step(step_id)
-            .and_then(|step| step.attempts().last())
-            .map(a3_domain::TaskStepAttempt::run_id)
-            .ok_or(AgentRunExecutionFailure::AnchorsChanged)?;
+        let (mut step_id, run_id) =
+            if let AgentRunExecutionTrigger::MachineRecoveryAcknowledged(scope) = request.trigger()
+            {
+                self.machine_recovery_anchor(project, &ledger, scope)
+                    .await?
+            } else {
+                let step_id = active_step_id(&ledger)?;
+                let run_id = ledger
+                    .step(step_id)
+                    .and_then(|step| step.attempts().last())
+                    .map(a3_domain::TaskStepAttempt::run_id)
+                    .ok_or(AgentRunExecutionFailure::AnchorsChanged)?;
+                (step_id, run_id)
+            };
         let mut run = self
             .ports
             .journal
@@ -188,6 +199,11 @@ impl ProductionAgentRunExecutor {
             || run.task_ledger_revision() != ledger.revision()
         {
             return Err(AgentRunExecutionFailure::AnchorsChanged);
+        }
+        if let AgentRunExecutionTrigger::MachineRecoveryAcknowledged(scope) = request.trigger() {
+            (ledger, ledger_version, step_id) = self
+                .recover_machine(project, request, &mut run, scope, &attempt_control)
+                .await?;
         }
         let (provider, profile) = self
             .runtime
@@ -238,7 +254,7 @@ impl ProductionAgentRunExecutor {
             ParserPoolSize::new(2).map_err(|_| AgentRunExecutionFailure::Unavailable)?,
         )
         .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
-        let mutation_controller = ExecuteMutatingAgentAction::new(
+        let mut mutation_controller = ExecuteMutatingAgentAction::new(
             &self.coordinator,
             self.ports.policy.as_ref(),
             self.ports.journal.as_ref(),
@@ -253,6 +269,26 @@ impl ProductionAgentRunExecutor {
             &context_compiler,
             &refresh,
         );
+        if let Some(permissions) = &self.ports.permissions {
+            mutation_controller = mutation_controller.with_permissions(permissions.as_ref());
+        }
+        let machine_files = self.ports.permissions.as_ref().map(|permissions| {
+            a3_workspace::WorkspaceMachineFileTool::new(Arc::clone(permissions))
+        });
+        let machine_network = self
+            .ports
+            .permissions
+            .as_ref()
+            .map(|permissions| {
+                a3_workspace::WorkspaceMachineNetworkTool::new(Arc::clone(permissions))
+            })
+            .transpose()
+            .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+        let machine_environment = self.process_environment.admitted_names();
+        if let (Some(files), Some(network)) = (&machine_files, &machine_network) {
+            mutation_controller =
+                mutation_controller.with_machine_tools(files, network, &machine_environment);
+        }
         let context_seed = MutationContextSeed::new(
             task.goal_contract().clone(),
             profile.clone(),
@@ -318,16 +354,45 @@ impl ProductionAgentRunExecutor {
             None
         };
 
-        if let AgentRunExecutionTrigger::ApprovalGranted(approval_id) = request.trigger() {
+        if !matches!(
+            request.trigger(),
+            AgentRunExecutionTrigger::Standard
+                | AgentRunExecutionTrigger::MachineRecoveryAcknowledged(_)
+        ) {
+            let mut grant = match request.trigger() {
+                AgentRunExecutionTrigger::ApprovalGranted(approval_id) => Some(
+                    self.ports
+                        .policy
+                        .load_approval(project, approval_id)
+                        .await
+                        .map_err(|_| AgentRunExecutionFailure::Unavailable)?
+                        .ok_or(AgentRunExecutionFailure::InvalidState)?,
+                ),
+                AgentRunExecutionTrigger::PermissionModeChanged(revision) => {
+                    let settings = self
+                        .ports
+                        .permissions
+                        .as_ref()
+                        .ok_or(AgentRunExecutionFailure::InvalidState)?
+                        .load_agent_permissions()
+                        .await
+                        .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+                    if settings.revision() != revision
+                        || settings.mode() != a3_domain::AgentPermissionMode::FullMachine
+                    {
+                        // The user changed modes before this action began. Keep the pending
+                        // request and durable approval state for a later fresh decision.
+                        return Ok(AgentRunExecutionOutcome::Completed);
+                    }
+                    None
+                }
+                AgentRunExecutionTrigger::MachineRecoveryAcknowledged(_)
+                | AgentRunExecutionTrigger::Standard => {
+                    return Err(AgentRunExecutionFailure::InvalidState);
+                }
+            };
             let action = lock_recovering_poison(&self.pending_mutations)
                 .remove(&request.task_id())
-                .ok_or(AgentRunExecutionFailure::InvalidState)?;
-            let mut grant = self
-                .ports
-                .policy
-                .load_approval(project, approval_id)
-                .await
-                .map_err(|_| AgentRunExecutionFailure::Unavailable)?
                 .ok_or(AgentRunExecutionFailure::InvalidState)?;
             let published =
                 current_index(self.ports.index.as_ref(), project, &attempt_control).await?;
@@ -339,7 +404,7 @@ impl ProductionAgentRunExecutor {
                     &mut ledger_version,
                     &published,
                     action,
-                    Some(&mut grant),
+                    grant.as_mut(),
                     &context_seed,
                     &mut index_compiler,
                     &mutation_controller,
@@ -358,6 +423,9 @@ impl ProductionAgentRunExecutor {
                     .await?
             {
                 step_id = next_step_id;
+            }
+            if let MutationControllerOutcome::MachineObserved(result) = &outcome {
+                context_results.push(result.as_ref().clone());
             }
             if let MutationControllerOutcome::ReplanRequired { failure, .. } = &outcome {
                 pending_replan_reason = Some(replan_reason_for_failure(*failure)?);
@@ -690,7 +758,7 @@ impl ProductionAgentRunExecutor {
                         replan_research = None;
                     }
                 }
-                AgentAction::ApplyPatch(_) | AgentAction::Run(_) => {
+                AgentAction::ApplyPatch(_) | AgentAction::Run(_) | AgentAction::Machine(_) => {
                     let published =
                         current_index(self.ports.index.as_ref(), project, &attempt_control).await?;
                     let replay = action.clone();
@@ -721,6 +789,9 @@ impl ProductionAgentRunExecutor {
                             .await?
                     {
                         step_id = next_step_id;
+                    }
+                    if let MutationControllerOutcome::MachineObserved(result) = &outcome {
+                        context_results.push(result.as_ref().clone());
                     }
                     if matches!(outcome, MutationControllerOutcome::AwaitingApproval(_)) {
                         lock_recovering_poison(&self.pending_mutations)
@@ -993,10 +1064,30 @@ impl ProductionAgentRunExecutor {
             .await
             .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
 
-        for signal in [
-            AgentControllerSignal::ReplanApplied,
-            AgentControllerSignal::LocalizationComplete,
+        self.resume_replanned_execution(project, run, ledger, ledger_version)
+            .await
+    }
+
+    async fn resume_replanned_execution(
+        &self,
+        project: &ProjectIdentity,
+        run: &mut AgentRun,
+        ledger: &mut TaskLedger,
+        ledger_version: &mut a3_application::TaskLedgerStoreVersion,
+    ) -> Result<TaskStepId, AgentRunExecutionFailure> {
+        for (state, signal) in [
+            (
+                AgentControllerState::Replan,
+                AgentControllerSignal::ReplanApplied,
+            ),
+            (
+                AgentControllerState::Localize,
+                AgentControllerSignal::LocalizationComplete,
+            ),
         ] {
+            if run.state() != state {
+                continue;
+            }
             let expected_sequence = run.last_event_sequence();
             let advance = AdvanceAgentController
                 .execute(
@@ -1012,6 +1103,10 @@ impl ProductionAgentRunExecutor {
                 .execute(project, expected_sequence, run, advance.event())
                 .await
                 .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+        }
+
+        if run.state() != AgentControllerState::Plan {
+            return Err(AgentRunExecutionFailure::InvalidState);
         }
 
         let next_step_id = ledger
@@ -1081,41 +1176,64 @@ impl ProductionAgentRunExecutor {
             .execute(project)
             .await
             .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
-        let selection = match &action {
-            AgentAction::Run(process) => Some(match confirmation.as_ref() {
-                Some(confirmation) => MutationCommandSelection::new(&catalog, confirmation),
-                None => MutationCommandSelection::requiring_approval(
-                    &catalog,
+        let mut approval = approval;
+        for retry in 0..3 {
+            let selection = match &action {
+                AgentAction::Run(process) => Some(match confirmation.as_ref() {
+                    Some(confirmation)
+                        if a3_application::PrepareDiscoveredCommand
+                            .execute(
+                                &catalog,
+                                confirmation,
+                                run.id(),
+                                process.step_id(),
+                                process.command_id(),
+                            )
+                            .is_ok() =>
+                    {
+                        MutationCommandSelection::new(&catalog, confirmation)
+                    }
+                    _ => MutationCommandSelection::requiring_approval(
+                        &catalog,
+                        run,
+                        ledger,
+                        process.step_id(),
+                        process.command_id(),
+                    )
+                    .map_err(|_| AgentRunExecutionFailure::InvalidState)?,
+                }),
+                _ => None,
+            };
+            let result = controller
+                .execute(
+                    project,
                     run,
                     ledger,
-                    process.step_id(),
-                    process.command_id(),
+                    ledger_version,
+                    published,
+                    action.clone(),
+                    selection,
+                    &WorkspacePolicy::unrestricted(),
+                    approval.as_deref_mut(),
+                    mutation_ids()?,
+                    timestamp()?,
+                    approval_expiration()?,
+                    context_seed,
+                    index_compiler,
+                    &NoopProcessEvents,
+                    control,
                 )
-                .map_err(|_| AgentRunExecutionFailure::InvalidState)?,
-            }),
-            _ => None,
-        };
-        controller
-            .execute(
-                project,
-                run,
-                ledger,
-                ledger_version,
-                published,
-                action,
-                selection,
-                &WorkspacePolicy::unrestricted(),
-                approval,
-                mutation_ids()?,
-                timestamp()?,
-                approval_expiration()?,
-                context_seed,
-                index_compiler,
-                &NoopProcessEvents,
-                control,
-            )
-            .await
-            .map_err(|_| AgentRunExecutionFailure::Unavailable)
+                .await;
+            if matches!(
+                result,
+                Err(a3_application::MutationControllerFailure::PermissionsChanged)
+            ) && retry < 2
+            {
+                continue;
+            }
+            return result.map_err(|_| AgentRunExecutionFailure::Unavailable);
+        }
+        Err(AgentRunExecutionFailure::Unavailable)
     }
 
     fn handle_mutation_outcome(
@@ -1125,7 +1243,8 @@ impl ProductionAgentRunExecutor {
     ) -> Result<bool, AgentRunExecutionFailure> {
         Ok(match outcome {
             MutationControllerOutcome::AwaitingApproval(_) => true,
-            MutationControllerOutcome::NextAction(_) => false,
+            MutationControllerOutcome::NextAction(_)
+            | MutationControllerOutcome::MachineObserved(_) => false,
             MutationControllerOutcome::StepVerified { .. } => false,
             MutationControllerOutcome::ReplanRequired { .. } => false,
             MutationControllerOutcome::Denied
@@ -1195,7 +1314,7 @@ impl ProductionAgentRunExecutor {
                 .await;
             return;
         }
-        let (state, blocker) = match self
+        let (state, blocker, changes_only) = match self
             .ports
             .workspace
             .load_current_task(project, task_id, control)
@@ -1231,12 +1350,25 @@ impl ProductionAgentRunExecutor {
                         .map(|run| run.state()),
                     None => None,
                 };
-                (state, blocker)
+                let changes_only = stored
+                    .ledger()
+                    .steps()
+                    .filter(|step| step.is_active_plan_step())
+                    .all(|step| {
+                        matches!(
+                            step.definition().verification_spec().target(),
+                            VerificationTarget::DiffInvariant(_)
+                        )
+                    });
+                (state, blocker, changes_only)
             }
-            None => (None, None),
+            None => (None, None, false),
         };
-        let (session_state, message) =
+        let (session_state, mut message) =
             session_outcome_for_run(state, blocker.as_deref(), halt_reason, outcome.is_ok());
+        if state == Some(AgentControllerState::Done) && changes_only {
+            message = "Die geplanten Dateiänderungen sind angewendet und aktuell belegt. Dieser Plan enthielt keine Laufzeitprüfung; das Laufzeitverhalten ist nicht bestätigt.".to_owned();
+        }
         let _reported = reporter
             .report(project, task_id, session_state, &message)
             .await;
@@ -1780,85 +1912,6 @@ fn automatic_replan_steps(
             .map(|parent| replacement_ids.get(&parent).copied().unwrap_or(parent));
         let dependencies =
             remap_dependencies(definition.dependencies(), &replacement_ids, &retire_set)?;
-        let needs_preparation = matches!(
-            definition.verification_spec().target(),
-            VerificationTarget::DeferredCommand(_)
-        ) || (matches!(
-            old.status(),
-            TaskStepStatus::Blocked | TaskStepStatus::Failed
-        ) && matches!(
-            definition.verification_spec().target(),
-            VerificationTarget::Command { .. } | VerificationTarget::Test { .. }
-        ));
-        if needs_preparation {
-            let preparation_id = TaskStepId::from_bytes(random_id()?);
-            additions.push(
-                TaskStepDefinition::new(
-                    preparation_id,
-                    parent_step_id,
-                    TaskStepOutcome::try_from_string(bounded_utf8(
-                        &format!(
-                            "Erstelle oder repariere die lokalen Test- oder Manifestartefakte, bis ein bevorzugter lokaler Prüfcommand deterministisch entdeckbar ist, für: {}",
-                            definition.intended_outcome().as_str()
-                        ),
-                        8 * 1_024,
-                    ))
-                    .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
-                    TaskStepRationale::try_from_string(bounded_utf8(
-                        &format!(
-                            "Planrevision nach Befund: {}. Vor der erneuten lokalen Prüfung muss der aktuelle Index einen passenden lokalen Prüfcommand aus Test-, Lint- oder Build-Artefakten ableiten können; reine Quellcode- oder Dokumentationsänderungen erfüllen diesen Vorbereitungsschritt nicht.",
-                            reason.as_str(),
-                        ),
-                        8 * 1_024,
-                    ))
-                    .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
-                    dependencies,
-                    vec![
-                        ExpectedTaskEvidence::try_from_string(
-                            "Ein lokales Test- oder Manifestartefakt wurde vollständig geändert, neu indiziert und macht den geplanten Prüfcommand deterministisch entdeckbar."
-                                .to_owned(),
-                        )
-                        .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
-                    ],
-                    VerificationSpec::diff_invariant(
-                        VerificationSpecId::from_bytes(random_id()?),
-                        VerificationRequirement::try_from_string(
-                            "Der Vorbereitungsschritt verändert mindestens einen vollständigen lokalen Pfad und bleibt aktiv, bis der abhängige Prüfcommand im aktuellen Index entdeckbar ist."
-                                .to_owned(),
-                        )
-                        .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
-                        DiffInvariantVerification::new(DiffInvariantMode::NonEmptyChanges, Vec::new())
-                            .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
-                    ),
-                )
-                .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
-            );
-            let replacement = attach_acceptance_criteria(
-                TaskStepDefinition::new(
-                    replacement_id,
-                    parent_step_id,
-                    definition.intended_outcome().clone(),
-                    TaskStepRationale::try_from_string(bounded_utf8(
-                        &format!(
-                            "Planrevision nach Befund: {}. {}",
-                            reason.as_str(),
-                            definition.rationale().as_str()
-                        ),
-                        8 * 1_024,
-                    ))
-                    .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
-                    vec![StepDependency::new(preparation_id)],
-                    definition.expected_evidence().to_vec(),
-                    definition
-                        .verification_spec()
-                        .reidentified(VerificationSpecId::from_bytes(random_id()?)),
-                ),
-                definition.acceptance_criteria(),
-            )
-            .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
-            additions.push(replacement);
-            continue;
-        }
         let replacement = attach_acceptance_criteria(
             TaskStepDefinition::new(
                 replacement_id,
@@ -2083,6 +2136,173 @@ fn bounded_utf8(value: &str, maximum: usize) -> String {
 }
 
 impl AgentRunExecutor for ProductionAgentRunExecutor {
+    fn permission_change_request<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+    ) -> a3_application::AgentPermissionChangeFuture<'a> {
+        Box::pin(async move {
+            let Some(store) = &self.ports.permissions else {
+                return Ok(None);
+            };
+            let settings = store
+                .load_agent_permissions()
+                .await
+                .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+            if settings.mode() != a3_domain::AgentPermissionMode::FullMachine {
+                return Ok(None);
+            }
+            let pending = lock_recovering_poison(&self.pending_mutations)
+                .iter()
+                .take(64)
+                .map(|(id, action)| (*id, action.clone()))
+                .collect::<Vec<_>>();
+            for (task_id, action) in pending {
+                let step_id = match &action {
+                    AgentAction::ApplyPatch(patch)
+                        if settings.disposition(&patch.policy_action())
+                            == a3_domain::PolicyDisposition::Automatic =>
+                    {
+                        patch.task_step_id()
+                    }
+                    AgentAction::Run(process) => process.step_id(),
+                    AgentAction::Machine(machine) => machine.step_id(),
+                    _ => continue,
+                };
+                let Some(task) = self
+                    .ports
+                    .workspace
+                    .load_current_task(project, task_id, &crate::DesktopBoundedReadControl::new())
+                    .await
+                    .map_err(|_| AgentRunExecutionFailure::Unavailable)?
+                else {
+                    continue;
+                };
+                let Some(stored) = task.task_ledger() else {
+                    continue;
+                };
+                let Some(step) = stored
+                    .ledger()
+                    .step(step_id)
+                    .filter(|step| step.status() == TaskStepStatus::AwaitingApproval)
+                else {
+                    continue;
+                };
+                if let AgentAction::Machine(machine) = &action {
+                    let Some(attempt) = step.attempts().last() else {
+                        continue;
+                    };
+                    let Some(run) = self
+                        .ports
+                        .journal
+                        .load_agent_run(project, attempt.run_id())
+                        .await
+                        .map_err(|_| AgentRunExecutionFailure::Unavailable)?
+                    else {
+                        continue;
+                    };
+                    let policy = match machine {
+                        a3_domain::AgentMachineAction::File(file) => {
+                            use a3_application::MachineFileTool;
+                            let tool =
+                                a3_workspace::WorkspaceMachineFileTool::new(Arc::clone(store));
+                            match tool.prepare(project, file, &MachineWakeControl).await {
+                                Ok(prepared) => prepared.policy_action().clone(),
+                                Err(_) => continue,
+                            }
+                        }
+                        a3_domain::AgentMachineAction::HttpGet(http) => {
+                            use a3_application::MachineNetworkTool;
+                            let tool =
+                                a3_workspace::WorkspaceMachineNetworkTool::new(Arc::clone(store))
+                                    .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+                            match tool.prepare(project, http) {
+                                Ok(prepared) => prepared.policy_action(),
+                                Err(_) => continue,
+                            }
+                        }
+                        a3_domain::AgentMachineAction::Process(process) => {
+                            match a3_application::PrepareMachineProcess.execute(
+                                project,
+                                &run,
+                                stored.ledger(),
+                                process,
+                                &self.process_environment.admitted_names(),
+                            ) {
+                                Ok(spec) => spec.policy_action(),
+                                Err(_) => continue,
+                            }
+                        }
+                    };
+                    if settings.disposition(&policy) != a3_domain::PolicyDisposition::Automatic {
+                        continue;
+                    }
+                }
+                if let AgentAction::Run(process) = action {
+                    let control = crate::DesktopBoundedReadControl::new();
+                    let Some(index) = self
+                        .ports
+                        .index
+                        .latest_published_index(project, &control)
+                        .await
+                        .map_err(|_| AgentRunExecutionFailure::Unavailable)?
+                    else {
+                        continue;
+                    };
+                    let catalog = DiscoverProjectCommands
+                        .execute(project.worktree().id(), &index)
+                        .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+                    let Some(command) = catalog
+                        .commands()
+                        .iter()
+                        .find(|command| command.id() == process.command_id())
+                    else {
+                        continue;
+                    };
+                    let Some(attempt) = step.attempts().last() else {
+                        continue;
+                    };
+                    let Some(run) = self
+                        .ports
+                        .journal
+                        .load_agent_run(project, attempt.run_id())
+                        .await
+                        .map_err(|_| AgentRunExecutionFailure::Unavailable)?
+                    else {
+                        continue;
+                    };
+                    let confirmed = LoadProjectCommandAllowlist::new(self.ports.allowlist.as_ref())
+                        .execute(project)
+                        .await
+                        .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+                    if !command.is_core_owned_check()
+                        && !confirmed.as_ref().is_some_and(|confirmation| {
+                            a3_application::PrepareDiscoveredCommand
+                                .execute(&catalog, confirmation, run.id(), step_id, command.id())
+                                .is_ok()
+                        })
+                    {
+                        continue;
+                    }
+                    if catalog
+                        .prepare_for_approval(&run, stored.ledger(), step_id, command.id())
+                        .is_err()
+                    {
+                        continue;
+                    }
+                }
+                {
+                    return Ok(Some(AgentRunExecutionRequest::after_permission_change(
+                        task_id,
+                        stored.ledger().revision(),
+                        stored.version(),
+                        settings.revision(),
+                    )));
+                }
+            }
+            Ok(None)
+        })
+    }
+
     fn execute<'a>(
         &'a self,
         project: &'a ProjectIdentity,
@@ -2105,6 +2325,14 @@ impl AgentRunExecutor for ProductionAgentRunExecutor {
                 .await;
             outcome
         })
+    }
+}
+
+#[derive(Debug)]
+struct MachineWakeControl;
+impl a3_application::MachineFileControl for MachineWakeControl {
+    fn is_cancelled(&self) -> bool {
+        false
     }
 }
 
@@ -2627,7 +2855,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_deferred_command_replans_a_preparation_step_before_retrying_verification()
+    fn missing_deferred_command_does_not_invent_test_artefacts()
     -> Result<(), Box<dyn std::error::Error>> {
         let criterion = AcceptanceCriterionId::from_bytes([72; 32]);
         let goal = GoalContract::initial(
@@ -2681,26 +2909,22 @@ mod tests {
         let (retired, additions) = automatic_replan_steps(&ledger, &reason)?;
 
         assert_eq!(retired, vec![deferred_id]);
-        assert_eq!(additions.len(), 2);
+        assert_eq!(additions.len(), 1);
+        assert!(additions[0].dependencies().is_empty());
         assert!(matches!(
             additions[0].verification_spec().target(),
-            VerificationTarget::DiffInvariant(_)
-        ));
-        assert!(additions[0].acceptance_criteria().is_empty());
-        assert_eq!(
-            additions[1].dependencies(),
-            &[StepDependency::new(additions[0].id())]
-        );
-        assert!(matches!(
-            additions[1].verification_spec().target(),
             VerificationTarget::DeferredCommand(_)
         ));
-        assert_eq!(additions[1].acceptance_criteria(), &[criterion]);
+        assert_eq!(additions[0].acceptance_criteria(), &[criterion]);
+        assert_eq!(
+            additions[0].intended_outcome().as_str(),
+            "run the project tests"
+        );
         Ok(())
     }
 
     #[test]
-    fn failed_bound_test_gets_a_repair_step_without_consuming_the_replan_guard()
+    fn failed_bound_test_retries_the_existing_contract_without_test_scaffolding()
     -> Result<(), Box<dyn std::error::Error>> {
         let criterion = AcceptanceCriterionId::from_bytes([82; 32]);
         let goal = GoalContract::initial(
@@ -2792,31 +3016,21 @@ mod tests {
         )?;
         let (retired, additions) = automatic_replan_steps(&ledger, &reason)?;
         assert_eq!(retired, vec![bound_id]);
-        assert_eq!(additions.len(), 2);
+        assert_eq!(additions.len(), 1);
+        assert!(additions[0].dependencies().is_empty());
         assert!(matches!(
             additions[0].verification_spec().target(),
-            VerificationTarget::DiffInvariant(_)
-        ));
-        assert!(additions[0].acceptance_criteria().is_empty());
-        assert_eq!(
-            additions[1].dependencies(),
-            &[StepDependency::new(additions[0].id())]
-        );
-        assert!(matches!(
-            additions[1].verification_spec().target(),
             VerificationTarget::Test { .. }
         ));
-        assert_eq!(additions[1].acceptance_criteria(), &[criterion]);
-        let preparation_id = additions[0].id();
-        let retry_id = additions[1].id();
+        assert_eq!(additions[0].acceptance_criteria(), &[criterion]);
+        let retry_id = additions[0].id();
         ledger.replan(
             retired,
             additions,
             reason,
             TaskLedgerTimestamp::from_unix_millis(6)?,
         )?;
-        assert!(replan_localization_reason(&ledger, preparation_id).is_some());
-        assert!(replan_localization_reason(&ledger, retry_id).is_none());
+        assert!(replan_localization_reason(&ledger, retry_id).is_some());
         Ok(())
     }
 

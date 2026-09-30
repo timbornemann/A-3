@@ -276,6 +276,37 @@ pub enum GitPolicyOperation {
 /// One typed request presented to the central policy engine.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PolicyAction {
+    /// Additional process whose complete effect class was determined by Core rules.
+    MachineProcess {
+        /// Exact argv, ownership, limits, environment and network specification.
+        process: ProcessPolicyAction,
+        /// Closed Core effect, never a model-authored safe flag.
+        effect: super::MachineProcessEffect,
+    },
+    /// Core-validated credential-free GET; no arbitrary network or remote write capability.
+    MachineHttpGet {
+        /// Exact owner of the serialized tool action.
+        worktree_id: WorktreeId,
+        /// Core-validated active ledger step.
+        step_id: TaskStepId,
+        /// Canonical URL and closed GET semantics.
+        target_id: PolicyResourceId,
+    },
+    /// Canonical, full-content-bound external file operation prepared by a privileged adapter.
+    MachineFile {
+        /// Owner of the serialized action.
+        worktree_id: WorktreeId,
+        /// Exact current ledger step.
+        step_id: TaskStepId,
+        /// Canonical external resource digest, with no raw path in audit.
+        resource_id: PolicyResourceId,
+        /// Complete-file operation, never recursive.
+        operation: PathPolicyOperation,
+        /// Current observed state; None means an absent creation target.
+        expected: Option<super::ContentHash>,
+        /// Complete proposed content hash for Write only.
+        proposed: Option<super::ContentHash>,
+    },
     /// Root metadata observation or deterministic derivation.
     Root {
         /// Exact worktree root.
@@ -315,6 +346,17 @@ impl PolicyAction {
     #[must_use]
     pub const fn class(&self) -> ActionClass {
         match self {
+            Self::MachineProcess { effect, .. } => match effect {
+                super::MachineProcessEffect::ReadOnly => ActionClass::ExecuteSafe,
+                super::MachineProcessEffect::Unknown => ActionClass::ExecuteOpen,
+                super::MachineProcessEffect::Destructive => ActionClass::Destructive,
+                super::MachineProcessEffect::Publish => ActionClass::Publish,
+            },
+            Self::MachineFile {
+                operation: PathPolicyOperation::Delete,
+                ..
+            } => ActionClass::Destructive,
+            Self::MachineFile { .. } => ActionClass::OutsideRoot,
             Self::Root { operation, .. } => match operation {
                 RootPolicyOperation::Read => ActionClass::Read,
                 RootPolicyOperation::Derive => ActionClass::Derive,
@@ -334,6 +376,9 @@ impl PolicyAction {
                     ActionClass::Write
                 }
             }
+            Self::Process(process) if matches!(process.mode(), ProcessExecutionMode::Shell) => {
+                ActionClass::ExecuteOpen
+            }
             Self::Process(process) => match process.network() {
                 ProcessNetworkScope::Requested(_) => ActionClass::Network,
                 ProcessNetworkScope::Denied => match process.mode() {
@@ -343,7 +388,7 @@ impl PolicyAction {
                     }
                 },
             },
-            Self::Network { .. } => ActionClass::Network,
+            Self::Network { .. } | Self::MachineHttpGet { .. } => ActionClass::Network,
             Self::Git { operation, .. } => match operation {
                 GitPolicyOperation::Status
                 | GitPolicyOperation::Diff
@@ -371,10 +416,25 @@ impl PolicyAction {
     pub const fn risk(&self) -> RiskLevel {
         if matches!(
             self,
+            Self::MachineProcess {
+                effect: super::MachineProcessEffect::Unknown,
+                ..
+            }
+        ) {
+            return RiskLevel::Critical;
+        }
+        if matches!(
+            self,
             Self::Process(ProcessPolicyAction {
                 mode: ProcessExecutionMode::Shell,
                 ..
-            })
+            }) | Self::MachineProcess {
+                process: ProcessPolicyAction {
+                    mode: ProcessExecutionMode::Shell,
+                    ..
+                },
+                ..
+            }
         ) {
             return RiskLevel::Critical;
         }
@@ -398,6 +458,80 @@ impl PolicyAction {
     #[must_use]
     pub fn scope_digest(&self) -> PolicyScopeDigest {
         PolicyScopeDigest(derive_action_digest(POLICY_SCOPE_DIGEST_DOMAIN, self))
+    }
+
+    /// Additional effects which must retain stricter workspace restrictions in composite actions.
+    #[must_use]
+    pub const fn additional_restrictions(&self) -> [Option<ActionClass>; 4] {
+        match self {
+            Self::MachineProcess {
+                effect: super::MachineProcessEffect::Unknown,
+                ..
+            } => [
+                Some(ActionClass::Network),
+                Some(ActionClass::Destructive),
+                Some(ActionClass::Publish),
+                Some(ActionClass::OutsideRoot),
+            ],
+            Self::MachineProcess {
+                effect:
+                    super::MachineProcessEffect::Publish | super::MachineProcessEffect::Destructive,
+                ..
+            } => [
+                Some(ActionClass::Network),
+                Some(ActionClass::Destructive),
+                Some(ActionClass::Publish),
+                Some(ActionClass::OutsideRoot),
+            ],
+            Self::MachineProcess { process, .. }
+                if matches!(process.network(), ProcessNetworkScope::Requested(_)) =>
+            {
+                [Some(ActionClass::Network), None, None, None]
+            }
+            Self::MachineHttpGet { .. } => [Some(ActionClass::Read), None, None, None],
+            Self::MachineFile {
+                operation: PathPolicyOperation::Read,
+                ..
+            } => [Some(ActionClass::Read), None, None, None],
+            Self::MachineFile {
+                operation: PathPolicyOperation::Delete,
+                ..
+            } => [
+                Some(ActionClass::OutsideRoot),
+                Some(ActionClass::Write),
+                None,
+                None,
+            ],
+            Self::MachineFile {
+                operation: PathPolicyOperation::Write,
+                ..
+            } => [Some(ActionClass::Write), None, None, None],
+            Self::Path {
+                scope: PolicyPathScope::OutsideRoot { .. },
+                operation: PathPolicyOperation::Delete,
+            } => [Some(ActionClass::Destructive), None, None, None],
+            Self::Path {
+                scope: PolicyPathScope::OutsideRoot { .. },
+                operation: PathPolicyOperation::Write,
+            } => [Some(ActionClass::Write), None, None, None],
+            Self::Process(process)
+                if matches!(process.network(), ProcessNetworkScope::Requested(_)) =>
+            {
+                [
+                    Some(if matches!(process.mode(), ProcessExecutionMode::Shell) {
+                        ActionClass::Network
+                    } else if matches!(process.mode(), ProcessExecutionMode::KnownSafe) {
+                        ActionClass::ExecuteSafe
+                    } else {
+                        ActionClass::ExecuteOpen
+                    }),
+                    None,
+                    None,
+                    None,
+                ]
+            }
+            _ => [None, None, None, None],
+        }
     }
 }
 
@@ -466,7 +600,10 @@ impl SystemPolicyV1 {
                 }
                 _ => PolicyDisposition::ApprovalRequired,
             },
-            PolicyAction::Patch(_) => PolicyDisposition::ApprovalRequired,
+            PolicyAction::Patch(_)
+            | PolicyAction::MachineFile { .. }
+            | PolicyAction::MachineHttpGet { .. }
+            | PolicyAction::MachineProcess { .. } => PolicyDisposition::ApprovalRequired,
             PolicyAction::Process(process)
                 if matches!(process.mode(), ProcessExecutionMode::KnownSafe)
                     && matches!(process.plan_binding(), ProcessPlanBinding::Validated(_))
@@ -608,6 +745,43 @@ impl Error for WorkspacePolicyError {}
 fn derive_action_digest(domain: &str, action: &PolicyAction) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_derive_key(domain);
     match action {
+        PolicyAction::MachineFile {
+            worktree_id,
+            step_id,
+            resource_id,
+            operation,
+            expected,
+            proposed,
+        } => {
+            hash_tag(&mut hasher, 6);
+            hasher.update(worktree_id.as_bytes());
+            hasher.update(step_id.as_bytes());
+            hasher.update(resource_id.as_bytes());
+            hash_tag(
+                &mut hasher,
+                match operation {
+                    PathPolicyOperation::Read => 0,
+                    PathPolicyOperation::Write => 1,
+                    PathPolicyOperation::Delete => 2,
+                },
+            );
+            for hash in [expected, proposed] {
+                hash_tag(&mut hasher, u8::from(hash.is_some()));
+                if let Some(hash) = hash {
+                    hasher.update(hash.as_bytes());
+                }
+            }
+        }
+        PolicyAction::MachineHttpGet {
+            worktree_id,
+            step_id,
+            target_id,
+        } => {
+            hash_tag(&mut hasher, 7);
+            hasher.update(worktree_id.as_bytes());
+            hasher.update(step_id.as_bytes());
+            hasher.update(target_id.as_bytes());
+        }
         PolicyAction::Root {
             worktree_id,
             operation,
@@ -664,6 +838,22 @@ fn derive_action_digest(domain: &str, action: &PolicyAction) -> [u8; 32] {
                 hasher.update(&patch.scope_digest().as_bytes());
             }
             hash_tag(&mut hasher, u8::from(patch.destructive()));
+        }
+        PolicyAction::MachineProcess { process, effect } => {
+            hash_tag(&mut hasher, 8);
+            hasher.update(&derive_action_digest(
+                domain,
+                &PolicyAction::Process(*process),
+            ));
+            hash_tag(
+                &mut hasher,
+                match effect {
+                    super::MachineProcessEffect::ReadOnly => 0,
+                    super::MachineProcessEffect::Unknown => 1,
+                    super::MachineProcessEffect::Destructive => 2,
+                    super::MachineProcessEffect::Publish => 3,
+                },
+            );
         }
         PolicyAction::Process(process) => {
             hash_tag(&mut hasher, 2);

@@ -40,7 +40,8 @@ impl WireFailure {
 }
 
 fn flat_schema() -> Result<Value, Box<dyn Error>> {
-    let mut schema = AgentActionJsonSchema::current().as_json()?;
+    // Keep this historical shape experiment fixed; it has no machine-tool executor.
+    let mut schema = AgentActionJsonSchema::version_five().as_json()?;
     let id = "22".repeat(32);
     // Same trusted identity restrictions in both variants; operation choice is not forced.
     for (definition, fields) in [
@@ -140,9 +141,11 @@ fn document_summary(document: Option<&Value>, wrapped: bool) -> Value {
             Some(d.clone())
         }
     });
-    let decoded = normalized
-        .as_ref()
-        .is_some_and(|d| DecodeAgentAction::current().decode(&d.to_string()).is_ok());
+    let decoded = normalized.as_ref().is_some_and(|d| {
+        DecodeAgentAction::version_five()
+            .decode(&d.to_string())
+            .is_ok()
+    });
     let kind = normalized
         .as_ref()
         .and_then(|d| d["action"]["kind"].as_str())
@@ -227,7 +230,7 @@ fn action_wire_probe_is_shape_only_strict_and_keeps_all_choices() -> Result<(), 
         json!({"schema_version":5,"action":{"kind":"search","query":"private sentinel","limit":5}})
     );
     assert!(
-        DecodeAgentAction::current()
+        DecodeAgentAction::version_five()
             .decode(&read.to_string())
             .is_err()
     );
@@ -264,9 +267,9 @@ fn action_wire_probe_is_shape_only_strict_and_keeps_all_choices() -> Result<(), 
         wrapped["action"]["operations"][0] = pack(&operation)?;
         wrapped["action"] = pack(&wrapped["action"])?;
         assert_eq!(normalize_probe(&wrapped)?, flat);
-        DecodeAgentAction::current().decode(&flat.to_string())?;
+        DecodeAgentAction::version_five().decode(&flat.to_string())?;
         assert!(
-            DecodeAgentAction::current()
+            DecodeAgentAction::version_five()
                 .decode(&wrapped.to_string())
                 .is_err()
         );

@@ -181,7 +181,7 @@ impl AgentTaskMaterializer {
                     DiscoveredCommandKind::Build,
                     DiscoveredCommandKind::Test,
                 ],
-                AgentWorkPlanVerificationIntent::Test => [
+                AgentWorkPlanVerificationIntent::Check => [
                     DiscoveredCommandKind::Test,
                     DiscoveredCommandKind::Lint,
                     DiscoveredCommandKind::Build,
@@ -207,19 +207,11 @@ impl AgentTaskMaterializer {
                     VerificationScope::Workspace,
                 ),
                 (None, AgentWorkPlanVerificationIntent::Change) => {
-                    let prepares_deferred_command = work_plan
-                        .steps()
-                        .get(index.saturating_add(1))
-                        .is_some_and(|next| {
-                            next.verification_intent() == AgentWorkPlanVerificationIntent::Test
-                        });
                     VerificationSpec::diff_invariant(
                         spec_id,
-                        verification_requirement(if prepares_deferred_command {
-                            "Der exakt freigegebene Testartefakt-Schritt verändert mindestens einen Pfad vollständig; im anschließend veröffentlichten Index muss dadurch ein bevorzugter lokaler Prüfcommand deterministisch entdeckbar sein. Reine Quellcode- oder Dokumentationsänderungen genügen nicht."
-                        } else {
-                            "Der exakt freigegebene Änderungsschritt verändert mindestens einen Pfad vollständig und wird anschließend neu indiziert."
-                        })?,
+                        verification_requirement(
+                            "Der exakt freigegebene Änderungsschritt verändert mindestens einen Pfad vollständig und wird anschließend neu indiziert. Änderungsevidence belegt keine Laufzeitwirkung.",
+                        )?,
                         DiffInvariantVerification::new(
                             DiffInvariantMode::NonEmptyChanges,
                             Vec::new(),
@@ -227,7 +219,7 @@ impl AgentTaskMaterializer {
                         .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
                     )
                 }
-                (None, AgentWorkPlanVerificationIntent::Test) => {
+                (None, AgentWorkPlanVerificationIntent::Check) => {
                     VerificationSpec::deferred_command(
                         spec_id,
                         verification_requirement(
@@ -7777,7 +7769,11 @@ fn has_required_plan_sections(plan: &str) -> bool {
             content[index] = true;
         }
     }
-    present.into_iter().all(|value| value) && content.into_iter().all(|value| value)
+    present.into_iter().all(|value| value)
+        && content
+            .into_iter()
+            .enumerate()
+            .all(|(index, value)| index == 3 || value)
 }
 
 fn random_id() -> Result<[u8; 32], AgentSessionManagerFailure> {

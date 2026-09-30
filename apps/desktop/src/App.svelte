@@ -9,7 +9,7 @@
     AgentApprovalControlActionV1,
     AgentApprovalControlResponseV1,
     AgentApprovalResponseV1,
-    AgentApprovalV1,
+    AgentApprovalV2,
   } from './lib/agent-approval';
   import type {
     AgentTaskControlActionV1,
@@ -128,7 +128,7 @@
     agentActivityLoader?: (taskId: string) => Promise<AgentActivityResponseV1>;
     agentApprovalController?: (
       taskId: string,
-      approval: AgentApprovalV1,
+      approval: AgentApprovalV2,
       action: AgentApprovalControlActionV1,
     ) => Promise<AgentApprovalControlResponseV1>;
     agentApprovalLoader?: (taskId: string) => Promise<AgentApprovalResponseV1>;

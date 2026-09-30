@@ -1,6 +1,13 @@
 //! Versioned, infrastructure-independent IPC boundary types for A^3.
 
+mod agent_machine_recovery;
+pub use agent_machine_recovery::*;
+
 mod agent_activity;
+mod agent_permissions;
+pub use agent_permissions::{
+    AgentPermissionModeV1, AgentPermissionsResponseV1, UpdateAgentPermissionsRequestV1,
+};
 mod agent_approval;
 mod agent_ask_research;
 mod agent_control;

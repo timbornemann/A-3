@@ -3,6 +3,8 @@ import {
   controlAgentApproval,
   parseAgentApprovalControlResponseV1,
   parseAgentApprovalResponseV1,
+  parseAgentApprovalResponseV2,
+  queryAgentApprovalV2,
   queryAgentApproval,
 } from './agent-approval';
 import { patchApprovalResponse } from './agent-approval.fixture';
@@ -121,5 +123,64 @@ describe('Agent approval V1', () => {
         },
       }),
     ).toThrow(/does not match V1/u);
+  });
+});
+
+describe('Machine approval V2', () => {
+  function machineResponse() {
+    const legacy = patchApprovalResponse();
+    if (legacy.result.status !== 'available') throw new Error('fixture unavailable');
+    return {
+      protocolVersion: 2,
+      result: {
+        status: 'available',
+        approval: {
+          ...legacy.result.approval,
+          actionClass: 'outsideRoot',
+          risk: 'critical',
+          action: {
+            kind: 'machine',
+            version: 1,
+            resourceKind: 'file',
+            target: 'D:\\scratch\\result.txt',
+            operation: 'write',
+            resourceId: id('b'),
+            expectedHash: null,
+            proposedHash: id('c'),
+          },
+        },
+      },
+    };
+  }
+  it('retains the exact external scope only in V2 and sends an opaque task selector', async () => {
+    const response = machineResponse();
+    const parsed = parseAgentApprovalResponseV2(response);
+    expect(parsed.result.status).toBe('available');
+    expect(() => parseAgentApprovalResponseV1({ ...response, protocolVersion: 1 })).toThrow();
+    const invoke = vi.fn().mockResolvedValue(response);
+    await queryAgentApprovalV2(id('1'), invoke);
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('query_agent_approval_v2', {
+      request: { protocolVersion: 2, taskId: id('1') },
+    });
+  });
+  it('rejects injected authority, broken hashes, contradictory risks and non-GET HTTP', () => {
+    const base = machineResponse();
+    for (const change of [
+      { version: 2 },
+      { proposedHash: null },
+      { expectedHash: 'broken' },
+      { operation: 'delete', expectedHash: null },
+      { resourceKind: 'http' },
+      { target: 'x'.repeat(4097) },
+      { target: 'path\ncommand' },
+      { policyDecision: id('d') },
+    ]) {
+      const altered = structuredClone(base);
+      Object.assign(altered.result.approval.action, change);
+      expect(() => parseAgentApprovalResponseV2(altered)).toThrow();
+    }
+    const altered = structuredClone(base);
+    altered.result.approval.risk = 'low';
+    expect(() => parseAgentApprovalResponseV2(altered)).toThrow();
   });
 });

@@ -195,7 +195,7 @@ fn staged_every_advertised_choice_has_a_projectable_arguments_contract()
         .pointer("/properties/choice/enum")
         .and_then(serde_json::Value::as_array)
         .ok_or("choices")?;
-    assert_eq!(choices.len(), 17);
+    assert_eq!(choices.len(), 20);
     for choice in choices {
         let choice = decode_choice(&serde_json::json!({"version":1,"choice":choice}).to_string())
             .ok_or("advertised choice cannot be decoded")?;
@@ -622,7 +622,7 @@ fn staged_binding_rejects_malformed_compiler_schemas_without_indexing_panics()
         serde_json::json!(null),
         serde_json::json!([]),
         serde_json::json!({"$defs":[]}),
-        serde_json::json!({"properties":{"schema_version":{"const":5}},"$defs":{"applyPatch":{"properties":[]}}}),
+        serde_json::json!({"properties":{"schema_version":{"const":6}},"$defs":{"applyPatch":{"properties":[]}}}),
     ] {
         assert!(super::staged_contract::bind_patch_anchors(&value, values()).is_none());
     }

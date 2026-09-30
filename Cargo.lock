@@ -26,6 +26,7 @@ dependencies = [
  "blake3",
  "crossbeam-channel",
  "futures",
+ "serde",
  "serde_json",
  "tokio",
  "zeroize",
@@ -186,7 +187,9 @@ dependencies = [
  "command-group",
  "futures",
  "gix",
+ "reqwest",
  "rustix 1.1.4",
+ "tokio",
 ]
 
 [[package]]

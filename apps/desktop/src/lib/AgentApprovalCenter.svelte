@@ -2,21 +2,22 @@
   import { onDestroy, untrack } from 'svelte';
   import {
     controlAgentApproval,
-    queryAgentApproval,
+    queryAgentApprovalV2,
     type AgentApprovalControlActionV1,
     type AgentApprovalControlResponseV1,
+    type AgentApprovalResponseV2,
     type AgentApprovalResponseV1,
-    type AgentApprovalV1,
+    type AgentApprovalV2,
   } from './agent-approval';
 
   interface Props {
     taskId: string;
     onwrite?: () => void;
     refreshKey?: string | number;
-    loader?: (taskId: string) => Promise<AgentApprovalResponseV1>;
+    loader?: (taskId: string) => Promise<AgentApprovalResponseV2 | AgentApprovalResponseV1>;
     controller?: (
       taskId: string,
-      approval: AgentApprovalV1,
+      approval: AgentApprovalV2,
       action: AgentApprovalControlActionV1,
     ) => Promise<AgentApprovalControlResponseV1>;
     onChanged?: () => Promise<void> | void;
@@ -25,14 +26,14 @@
   type View =
     | { kind: 'loading' }
     | { kind: 'error' }
-    | { kind: 'result'; result: AgentApprovalResponseV1['result'] };
+    | { kind: 'result'; result: AgentApprovalResponseV2['result'] };
   type PendingChoice = 'allowOnce' | 'deny' | null;
 
   let {
     taskId,
     onwrite,
     refreshKey = 0,
-    loader = queryAgentApproval,
+    loader = queryAgentApprovalV2,
     controller = controlAgentApproval,
     onChanged = () => undefined,
   }: Props = $props();
@@ -73,7 +74,7 @@
     requestNumber += 1;
   });
 
-  function approvalIdentity(result: AgentApprovalResponseV1['result']): string | null {
+  function approvalIdentity(result: AgentApprovalResponseV2['result']): string | null {
     return result.status === 'available'
       ? `${result.approval.approvalRevision}:${result.approval.ledgerStoreVersion}:${result.approval.status}`
       : null;
@@ -192,7 +193,7 @@
     }
   }
 
-  function classLabel(value: AgentApprovalV1['actionClass']): string {
+  function classLabel(value: AgentApprovalV2['actionClass']): string {
     return (
       {
         read: 'Lesen',
@@ -208,13 +209,13 @@
     )[value];
   }
 
-  function riskLabel(value: AgentApprovalV1['risk']): string {
+  function riskLabel(value: AgentApprovalV2['risk']): string {
     return ({ low: 'Niedrig', moderate: 'Moderat', high: 'Hoch', critical: 'Kritisch' } as const)[
       value
     ];
   }
 
-  function statusLabel(value: AgentApprovalV1['status']): string {
+  function statusLabel(value: AgentApprovalV2['status']): string {
     return (
       {
         pending: 'Entscheidung ausstehend',
@@ -329,6 +330,21 @@
               </li>
             {/each}
           </ul>
+        </section>
+      {:else if approval.action.kind === 'machine'}
+        <section class="action-detail" aria-labelledby="approval-machine-heading">
+          <h4 id="approval-machine-heading">
+            {approval.action.resourceKind === 'http'
+              ? 'Diese Adresse wird gelesen'
+              : 'Diese externe Datei ist betroffen'}
+          </h4>
+          <p>
+            {({ read: 'Lesen', write: 'Schreiben', delete: 'Löschen' } as const)[
+              approval.action.operation
+            ]}
+          </p>
+          <code>{approval.action.target}</code>
+          {#if approval.action.operation === 'delete'}<p>Die Datei wird dauerhaft gelöscht.</p>{/if}
         </section>
       {:else}
         {@const process = approval.action.process}

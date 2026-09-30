@@ -176,6 +176,26 @@ impl DiscoveredCommand {
         &self.arguments
     }
 
+    /// True only for a closed Core-owned syntax check which does not execute project code.
+    #[must_use]
+    pub fn is_core_owned_check(&self) -> bool {
+        self.executable.as_str() == "python"
+            && (5..=20).contains(&self.arguments.len())
+            && self.working_directory == WorkspaceDirectory::Root
+            && self.arguments[4..].iter().all(|argument| {
+                self.evidence.iter().any(|evidence| {
+                    matches!(evidence, CommandDiscoveryEvidence::File(_))
+                        && evidence.revision().path().as_bytes() == argument.as_str().as_bytes()
+                        && argument.as_str().ends_with(".py")
+                })
+            })
+            && self.arguments[0].as_str() == "-I"
+            && self.arguments[1].as_str() == "-B"
+            && self.arguments[2].as_str() == "-c"
+            && self.arguments[3].as_str() == PYTHON_SYNTAX_CHECK
+            && self.kind == DiscoveredCommandKind::Lint
+    }
+
     /// Returns every indexed revision or range supporting this command.
     #[must_use]
     pub fn evidence(&self) -> &[CommandDiscoveryEvidence] {
@@ -205,6 +225,9 @@ impl DiscoveredCommand {
         )
     }
 }
+
+/// Closed standard-library check; parses source text without importing or running project code.
+pub const PYTHON_SYNTAX_CHECK: &str = "import ast,sys,tokenize; [(ast.parse(tokenize.open(p).read(), filename=p)) for p in sys.argv[1:]]";
 
 impl fmt::Debug for DiscoveredCommand {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {

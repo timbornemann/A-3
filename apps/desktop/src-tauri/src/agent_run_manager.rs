@@ -144,6 +144,10 @@ impl AgentRunManager {
         self.request(|response| ManagerCommand::Start(request, response))
     }
 
+    pub(crate) fn permissions_changed(&self) -> Result<(), AgentRunManagerControlError> {
+        self.request(ManagerCommand::PermissionsChanged)
+    }
+
     pub(crate) fn pause(&self, task_id: TaskId) -> Result<(), AgentRunManagerControlError> {
         self.request(|response| ManagerCommand::Pause(task_id, response))
     }
@@ -215,6 +219,7 @@ impl Drop for AgentRunManager {
 
 #[derive(Debug)]
 enum ManagerCommand {
+    PermissionsChanged(Sender<Result<(), AgentRunManagerControlError>>),
     Activate(
         Box<ProjectIdentity>,
         Sender<Result<(), AgentRunManagerControlError>>,
@@ -234,6 +239,7 @@ enum ManagerCommand {
 }
 
 struct CoordinatorState {
+    permission_wakeup: bool,
     project: Option<ProjectIdentity>,
     active: Option<ManagedAttempt>,
     paused: Option<AgentPauseCheckpoint>,
@@ -268,6 +274,7 @@ fn coordinator_loop(
     activity: Arc<Mutex<AgentRunActivity>>,
 ) {
     let mut state = CoordinatorState {
+        permission_wakeup: false,
         project: None,
         active: None,
         paused: None,
@@ -276,6 +283,22 @@ fn coordinator_loop(
     loop {
         while events.try_next().ok().flatten().is_some() {}
         refresh_attempt(&submitter, recovery.as_ref(), &mut state, &activity);
+        if state.permission_wakeup && state.active.is_none() && state.paused.is_none() {
+            state.permission_wakeup = false;
+            if let Some(project) = &state.project
+                && let Ok(Some(request)) = block_on(executor.permission_change_request(project))
+            {
+                let _started = submit_attempt(
+                    &submitter,
+                    &executor,
+                    job_ids.as_ref(),
+                    &mut state,
+                    request,
+                    &activity,
+                );
+                state.permission_wakeup = state.active.is_some();
+            }
+        }
 
         match commands.recv_timeout(COORDINATOR_TICK) {
             Ok(ManagerCommand::Shutdown) => {
@@ -311,6 +334,10 @@ fn handle_command(
     activity: &Mutex<AgentRunActivity>,
 ) {
     match command {
+        ManagerCommand::PermissionsChanged(response) => {
+            state.permission_wakeup = true;
+            let _sent = response.send(Ok(()));
+        }
         ManagerCommand::Activate(project, response) => {
             let result = quiesce_for_project_change(submitter, recovery, state, activity);
             if result.is_ok() {
@@ -876,6 +903,87 @@ mod tests {
         cancels: AtomicUsize,
         cancel_store_version: AtomicU64,
         invalid_pause: bool,
+    }
+
+    #[derive(Debug)]
+    struct PermissionWakeExecutor {
+        remaining: AtomicUsize,
+        started: std::sync::mpsc::SyncSender<usize>,
+        attempts: AtomicUsize,
+    }
+
+    impl AgentRunExecutor for PermissionWakeExecutor {
+        fn permission_change_request<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+        ) -> a3_application::AgentPermissionChangeFuture<'a> {
+            Box::pin(async move {
+                if self
+                    .remaining
+                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+                        value.checked_sub(1)
+                    })
+                    .is_err()
+                {
+                    return Ok(None);
+                }
+                Ok(Some(request().map_err(|_| {
+                    a3_application::AgentRunExecutionFailure::InvalidState
+                })?))
+            })
+        }
+        fn execute<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _request: AgentRunExecutionRequest,
+            _control: &'a a3_application::JobContext,
+        ) -> AgentRunExecutionFuture<'a> {
+            Box::pin(async move {
+                let attempt = self.attempts.fetch_add(1, Ordering::AcqRel) + 1;
+                self.started
+                    .try_send(attempt)
+                    .map_err(|_| a3_application::AgentRunExecutionFailure::Unavailable)?;
+                Ok(AgentRunExecutionOutcome::Completed)
+            })
+        }
+    }
+
+    #[test]
+    fn permission_selection_wakes_all_eligible_owned_attempts_without_an_extra_click()
+    -> Result<(), Box<dyn Error>> {
+        let (scheduler, events) = JobScheduler::new(
+            JobSchedulerConfig::new(1, 4, 64)?,
+            Arc::new(TestClock(AtomicU64::new(1))),
+        )?;
+        let (send, receive) = std::sync::mpsc::sync_channel(2);
+        let executor = Arc::new(PermissionWakeExecutor {
+            remaining: AtomicUsize::new(2),
+            started: send,
+            attempts: AtomicUsize::new(0),
+        });
+        let recovery = Arc::new(Recovery {
+            pauses: AtomicUsize::new(0),
+            cancels: AtomicUsize::new(0),
+            cancel_store_version: AtomicU64::new(0),
+            invalid_pause: false,
+        });
+        let mut manager = AgentRunManager::start(
+            scheduler.submitter()?,
+            events,
+            executor.clone(),
+            recovery,
+            Arc::new(DesktopJobIds::new()),
+        )?;
+        manager.activate_project(project_fixture()?)?;
+        assert_eq!(executor.attempts.load(Ordering::Acquire), 0);
+        manager.permissions_changed()?;
+        assert_eq!(receive.recv_timeout(Duration::from_secs(3))?, 1);
+        assert_eq!(receive.recv_timeout(Duration::from_secs(3))?, 2);
+        wait_for_state(&manager, AgentRunActivityState::Succeeded)?;
+        assert_eq!(executor.attempts.load(Ordering::Acquire), 2);
+        manager.stop_and_join()?;
+        scheduler.shutdown(a3_application::ShutdownMode::CancelAndWait)?;
+        Ok(())
     }
 
     impl AgentRuntimeRecovery for Recovery {

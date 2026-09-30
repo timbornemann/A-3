@@ -36,7 +36,9 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
 - Relative Traversierung aus dem Root ist verboten.
 - Sonderdateien, Gerätepfade, Pipes und Sockets werden standardmäßig abgelehnt.
 - Große, binäre, generierte oder geheime Dateien werden über Klassifikationsregeln ausgeschlossen.
-- Schreibzugriff außerhalb des aktiven Worktree benötigt ausdrückliche Freigabe.
+- Outside-Root-Zugriff benötigt Ask-Einzelabfrage oder eine echte aktionsgebundene
+  Full-machine-Entscheidung für einen eingeordneten nichtdestruktiven Werkzeugvertrag.
+  Ein kanonischer Zielpfad erweitert die Workspace-Root niemals implizit.
 - Eine ausgewählte Untermenge darf nicht implizit auf einen übergeordneten Git-Worktree erweitert werden.
 - Das Git Common Directory eines Linked Worktree darf für eng begrenzte Identitätsmetadaten gelesen
   werden; es wird dadurch nicht zu einem erlaubten Workspace-Root.
@@ -331,21 +333,31 @@ Shellmodus ist eine eigene hochriskante Aktion und immer freigabepflichtig.
 
 ## Aktionsklassen
 
-| Klasse | Beispiel | Standard |
+| Aktion | Ask permissions | Full machine |
 | --- | --- | --- |
-| Read | Suche, Datei lesen, Git Status | automatisch innerhalb Root |
-| Derive | Index, Graph, Context Pack | automatisch |
-| Write | Patch im Worktree | gemäß Task-Policy; Diff immer sichtbar |
-| Execute Safe | bekannte Test-, Format- und Buildbefehle ohne Netzwerk | automatisch nach validiertem Plan |
-| Execute Open | beliebiger lokaler Prozess | Freigabe |
-| Network | Download, Remote API, Paketinstallation | Freigabe |
-| Destructive | Löschen, Reset, Datenmigration mit Verlust | Freigabe |
-| Publish | Push, PR, Release, externe Nachricht | immer Freigabe |
-| Outside Root | Lesen oder Schreiben außerhalb Workspace | immer Freigabe |
+| Lesen/Suchen/Ableiten im Projekt | automatisch | automatisch |
+| Dateien anlegen/ändern | Einzelabfrage | automatisch |
+| Bestätigte/eingeordnete direkte Prozesse | Einzelabfrage | automatisch |
+| Eingeordnete Outside-Root-/Netzwerk-/Installationswerkzeuge | Einzelabfrage | automatisch |
+| Unbekannte Skripte, Shell oder unklare Parameter/Wirkungen | Einzelabfrage | Einzelabfrage |
+| Löschen/Destruktion/Push/Veröffentlichung | Einzelabfrage | Einzelabfrage |
+
+Diese Baseline aus [ADR-0118](adrs/0118-appweite-agent-berechtigungsmodi.md) gilt
+appweit und unabhängig vom Conversation-Modus. Ask/Plan bleiben read-only. Neue und
+migrierte Einstellungen beginnen mit Ask permissions. Der Core persistiert den bewussten
+Moduswechsel per CAS; automatische Entscheidungen behalten Modus und Revision im Audit.
+Vor Werkzeugadmission wird die Revision erneut geprüft. Bereits gestartete Aktionen enden
+kontrolliert; nun automatisch erlaubte wartende Aktionen benötigen frische Policy und Anker.
+Full machine verwendet die bestehenden Nutzerrechte ohne OS-Privilegienerhöhung.
+Unbekannte Prozesse bleiben auch mit Netzwerkzugriff offen; kombinierte Risiken und
+Workspace-Deny/RequireApproval behalten Vorrang. Die WebView erhält keinen generischen
+Prozess- oder Dateisystemzugriff. Die aktuellen geschlossenen Datei-/Prozess-/HTTP-
+Verträge, AgentAction V6, Approval Query V2 und die scopegebundene menschliche
+Maschinen-Recovery beschreibt [Auftragsumfang und Berechtigungen](AGENT_TASK_SCOPE_AND_PERMISSIONS.md).
 
 Freigaben sind aktions- und scopegebunden, zeitlich begrenzt und nicht still wiederverwendbar. Die
 implementierte V1-Grenze leitet Klasse und Risiko ausschließlich aus einer typisierten Root-, Pfad-,
-Prozess-, Netzwerk- oder Git-Action ab. Die unveränderliche Systempolicy kann durch
+Prozess-, Netzwerk-, Maschinen- oder Git-Action ab. Die revisionierte Modusbaseline kann durch
 `WorkspacePolicy` nur auf Freigabepflicht oder Ablehnung verschärft werden; eine Lockerung ist im
 Workspace-Regeltyp nicht darstellbar.
 
@@ -409,16 +421,21 @@ Automatisch erlaubt:
 - rev-parse
 - ls-files
 
-Freigabepflichtig:
+Im Ask-Modus freigabepflichtig, im Full-Modus nur für eingeordnete nichtdestruktive Aktionen automatisch:
 
 - commit
-- branch create oder delete
+- branch create
+- fetch
+
+In beiden Modi einzeln freigabepflichtig:
+
+- branch delete
 - rebase
 - merge
 - reset
 - clean
 - checkout mit Dateiverlust
-- push, fetch oder pull mit Netzwerk
+- push oder pull mit Netzwerk
 
 Destruktive Git-Aktionen sind nie implizit durch „implementiere dies“ autorisiert.
 
@@ -988,7 +1005,7 @@ Provider-STOP oder formal übersetzbarer Output sind keine Zulassung. Nur Schema
 Positionen ändern sich, nicht Const-/Enum-Daten. Unbekannte Keywords bleiben Fehler.
 
 Nach [ADR-0087](adrs/0087-agentaktionen-ohne-modellstatusnotiz.md) verwenden neue
-normale Agentturns AgentAction V5 mit genau `schema_version` und `action`.
+normale Agentturns seit dieser historischen Entscheidung AgentAction V5 mit genau `schema_version` und `action`.
 `public_note` ist verboten; Legacy V3/V4 behalten ihre strengen Notizregeln.
 Die unabhängige Prüfung von Aktionen, aktuellen IDs und Patch-Snapshots bleibt
 vollständig bestehen. Fortschritt stammt aus bestehendem Run-Journal und Ledger,

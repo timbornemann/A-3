@@ -24,3 +24,8 @@ pub use process_runner::WorkspaceProcessRunner;
 pub use repository::{RepositoryInspectionError, RepositoryInspector};
 pub use workspace_directory_lister::IndexedWorkspaceDirectoryLister;
 pub use workspace_patch::WorkspacePatchAdapter;
+
+mod machine_file;
+pub use machine_file::WorkspaceMachineFileTool;
+mod machine_network;
+pub use machine_network::WorkspaceMachineNetworkTool;

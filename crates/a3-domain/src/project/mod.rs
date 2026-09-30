@@ -1,4 +1,21 @@
 mod agent_action;
+mod agent_machine_action;
+mod agent_permissions;
+mod machine_file;
+pub use agent_machine_action::AgentMachineAction;
+mod machine_http;
+mod machine_process;
+pub use agent_permissions::{
+    AgentPermissionError, AgentPermissionMode, AgentPermissionRevision, AgentPermissionSettings,
+};
+pub use machine_file::{
+    MachineFileAction, MachineFileActionError, MachineFileOperation, MachineFilePath,
+};
+pub use machine_http::{
+    MachineHttpAction, MachineHttpError, MachineHttpSchemaVersion, MachineHttpUrl,
+    PreparedMachineHttpAction,
+};
+pub use machine_process::{MachineProcessAction, MachineProcessActionError, MachineProcessEffect};
 mod agent_ask_research;
 mod agent_controller;
 mod agent_run;
@@ -106,7 +123,7 @@ pub use agent_tool::{
 };
 pub use agent_work_plan::{
     AgentWorkPlan, AgentWorkPlanError, AgentWorkPlanStep, AgentWorkPlanVerificationIntent,
-    MAX_AGENT_WORK_PLAN_STEPS,
+    MAX_AGENT_WORK_PLAN_STEPS, NO_ADDITIONAL_AGENT_CHECKS,
 };
 pub use approval::{
     ApprovalGrant, ApprovalGrantError, ApprovalGrantState, ApprovalRequest, ApprovalRequestError,
@@ -124,8 +141,8 @@ pub use claim_verification::{
 pub use command_discovery::{
     CommandCatalogError, CommandDiscoveryEvidence, CommandDiscoverySchemaVersion,
     DiscoveredCommand, DiscoveredCommandError, DiscoveredCommandKind,
-    DiscoveredCommandProcessError, PreparedDiscoveredCommandApproval, ProjectCommandAllowlist,
-    ProjectCommandAllowlistError, ProjectCommandCatalog,
+    DiscoveredCommandProcessError, PYTHON_SYNTAX_CHECK, PreparedDiscoveredCommandApproval,
+    ProjectCommandAllowlist, ProjectCommandAllowlistError, ProjectCommandCatalog,
 };
 pub use context_pack::{
     ContextBudgetError, ContextBudgetPlan, ContextBudgetUsage, ContextCompilerPolicyVersion,

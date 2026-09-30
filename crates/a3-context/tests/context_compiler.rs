@@ -161,7 +161,7 @@ fn replan_localization_is_in_the_counted_anchor_digest_and_restricted_schema()
                 .contains("cause=Find the serializer source")
     }));
     let schema = after.request().structured_output().ok_or("schema")?.value();
-    assert_eq!(schema["properties"]["schema_version"]["const"], 5);
+    assert_eq!(schema["properties"]["schema_version"]["const"], 6);
     assert!(schema["properties"].get("public_note").is_none());
     assert_eq!(
         schema["properties"]["action"]["oneOf"]
@@ -310,7 +310,7 @@ fn replan_shared_analysis_packs_actual_originals_and_v7_without_mutation_schema(
     assert_eq!(
         next.request().structured_output().ok_or("schema")?.value()["properties"]["schema_version"]
             ["const"],
-        5
+        6
     );
     assert!(next.request().messages().iter().any(|m| {
         m.content().contains("Pending Q1 evidence need") && m.content().contains("return")
@@ -529,6 +529,21 @@ fn current_step_constants_match_provider_schema_and_exact_grounding() -> Result<
                 ),
                 ("run", "step_id", input.current_step_id().to_string()),
                 (
+                    "machineFile",
+                    "step_id",
+                    input.current_step_id().to_string(),
+                ),
+                (
+                    "machineProcess",
+                    "step_id",
+                    input.current_step_id().to_string(),
+                ),
+                (
+                    "machineHttpGet",
+                    "step_id",
+                    input.current_step_id().to_string(),
+                ),
+                (
                     "run",
                     "command_id",
                     DiscoveredCommandId::from_bytes([94; 32]).to_string(),
@@ -542,6 +557,14 @@ fn current_step_constants_match_provider_schema_and_exact_grounding() -> Result<
                 if !started && matches!(field, "run_id" | "command_id") {
                     continue;
                 }
+                if field == "step_id" {
+                    let definition = expected["$defs"]["stepId"]
+                        .as_object_mut()
+                        .ok_or(TestError("step definition"))?;
+                    definition.clear();
+                    definition.insert("const".to_owned(), value.into());
+                    continue;
+                }
                 let property = expected["$defs"][definition]["properties"][field]
                     .as_object_mut()
                     .ok_or(TestError("schema property"))?;
@@ -552,7 +575,7 @@ fn current_step_constants_match_provider_schema_and_exact_grounding() -> Result<
                 schema, &expected,
                 "only known current identities may become constants"
             );
-            let exact_grounding = format!("The exact AgentAction V5 JSON Schema is:\n{expected}");
+            let exact_grounding = format!("The exact AgentAction V6 JSON Schema is:\n{expected}");
             assert_eq!(
                 compiled
                     .request()

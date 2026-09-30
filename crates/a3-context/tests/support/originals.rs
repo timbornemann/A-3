@@ -197,32 +197,43 @@ fn source_reservation_precedes_optional_history_at_8k_and_16k() -> Result<(), Bo
 }
 
 #[test]
-fn longer_goal_with_repeated_schema_keeps_a_current_body_before_optional_metadata()
+fn expanded_repeated_schema_keeps_mandatory_anchors_and_reports_original_capacity()
 -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     let objective = "Keep open failures and all original goal constraints. ".repeat(18);
-    let (input, _, _) = input_with_run_memory_goal(
-        &fixture,
-        "prior verified work",
-        profile_with_grounding(
-            16_384,
-            2_048,
-            ModelPromptSchemaGrounding::RepeatSchemaInPrompt,
-        )?,
-        &objective,
-    )?;
-    let source = Source::new("fn compile_context() {\n    deliver_original();\n}");
-    let compiled = compile(&source, &input)?;
-    let text = pack(&compiled);
-    assert!(text.contains(input.goal_contract().draft().objective().as_str()));
-    assert!(text.contains("L0 repository snapshot="));
-    assert!(text.contains("kind=verification_failed"));
-    assert!(
-        text.contains("deliver_original();"),
-        "optional metadata must not crowd out the current original"
-    );
-    assert_counted(&compiled)?;
-    assert_eq!(compiled.digest(), compile(&source, &input)?.digest());
+    for context in [16_384, 32_768] {
+        let (input, _, _) = input_with_run_memory_goal(
+            &fixture,
+            "prior verified work",
+            profile_with_grounding(
+                context,
+                2_048,
+                ModelPromptSchemaGrounding::RepeatSchemaInPrompt,
+            )?,
+            &objective,
+        )?;
+        let source = Source::new("fn compile_context() {\n    deliver_original();\n}");
+        let compiled = compile(&source, &input)?;
+        let text = pack(&compiled);
+        assert!(text.contains(input.goal_contract().draft().objective().as_str()));
+        assert!(text.contains("L0 repository snapshot="));
+        assert!(text.contains("kind=verification_failed"));
+        if context == 16_384 {
+            // V6's exact repeated schema and this long goal consume the bounded capacity.
+            // Never pretend that metadata delivered the original body, or drop mandatory memory.
+            assert!(compiled.original_sources().is_empty());
+            assert!(!text.contains("deliver_original();"));
+            assert!(compiled.truncated());
+        } else {
+            assert!(
+                text.contains("deliver_original();"),
+                "optional metadata must not crowd out the current original"
+            );
+            assert!(!compiled.original_sources().is_empty());
+        }
+        assert_counted(&compiled)?;
+        assert_eq!(compiled.digest(), compile(&source, &input)?.digest());
+    }
     Ok(())
 }
 

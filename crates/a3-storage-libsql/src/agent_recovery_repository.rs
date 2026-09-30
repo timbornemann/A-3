@@ -76,9 +76,18 @@ pub(crate) async fn begin_mutation_attempt(
     tool_run_id: ToolRunId,
     fingerprint: MutationActionFingerprint,
     kind: AgentMutationKind,
+    scope: Option<&a3_application::MachineEffectScope>,
     started_at: AgentRunTimestamp,
 ) -> Result<AgentMutationAttempt, AgentRecoveryRepositoryError> {
-    if kind == AgentMutationKind::UnclassifiedLegacy {
+    if kind == AgentMutationKind::UnclassifiedLegacy
+        || matches!(
+            kind,
+            AgentMutationKind::MachineFile
+                | AgentMutationKind::MachineProcess
+                | AgentMutationKind::MachineNetwork
+        ) != scope.is_some()
+        || scope.is_some_and(|scope| scope.kind() != kind)
+    {
         return Err(AgentRecoveryRepositoryError::InvalidInput);
     }
     let transaction = connection
@@ -123,6 +132,13 @@ pub(crate) async fn begin_mutation_attempt(
             )
             .await
             .map_err(classify_attempt_constraint)?;
+        if let Some(scope) = scope {
+            transaction.execute("INSERT INTO machine_effect_scopes (tool_run_id, attempt_sequence,
+                resource_id, resource_kind, target, expected_hash, proposed_hash, step_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![id_bytes(tool_run_id), i64::from(next_attempt.get()), scope.resource().as_bytes().to_vec(),
+                match kind {AgentMutationKind::MachineFile => "file", AgentMutationKind::MachineProcess => "process", _ => "http"},
+                scope.target(), scope.expected().map(|h| h.as_bytes().to_vec()), scope.proposed().map(|h| h.as_bytes().to_vec()), scope.step().as_bytes().to_vec()])
+                .await.map_err(classify_attempt_constraint)?;
+        }
         mutation_attempt(
             tool_run_id,
             next_attempt,
@@ -138,6 +154,125 @@ pub(crate) async fn begin_mutation_attempt(
     }
     .await;
     close_write_transaction(transaction, result).await
+}
+
+pub(crate) async fn load_machine_scope(
+    connection: &Connection,
+    worktree: WorktreeId,
+    tool: ToolRunId,
+    attempt: AgentToolAttemptNumber,
+) -> Result<Option<a3_application::MachineEffectScope>, AgentRecoveryRepositoryError> {
+    let mut rows = connection
+        .query(
+            "SELECT resource_kind, resource_id, target, expected_hash, proposed_hash, step_id
+        FROM machine_effect_scopes JOIN tool_run_attempts USING (tool_run_id, attempt_sequence)
+        JOIN agent_runs USING (run_id) JOIN tasks USING (task_id)
+        WHERE tool_run_id = ?1 AND attempt_sequence = ?2 AND tasks.worktree_id = ?3",
+            params![id_bytes(tool), i64::from(attempt.get()), id_bytes(worktree)],
+        )
+        .await
+        .map_err(AgentRecoveryRepositoryError::Read)?;
+    let Some(row) = rows
+        .next()
+        .await
+        .map_err(AgentRecoveryRepositoryError::Read)?
+    else {
+        return Ok(None);
+    };
+    let kind: String = row
+        .get(0)
+        .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)?;
+    let kind = match kind.as_str() {
+        "file" => AgentMutationKind::MachineFile,
+        "process" => AgentMutationKind::MachineProcess,
+        "http" => AgentMutationKind::MachineNetwork,
+        _ => return Err(AgentRecoveryRepositoryError::InvalidStoredData),
+    };
+    a3_application::MachineEffectScope::new(
+        kind,
+        a3_domain::TaskStepId::from_bytes(read_id(&row, 5)?),
+        a3_domain::PolicyResourceId::from_bytes(read_id(&row, 1)?),
+        row.get(2)
+            .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)?,
+        read_optional_id(&row, 3)?.map(ContentHash::from_bytes),
+        read_optional_id(&row, 4)?.map(ContentHash::from_bytes),
+    )
+    .map(Some)
+    .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)
+}
+
+pub(crate) async fn machine_acknowledged(
+    connection: &Connection,
+    tool: ToolRunId,
+    attempt: AgentToolAttemptNumber,
+) -> Result<bool, AgentRecoveryRepositoryError> {
+    let mut rows = connection.query("SELECT 1 FROM machine_recovery_acknowledgements WHERE tool_run_id = ?1 AND attempt_sequence = ?2",
+        params![id_bytes(tool), i64::from(attempt.get())]).await.map_err(AgentRecoveryRepositoryError::Read)?;
+    Ok(rows
+        .next()
+        .await
+        .map_err(AgentRecoveryRepositoryError::Read)?
+        .is_some())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn acknowledge_machine(
+    connection: &Connection,
+    worktree: WorktreeId,
+    tool: ToolRunId,
+    attempt: AgentToolAttemptNumber,
+    fingerprint: MutationActionFingerprint,
+    resource: a3_domain::PolicyResourceId,
+    observed_hash: Option<ContentHash>,
+    read_decision: Option<a3_domain::PolicyDecisionId>,
+    observed_at: AgentRunTimestamp,
+) -> Result<(), AgentRecoveryRepositoryError> {
+    let scope = load_machine_scope(connection, worktree, tool, attempt)
+        .await?
+        .ok_or(AgentRecoveryRepositoryError::InvalidInput)?;
+    if scope.resource() != resource {
+        return Err(AgentRecoveryRepositoryError::InvalidInput);
+    }
+    if scope.kind() == AgentMutationKind::MachineFile {
+        let decision_id = read_decision.ok_or(AgentRecoveryRepositoryError::InvalidInput)?;
+        let decision = crate::policy_repository::load_decision(connection, decision_id)
+            .await
+            .map_err(|_| AgentRecoveryRepositoryError::InvalidInput)?
+            .ok_or(AgentRecoveryRepositoryError::InvalidInput)?;
+        let action = a3_domain::PolicyAction::MachineFile {
+            worktree_id: worktree,
+            step_id: scope.step(),
+            resource_id: resource,
+            operation: a3_domain::PathPolicyOperation::Read,
+            expected: None,
+            proposed: None,
+        };
+        let mut rows = connection.query("SELECT run_id FROM tool_run_attempts WHERE tool_run_id = ?1 AND attempt_sequence = ?2",
+            params![id_bytes(tool), i64::from(attempt.get())]).await.map_err(AgentRecoveryRepositoryError::Read)?;
+        let row = rows
+            .next()
+            .await
+            .map_err(AgentRecoveryRepositoryError::Read)?
+            .ok_or(AgentRecoveryRepositoryError::InvalidInput)?;
+        let run = AgentRunId::from_bytes(read_id(&row, 0)?);
+        if decision.outcome() != a3_domain::PolicyDecisionOutcome::Allowed
+            || decision.run_id() != run
+            || decision.timing().decided_at() > observed_at
+            || decision.action_class() != action.class()
+            || decision.risk_level() != action.risk()
+            || decision.action_fingerprint() != action.fingerprint()
+            || decision.scope_digest() != action.scope_digest()
+        {
+            return Err(AgentRecoveryRepositoryError::InvalidInput);
+        }
+    }
+
+    connection.execute("INSERT INTO machine_recovery_acknowledgements (tool_run_id, attempt_sequence,
+        action_fingerprint, resource_id, observed_hash, read_policy_decision_id, acknowledged_at_unix_millis)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![id_bytes(tool), i64::from(attempt.get()),
+        fingerprint.as_bytes().to_vec(), resource.as_bytes().to_vec(), observed_hash.map(|h| h.as_bytes().to_vec()),
+        read_decision.map(|id| id.as_bytes().to_vec()), timestamp_to_i64(observed_at)]).await.map_err(classify_attempt_constraint)?;
+    Ok(())
 }
 
 pub(crate) async fn finish_tool_attempt(
@@ -586,6 +721,15 @@ pub(crate) async fn reconcile_mutation(
                 != AgentMutationDisposition::Unknown(MutationReconciliation::Required)
         {
             return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
+        }
+        if matches!(
+            existing.kind(),
+            AgentMutationKind::MachineFile
+                | AgentMutationKind::MachineProcess
+                | AgentMutationKind::MachineNetwork
+        ) && !machine_acknowledged(&transaction, tool_run_id, attempt).await?
+        {
+            return Err(AgentRecoveryRepositoryError::MutationReconciliationRequired);
         }
         if latest_published_snapshot(&transaction, worktree_id).await? != Some(event.snapshot_id())
         {
@@ -1305,6 +1449,9 @@ const fn mutation_kind_text(kind: AgentMutationKind) -> &'static str {
     match kind {
         AgentMutationKind::Patch => "patch",
         AgentMutationKind::Process => "process",
+        AgentMutationKind::MachineFile => "machine_file",
+        AgentMutationKind::MachineProcess => "machine_process",
+        AgentMutationKind::MachineNetwork => "machine_network",
         AgentMutationKind::UnclassifiedLegacy => "unclassified_legacy",
     }
 }
@@ -1313,6 +1460,9 @@ fn parse_mutation_kind(value: &str) -> Result<AgentMutationKind, AgentRecoveryRe
     match value {
         "patch" => Ok(AgentMutationKind::Patch),
         "process" => Ok(AgentMutationKind::Process),
+        "machine_file" => Ok(AgentMutationKind::MachineFile),
+        "machine_process" => Ok(AgentMutationKind::MachineProcess),
+        "machine_network" => Ok(AgentMutationKind::MachineNetwork),
         "unclassified_legacy" => Ok(AgentMutationKind::UnclassifiedLegacy),
         _ => Err(AgentRecoveryRepositoryError::InvalidStoredData),
     }

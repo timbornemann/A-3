@@ -153,6 +153,72 @@ impl JobClock for FixedClock {
 #[test]
 fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
 -> Result<(), Box<dyn Error>> {
+    greenfield_fixture(true, false, false, false, None)
+}
+
+#[test]
+fn small_hello_server_ask_permissions_has_no_test_scaffolding() -> Result<(), Box<dyn Error>> {
+    greenfield_fixture(false, false, false, false, None)
+}
+
+#[test]
+fn small_hello_server_full_machine_applies_without_a_grant() -> Result<(), Box<dyn Error>> {
+    greenfield_fixture(false, true, false, false, None)
+}
+
+#[test]
+fn switching_to_full_machine_resumes_the_exact_pending_patch() -> Result<(), Box<dyn Error>> {
+    greenfield_fixture(false, false, true, false, None)
+}
+
+#[test]
+fn switching_back_to_ask_before_admission_keeps_the_pending_approval() -> Result<(), Box<dyn Error>>
+{
+    greenfield_fixture(false, false, true, true, None)
+}
+
+#[test]
+fn full_machine_still_asks_before_unconfirmed_project_tests() -> Result<(), Box<dyn Error>> {
+    greenfield_fixture(true, true, false, false, None)
+}
+
+#[test]
+fn machine_recovery_observes_the_exact_file_in_both_modes_without_replaying_the_write()
+-> Result<(), Box<dyn Error>> {
+    for full in [false, true] {
+        greenfield_fixture(false, full, false, false, Some(0))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn machine_recovery_restarts_at_each_durable_reconciliation_and_replan_boundary()
+-> Result<(), Box<dyn Error>> {
+    for phase in 1..=5 {
+        greenfield_fixture(false, true, false, false, Some(phase))?;
+    }
+    Ok(())
+}
+
+const SMALL_SERVER: &str = r#"from http.server import BaseHTTPRequestHandler, HTTPServer
+import sys
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Hello World")
+
+HTTPServer(("127.0.0.1", int(sys.argv[1]) if len(sys.argv) > 1 else 8000), Handler).serve_forever()
+"#;
+
+fn greenfield_fixture(
+    with_tests: bool,
+    full: bool,
+    switch: bool,
+    revoke: bool,
+    recovery_phase: Option<u8>,
+) -> Result<(), Box<dyn Error>> {
     support::run_libsql_test(async {
         let repository = support::TempDirectory::new()?;
         repository.git(["init", "--initial-branch=main"])?;
@@ -162,6 +228,15 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
             LibsqlKnowledgeStore::open(&StorageLayout::prepare(data.path().join("data"))?).await?,
         );
         store.record_opened_project(&project).await?;
+        use a3_application::AgentPermissionStore;
+        if full {
+            store
+                .update_agent_permissions(
+                    a3_domain::AgentPermissionRevision::INITIAL,
+                    a3_domain::AgentPermissionMode::FullMachine,
+                )
+                .await?;
+        }
         let refresh = RefreshRepositoryIndex::new(
             Arc::new(Blake3RepositorySnapshotBuilder::new()),
             store.clone(),
@@ -198,19 +273,19 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
             task_id,
             GoalContractDraft::new(
                 GoalObjective::try_from_string(
-                    "create a tested Hello World Python server".to_owned(),
+                    (if with_tests { "create a tested Hello World Python server" } else { "create a small Hello World Python server; keine Tests" }).to_owned(),
                 )?,
                 vec![AcceptanceCriterion::new(
                     criterion,
                     AcceptanceCriterionStatement::try_from_string(
-                        "the server files exist and all local tests pass".to_owned(),
+                        (if with_tests { "the server files exist and all local tests pass" } else { "the requested source file exists; runtime behavior is checked independently" }).to_owned(),
                     )?,
                 )],
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
                 SuccessVerification::try_from_string(
-                    "run the discovered unittest suite".to_owned(),
+                    (if with_tests { "run the discovered unittest suite" } else { "verify the applied source change; do not invent runtime evidence" }).to_owned(),
                 )?,
             )?,
             GoalContractTimestamp::from_unix_millis(now()?.unix_millis())?,
@@ -218,7 +293,14 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
         let change = TaskStepDefinition::new(
             change_id,
             None,
-            TaskStepOutcome::try_from_string("create the server and its tests".to_owned())?,
+            TaskStepOutcome::try_from_string(
+                (if with_tests {
+                    "create the server and its tests"
+                } else {
+                    "create only the requested small server"
+                })
+                .to_owned(),
+            )?,
             TaskStepRationale::try_from_string("the project starts empty".to_owned())?,
             Vec::new(),
             vec![ExpectedTaskEvidence::try_from_string(
@@ -256,7 +338,11 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
         .with_acceptance_criteria(vec![criterion])?;
         let mut ledger = TaskLedger::new(
             goal.reference(),
-            vec![change, test],
+            if with_tests {
+                vec![change, test]
+            } else {
+                vec![change]
+            },
             TaskLedgerTimestamp::from_unix_millis(now()?.unix_millis())?,
         )?;
         ledger.start_step(
@@ -306,18 +392,18 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
                 .await?;
         }
 
+        let source = if with_tests { SERVER } else { SMALL_SERVER };
+        let mut operations = vec![serde_json::json!({"path":"server.py", "content":source})];
+        if with_tests {
+            operations.push(
+                serde_json::json!({"path":"tests/__init__.py", "content":"# test package\n"}),
+            );
+            operations.push(serde_json::json!({"path":"tests/test_server.py", "content":TESTS}));
+        }
         let patch_arguments = serde_json::json!({
             "version": 1,
-            "parameters": {
-                "rationale": "create the requested server and executable regression tests",
-                "operations": [
-                    {"path":"server.py", "content":SERVER},
-                    {"path":"tests/__init__.py", "content":"# test package\n"},
-                    {"path":"tests/test_server.py", "content":TESTS}
-                ]
-            }
-        })
-        .to_string();
+            "parameters": { "rationale": if with_tests { "create requested server and explicitly requested tests" } else { "create only the requested small server" }, "operations": operations }
+        }).to_string();
         let provider = Arc::new(ScriptedGreenfieldProvider {
             provider_id: profile.provider_id().clone(),
             responses: Mutex::new(VecDeque::from([
@@ -338,6 +424,8 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
         approvals.activate_project(&project);
         let executor = Arc::new(ProductionAgentRunExecutor::new(
             ProductionAgentRunPorts {
+                ledgers: store.clone(),
+                permissions: Some(store.clone()),
                 workspace: store.clone(),
                 journal: store.clone(),
                 actions: store.clone(),
@@ -356,6 +444,12 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
             approvals.clone(),
             None,
         )?);
+        if let Some(phase) = recovery_phase {
+            return machine_recovery_fixture(
+                &project, store, executor, run, ledger, version, phase,
+            )
+            .await;
+        }
         let query = GetAgentApprovalCenter::new(
             store.clone(),
             store.clone(),
@@ -430,11 +524,11 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
                 "kind": "approval",
                 "response": a3_protocol::AgentApprovalResponseV1::new(
                     a3_protocol::AgentApprovalResultV1::Available {
-                        approval: Box::new(crate::agent_approval_mapping::map_agent_approval_to_v1(&center)),
+                        approval: Box::new(crate::agent_approval_mapping::map_agent_approval_to_v1(&center).ok_or("legacy approval mapping")?),
                     },
                 ),
             }));
-            if attempt == 0 {
+            if attempt == 0 && !full {
                 assert!(matches!(
                     center.presentation().action(),
                     AgentApprovalAction::Patch(_)
@@ -448,6 +542,52 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
                     process.arguments(),
                     ["-B", "-m", "unittest", "discover", "-s", "tests"]
                 );
+            }
+            if switch && attempt == 0 {
+                let settings = store.load_agent_permissions().await?;
+                store
+                    .update_agent_permissions(
+                        settings.revision(),
+                        a3_domain::AgentPermissionMode::FullMachine,
+                    )
+                    .await?;
+                request = executor
+                    .permission_change_request(&project)
+                    .await?
+                    .ok_or("missing permission wakeup")?;
+                if revoke {
+                    let settings = store.load_agent_permissions().await?;
+                    store
+                        .update_agent_permissions(
+                            settings.revision(),
+                            a3_domain::AgentPermissionMode::AskPermissions,
+                        )
+                        .await?;
+                    run_attempt(executor.clone(), project.clone(), request)?;
+                    assert!(!repository.path().join("server.py").exists());
+                    assert_eq!(
+                        store
+                            .load_agent_run(&project, run_id)
+                            .await?
+                            .ok_or("run")?
+                            .state(),
+                        AgentControllerState::AwaitApproval
+                    );
+                    assert!(
+                        executor
+                            .permission_change_request(&project)
+                            .await?
+                            .is_none()
+                    );
+                    assert!(matches!(
+                        query
+                            .execute(&project, task_id, now()?, &TestControl)
+                            .await?,
+                        AgentApprovalLoadResult::Available(_)
+                    ));
+                    return Ok(());
+                }
+                continue;
             }
             let approval_id = a3_domain::ApprovalId::from_bytes([20 + attempt; 32]);
             let result = approve
@@ -493,7 +633,10 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
         if let Some(output) = std::env::var_os("A3_AGENT_UI_CONTRACT_OUTPUT") {
             std::fs::write(output, serde_json::to_vec_pretty(&ui_projections)?)?;
         }
-        assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            provider.calls.load(Ordering::SeqCst),
+            if with_tests { 3 } else { 2 }
+        );
         assert!(
             final_ledger
                 .ledger()
@@ -503,14 +646,366 @@ fn empty_project_creates_files_binds_tests_and_reaches_done_with_real_unittest()
         );
         assert_eq!(
             std::fs::read_to_string(repository.path().join("server.py"))?,
-            SERVER
+            source
         );
-        assert_eq!(
-            std::fs::read_to_string(repository.path().join("tests/test_server.py"))?,
-            TESTS
-        );
+        if with_tests {
+            assert_eq!(
+                std::fs::read_to_string(repository.path().join("tests/test_server.py"))?,
+                TESTS
+            );
+        } else {
+            let entries = std::fs::read_dir(repository.path())?
+                .map(|entry| entry.map(|entry| entry.file_name()))
+                .collect::<Result<Vec<_>, _>>()?;
+            assert_eq!(entries.len(), 2, "only .git and server.py may exist");
+            assert!(!repository.path().join("tests").exists());
+            assert!(!repository.path().join("pyproject.toml").exists());
+            check_http_server(repository.path())?;
+        }
         Ok(())
     })
+}
+
+async fn machine_recovery_fixture(
+    project: &a3_domain::ProjectIdentity,
+    store: Arc<LibsqlKnowledgeStore>,
+    executor: Arc<ProductionAgentRunExecutor>,
+    mut run: AgentRun,
+    mut ledger: TaskLedger,
+    mut version: a3_application::TaskLedgerStoreVersion,
+    phase: u8,
+) -> Result<(), Box<dyn Error>> {
+    use a3_application::{
+        AgentRecoveryChoice, AgentRecoveryStore, MachineEffectScope, MachineFileTool,
+        ReconcileUnknownMutation, RecoverAgentRun,
+    };
+    use a3_domain::{
+        AgentMutationDisposition, AgentMutationKind, MutationActionFingerprint,
+        MutationReconciliation, ToolRunId,
+    };
+    let external = support::TempDirectory::new()?;
+    let target = external.path().join("external.txt");
+    let step = active_step_id(&ledger)?;
+    let fingerprint = MutationActionFingerprint::from_bytes([51; 32]);
+    let tool = ToolRunId::from_bytes([52; 32]);
+    let body = b"observed external result";
+    let scope = if phase == 0 {
+        let files = a3_workspace::WorkspaceMachineFileTool::new(store.clone());
+        let action = a3_domain::MachineFileAction::new(
+            step,
+            a3_domain::MachineFilePath::new(target.to_str().ok_or("path")?.to_owned())?,
+            a3_domain::MachineFileOperation::Write {
+                expected: None,
+                content: a3_domain::PatchFileContent::try_from_bytes(body.to_vec())?,
+            },
+        )?;
+        let prepared = files.prepare(project, &action, &ActiveMachineFiles).await?;
+        let a3_domain::PolicyAction::MachineFile { resource_id, .. } = prepared.policy_action()
+        else {
+            return Err("scope".into());
+        };
+        let canonical = prepared.root().as_path().join("external.txt");
+        MachineEffectScope::new(
+            AgentMutationKind::MachineFile,
+            step,
+            *resource_id,
+            canonical.to_str().ok_or("path")?.to_owned(),
+            None,
+            Some(a3_domain::ContentHash::from_bytes(
+                *blake3::hash(body).as_bytes(),
+            )),
+        )?
+    } else {
+        MachineEffectScope::new(
+            AgentMutationKind::MachineProcess,
+            step,
+            a3_domain::PolicyResourceId::from_bytes([53; 32]),
+            "unknown-script.exe".to_owned(),
+            None,
+            None,
+        )?
+    };
+    let attempt = store
+        .begin_machine_mutation_attempt(
+            project,
+            run.id(),
+            run.current_snapshot_id(),
+            tool,
+            fingerprint,
+            &scope,
+            now()?,
+        )
+        .await?;
+    std::fs::write(&target, body)?; // Simulates the effect after durable begin but before its journal commit.
+    let refresh = RefreshRepositoryIndex::new(
+        Arc::new(Blake3RepositorySnapshotBuilder::new()),
+        store.clone(),
+        Arc::new(Blake3IndexRunIdFactory),
+    );
+    let mut compiler = BuiltinIncrementalIndexCompiler::new(ParserPoolSize::new(1)?)?;
+    let denied = ReconcileUnknownMutation::new(&executor.coordinator, store.as_ref(), &refresh)
+        .execute(
+            project,
+            &mut run,
+            tool,
+            attempt.tool_attempt().attempt(),
+            RunEventId::from_bytes([54; 32]),
+            now()?,
+            &mut compiler,
+            &TestControl,
+        )
+        .await;
+    assert!(
+        matches!(
+            denied,
+            Err(a3_application::MutationReconciliationError::AttemptState)
+        ),
+        "a repository scan cannot reconcile a machine action"
+    );
+    if phase > 0 {
+        store
+            .acknowledge_machine_recovery(
+                project,
+                tool,
+                attempt.tool_attempt().attempt(),
+                fingerprint,
+                scope.resource(),
+                None,
+                None,
+                now()?,
+            )
+            .await?;
+        ReconcileUnknownMutation::new(&executor.coordinator, store.as_ref(), &refresh)
+            .execute(
+                project,
+                &mut run,
+                tool,
+                attempt.tool_attempt().attempt(),
+                RunEventId::from_bytes([55; 32]),
+                now()?,
+                &mut compiler,
+                &TestControl,
+            )
+            .await?;
+    }
+    if phase >= 2 {
+        let recovered = RecoverAgentRun::new(
+            store.as_ref(),
+            store.as_ref(),
+            store.as_ref(),
+            store.as_ref(),
+        )
+        .execute(
+            project,
+            run.id(),
+            AgentRecoveryChoice::Replan,
+            RunEventId::from_bytes([56; 32]),
+            now()?,
+            &crate::DesktopBoundedReadControl::new(),
+        )
+        .await?;
+        run = recovered.run().clone();
+        (ledger, version) = recovered.ledger().clone().into_parts();
+    }
+    if phase >= 3 {
+        let sequence = run.last_event_sequence();
+        let snapshot = run.current_snapshot_id();
+        let event = AdvanceAgentController.execute(
+            &mut run,
+            AgentControllerSignal::ExecutionNeedsReplan,
+            RunEventId::from_bytes([57; 32]),
+            snapshot,
+            now()?,
+            false,
+        )?;
+        AppendRunEvent::new(store.as_ref())
+            .execute(project, sequence, &run, event.event())
+            .await?;
+        let reason = TaskReplanReason::try_from_string(
+            "Explicit machine recovery requires a fresh plan".to_owned(),
+        )?;
+        let (retire, additions) = automatic_replan_steps(&ledger, &reason)?;
+        version = ApplyAgentPlanRevision::new(store.as_ref())
+            .execute(
+                project,
+                version,
+                &mut run,
+                &mut ledger,
+                retire,
+                additions,
+                reason,
+                RunEventId::from_bytes([58; 32]),
+                now()?,
+                &TestControl,
+            )
+            .await?;
+    }
+    for (phase_required, signal, id) in [
+        (4, AgentControllerSignal::ReplanApplied, 59),
+        (5, AgentControllerSignal::LocalizationComplete, 60),
+    ] {
+        if phase >= phase_required {
+            let sequence = run.last_event_sequence();
+            let snapshot = run.current_snapshot_id();
+            let event = AdvanceAgentController.execute(
+                &mut run,
+                signal,
+                RunEventId::from_bytes([id; 32]),
+                snapshot,
+                now()?,
+                false,
+            )?;
+            AppendRunEvent::new(store.as_ref())
+                .execute(project, sequence, &run, event.event())
+                .await?;
+        }
+    }
+    let shown = executor
+        .machine_recovery_scope(project, ledger.goal_contract().task_id())
+        .await?
+        .ok_or("recovery after restart")?;
+    assert_eq!(shown.scope, "33".repeat(32));
+    let request = AgentRunExecutionRequest::after_machine_recovery(
+        ledger.goal_contract().task_id(),
+        ledger.revision(),
+        version,
+        fingerprint,
+    );
+    let run_id = run.id();
+    // The query and job use durable state after dropping the abandoned attempt's in-memory anchors.
+    let _discarded_run = run;
+    drop(ledger);
+    let (scheduler, events) =
+        JobScheduler::new(JobSchedulerConfig::new(1, 2, 32)?, Arc::new(FixedClock))?;
+    let project_for_job = project.clone();
+    let store_for_job = store.clone();
+    let executor_for_job = executor.clone();
+    let (send, receive) = std::sync::mpsc::sync_channel(1);
+    scheduler.submit(
+        JobId::new(101),
+        JobOwner::new(1),
+        move |context: JobContext| {
+            let result = futures::executor::block_on(async {
+                let ledger = store_for_job
+                    .load_task_ledger(&project_for_job, request.task_id())
+                    .await
+                    .map_err(|_| a3_application::AgentRunExecutionFailure::Unavailable)?
+                    .ok_or(a3_application::AgentRunExecutionFailure::InvalidState)?;
+                executor_for_job
+                    .machine_recovery_anchor(&project_for_job, ledger.ledger(), fingerprint)
+                    .await?;
+                let mut run = store_for_job
+                    .load_agent_run(&project_for_job, run_id)
+                    .await
+                    .map_err(|_| a3_application::AgentRunExecutionFailure::Unavailable)?
+                    .ok_or(a3_application::AgentRunExecutionFailure::InvalidState)?;
+                executor_for_job
+                    .recover_machine(
+                        &project_for_job,
+                        request,
+                        &mut run,
+                        fingerprint,
+                        &AgentAttemptControl { context: &context },
+                    )
+                    .await
+            });
+            let success = result.is_ok();
+            let _sent = send.send(result);
+            if success {
+                JobCompletion::Succeeded
+            } else {
+                JobCompletion::Failed
+            }
+        },
+    )?;
+    loop {
+        let event = events
+            .next_timeout(Duration::from_secs(30))?
+            .ok_or("recovery job timeout")?;
+        if matches!(
+            event.kind(),
+            JobEventKind::Succeeded | JobEventKind::Failed | JobEventKind::Cancelled
+        ) {
+            break;
+        }
+    }
+    let (ledger, _, next) = receive.recv_timeout(Duration::from_secs(1))??;
+    assert_eq!(
+        ledger.step(next).ok_or("next")?.status(),
+        TaskStepStatus::InProgress
+    );
+    assert_eq!(ledger.replans().len(), 1);
+    assert_eq!(std::fs::read(&target)?, body);
+    let attempts = store.load_agent_mutation_attempts(project, run_id).await?;
+    assert_eq!(
+        attempts.len(),
+        1,
+        "recovery must not retry the original action"
+    );
+    assert!(matches!(
+        attempts[0].disposition(),
+        AgentMutationDisposition::Unknown(MutationReconciliation::Replanned { .. })
+    ));
+    assert!(
+        store
+            .machine_recovery_acknowledged(project, tool, attempt.tool_attempt().attempt())
+            .await?
+    );
+    assert!(
+        executor
+            .machine_recovery_scope(project, request.task_id())
+            .await?
+            .is_none()
+    );
+    Ok(())
+}
+
+#[derive(Debug)]
+struct ActiveMachineFiles;
+impl a3_application::MachineFileControl for ActiveMachineFiles {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+}
+
+fn check_http_server(root: &std::path::Path) -> Result<(), Box<dyn Error>> {
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::process::{Command, Stdio};
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?;
+    drop(listener);
+    let mut child = Command::new("python")
+        .args(["-I", "-B", "server.py", &address.port().to_string()])
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let result = (|| -> Result<(), Box<dyn Error>> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut socket = loop {
+            match TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
+                Ok(socket) => break socket,
+                Err(_) if std::time::Instant::now() < deadline && child.try_wait()?.is_none() => {
+                    std::thread::sleep(Duration::from_millis(10))
+                }
+                Err(error) => return Err(error.into()),
+            }
+        };
+        socket.set_read_timeout(Some(Duration::from_secs(2)))?;
+        socket.set_write_timeout(Some(Duration::from_secs(2)))?;
+        socket.write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")?;
+        let mut response = String::new();
+        socket.take(4096).read_to_string(&mut response)?;
+        if !response.starts_with("HTTP/1.0 200") || !response.ends_with("Hello World") {
+            return Err("independent HTTP oracle rejected response".into());
+        }
+        Ok(())
+    })();
+    let _stop = child.kill();
+    child.wait()?;
+    result
 }
 
 fn run_attempt(

@@ -27,8 +27,10 @@ impl AgentActionSchemaVersion {
     pub const V4: Self = Self(4);
     /// Same actions without redundant model-generated presentation metadata.
     pub const V5: Self = Self(5);
+    /// Closed machine file, additional process and HTTP read proposals.
+    pub const V6: Self = Self(6);
     /// Schema emitted for newly compiled mutating-controller turns.
-    pub const CURRENT: Self = Self::V5;
+    pub const CURRENT: Self = Self::V6;
 
     /// Reconstructs a schema version understood by this build.
     pub const fn from_u16(value: u16) -> Result<Self, AgentActionSchemaVersionError> {
@@ -38,6 +40,7 @@ impl AgentActionSchemaVersion {
             3 => Ok(Self::V3),
             4 => Ok(Self::V4),
             5 => Ok(Self::V5),
+            6 => Ok(Self::V6),
             _ => Err(AgentActionSchemaVersionError { value }),
         }
     }
@@ -583,6 +586,8 @@ impl AgentRunAction {
 /// Closed versioned union of model-selected controller actions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentAction {
+    /// Closed V1 machine proposal, independently classified and authorized by Core.
+    Machine(crate::AgentMachineAction),
     /// Query deterministic retrieval without selecting a trust channel.
     Search(AgentSearchAction),
     /// Inspect one typed repository, graph, claim, or test target.
@@ -601,7 +606,7 @@ impl AgentAction {
     /// Conservatively classifies both patching and process execution as worktree mutations.
     #[must_use]
     pub const fn mutates_workspace(&self) -> bool {
-        matches!(self, Self::ApplyPatch(_) | Self::Run(_))
+        matches!(self, Self::ApplyPatch(_) | Self::Run(_) | Self::Machine(_))
     }
 }
 

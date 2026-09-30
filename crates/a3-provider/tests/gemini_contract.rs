@@ -360,7 +360,7 @@ async fn replan_phase_schemas_reach_the_provider_with_only_admitted_decisions()
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let endpoint = endpoint_for(&listener)?;
         let response = if localization {
-            json!({"schema_version":5,"action":{"kind":"search","query":"increment","limit":5}})
+            json!({"schema_version":6,"action":{"kind":"search","query":"increment","limit":5}})
                 .to_string()
         } else {
             json!({"schema_version":7,"response":{"kind":"evidenceNeed","question_id":1,"targets":["increment"]}}).to_string()
@@ -404,7 +404,7 @@ async fn replan_phase_schemas_reach_the_provider_with_only_admitted_decisions()
         let wire: Value = serde_json::from_slice(&server??.body)?;
         let schema = &wire["generationConfig"]["responseJsonSchema"];
         if localization {
-            assert_eq!(schema["properties"]["schema_version"]["enum"], json!([5]));
+            assert_eq!(schema["properties"]["schema_version"]["enum"], json!([6]));
             assert!(schema["properties"].get("public_note").is_none());
             assert_eq!(
                 schema["properties"]["action"]["anyOf"],
@@ -449,7 +449,7 @@ async fn current_agent_wire_schema_preserves_independent_flow_offset_checks()
     let original = schema.clone();
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let endpoint = endpoint_for(&listener)?;
-    let invalid = json!({"schema_version":5,"action":{
+    let invalid = json!({"schema_version":6,"action":{
         "kind":"inspect","target":{"kind":"function_flow","symbol_id":"a".repeat(64),
         "call_path":[],"view":{"kind":"steps","offset":1}}}})
     .to_string();

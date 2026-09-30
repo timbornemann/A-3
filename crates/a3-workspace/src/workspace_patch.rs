@@ -391,12 +391,12 @@ fn ensure_no_link_components(
 }
 
 #[cfg(unix)]
-fn is_link_or_reparse(metadata: &fs::Metadata) -> bool {
+pub(crate) fn is_link_or_reparse(metadata: &fs::Metadata) -> bool {
     metadata.file_type().is_symlink()
 }
 
 #[cfg(windows)]
-fn is_link_or_reparse(metadata: &fs::Metadata) -> bool {
+pub(crate) fn is_link_or_reparse(metadata: &fs::Metadata) -> bool {
     use std::os::windows::fs::MetadataExt;
 
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
@@ -404,7 +404,7 @@ fn is_link_or_reparse(metadata: &fs::Metadata) -> bool {
 }
 
 #[cfg(not(any(unix, windows)))]
-fn is_link_or_reparse(metadata: &fs::Metadata) -> bool {
+pub(crate) fn is_link_or_reparse(metadata: &fs::Metadata) -> bool {
     metadata.file_type().is_symlink()
 }
 
@@ -715,7 +715,7 @@ fn remove_empty_directories(directories: &[PathBuf]) {
 }
 
 #[cfg(unix)]
-fn install_no_replace(source: &Path, target: &Path) -> io::Result<bool> {
+pub(crate) fn install_no_replace(source: &Path, target: &Path) -> io::Result<bool> {
     use rustix::fs::{CWD, RenameFlags, renameat_with};
 
     renameat_with(CWD, source, CWD, target, RenameFlags::NOREPLACE)?;
@@ -723,7 +723,7 @@ fn install_no_replace(source: &Path, target: &Path) -> io::Result<bool> {
 }
 
 #[cfg(not(unix))]
-fn install_no_replace(source: &Path, target: &Path) -> io::Result<bool> {
+pub(crate) fn install_no_replace(source: &Path, target: &Path) -> io::Result<bool> {
     // Safe std has no cross-platform rename-no-replace primitive. A hard link reserves an absent
     // destination atomically and therefore cannot overwrite a concurrent user-created file.
     fs::hard_link(source, target)?;

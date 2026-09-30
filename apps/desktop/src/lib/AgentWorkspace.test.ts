@@ -26,6 +26,16 @@ const diagramRenderer = vi.hoisted(() => ({
   })),
 }));
 vi.mock('mermaid', () => ({ default: diagramRenderer }));
+// Global settings have their own IPC/component contract; workspace tests own conversation state.
+vi.mock('./agent-permissions', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./agent-permissions')>()),
+  queryAgentPermissions: vi.fn(async () => ({
+    protocolVersion: 1,
+    revision: '1',
+    mode: 'askPermissions',
+  })),
+  subscribeAgentPermissions: vi.fn(async () => () => {}),
+}));
 
 const sessionId = 'a'.repeat(64);
 
@@ -1912,6 +1922,10 @@ describe('AgentWorkspace', () => {
       const heading = await screen.findByRole('heading', { name: 'Aktion freigeben' });
       expect(heading.closest('.message-scroll')).toBeNull();
       expect(heading.closest('.composer-wrap')).not.toBeNull();
+      const permissions = screen.getByRole('group', { name: 'Appweite Agent-Berechtigungen' });
+      expect(permissions.closest('.composer-wrap')).not.toBeNull();
+      expect(within(permissions).getByRole('button', { name: 'Full machine' })).toBeTruthy();
+      expect(within(permissions).getByRole('button', { name: 'Ask permissions' })).toBeTruthy();
       expect(screen.queryByRole('textbox', { name: 'Nachricht an A^3' })).toBeNull();
       expect(screen.getByRole('radio', { name: 'Diese Aktion einmal erlauben' })).toBeTruthy();
       expect(

@@ -26,8 +26,12 @@ pub struct AgentRunExecutionRequest {
 pub enum AgentRunExecutionTrigger {
     /// Ordinary start, replan, resume, or recovery under current durable anchors.
     Standard,
+    /// Explicit human consent to observe or acknowledge one displayed Unknown machine scope.
+    MachineRecoveryAcknowledged(a3_domain::MutationActionFingerprint),
     /// Explicit continuation carrying the exact one-time grant selected by Core.
     ApprovalGranted(ApprovalId),
+    /// Explicit app-wide mode selection, revalidated before resuming a pending safe action.
+    PermissionModeChanged(a3_domain::AgentPermissionRevision),
 }
 
 impl AgentRunExecutionRequest {
@@ -59,6 +63,38 @@ impl AgentRunExecutionRequest {
             ledger_revision,
             ledger_store_version,
             trigger: AgentRunExecutionTrigger::ApprovalGranted(approval_id),
+        }
+    }
+
+    /// Binds a human-only recovery choice to the exact displayed Unknown scope.
+    #[must_use]
+    pub const fn after_machine_recovery(
+        task_id: TaskId,
+        ledger_revision: TaskLedgerRevision,
+        ledger_store_version: TaskLedgerStoreVersion,
+        scope: a3_domain::MutationActionFingerprint,
+    ) -> Self {
+        Self {
+            task_id,
+            ledger_revision,
+            ledger_store_version,
+            trigger: AgentRunExecutionTrigger::MachineRecoveryAcknowledged(scope),
+        }
+    }
+
+    /// Returns the durable task selected through the bounded product workflow.
+    #[must_use]
+    pub const fn after_permission_change(
+        task_id: TaskId,
+        ledger_revision: TaskLedgerRevision,
+        ledger_store_version: TaskLedgerStoreVersion,
+        revision: a3_domain::AgentPermissionRevision,
+    ) -> Self {
+        Self {
+            task_id,
+            ledger_revision,
+            ledger_store_version,
+            trigger: AgentRunExecutionTrigger::PermissionModeChanged(revision),
         }
     }
 
@@ -101,6 +137,14 @@ pub enum AgentRunExecutionOutcome {
 /// Implementations compose the deterministic controller, context, provider, safe tools, policy,
 /// verification, and persistence. Provider payloads and adapter errors never cross this port.
 pub trait AgentRunExecutor: fmt::Debug + Send + Sync {
+    /// Selects at most one revalidated pending action after explicit permission selection.
+    /// The default grants no new execution capability to existing runtime adapters.
+    fn permission_change_request<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+    ) -> AgentPermissionChangeFuture<'a> {
+        Box::pin(async { Ok(None) })
+    }
     /// Executes one task-derived attempt under the scheduler's owned cancellation boundary.
     fn execute<'a>(
         &'a self,
@@ -109,6 +153,15 @@ pub trait AgentRunExecutor: fmt::Debug + Send + Sync {
         control: &'a JobContext,
     ) -> AgentRunExecutionFuture<'a>;
 }
+
+/// Bounded request for resuming a now-automatic pending action.
+pub type AgentPermissionChangeFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<Option<AgentRunExecutionRequest>, AgentRunExecutionFailure>>
+            + Send
+            + 'a,
+    >,
+>;
 
 /// Stable complete-attempt failure without provider, source, process, or storage details.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

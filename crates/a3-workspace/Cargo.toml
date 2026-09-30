@@ -13,9 +13,12 @@ blake3.workspace = true
 command-group.workspace = true
 gix.workspace = true
 rustix.workspace = true
+reqwest.workspace = true
+tokio = { workspace = true, features = ["time", "macros", "rt", "net"] }
 
 [dev-dependencies]
 futures.workspace = true
+tokio = { workspace = true, features = ["rt", "time"] }
 
 [lints]
 workspace = true

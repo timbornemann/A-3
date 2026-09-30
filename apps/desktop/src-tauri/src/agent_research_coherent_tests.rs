@@ -941,7 +941,7 @@ fn research_configured_model_empty_project_agent_smoke() -> Result<(), Box<dyn E
                 step.verification_intent() == a3_domain::AgentWorkPlanVerificationIntent::Change
             }));
             assert!(plan.steps().iter().any(|step| {
-                step.verification_intent() == a3_domain::AgentWorkPlanVerificationIntent::Test
+                step.verification_intent() == a3_domain::AgentWorkPlanVerificationIntent::Check
             }));
             Ok(())
         },
@@ -1018,6 +1018,9 @@ fn validate_combined_approval(
     action: &a3_application::AgentApprovalAction,
 ) -> Result<(), Box<dyn Error>> {
     match action {
+        a3_application::AgentApprovalAction::Machine { .. } => {
+            Err("unexpected machine scope in project fixture".into())
+        }
         a3_application::AgentApprovalAction::Patch(patch) => {
             const ALLOWED: [&str; 5] = [
                 "server.py",
@@ -1354,6 +1357,8 @@ fn configured_model_empty_project_research_handoff_completes_verified_project()
             approval.activate_project(&project);
             let executor = Arc::new(crate::ProductionAgentRunExecutor::new(
                 crate::ProductionAgentRunPorts {
+                    ledgers: store.clone(),
+                    permissions: None,
                     workspace: store.clone(),
                     journal: store.clone(),
                     actions: store.clone(),
@@ -2166,7 +2171,8 @@ fn coherent_fixture_with_profile(
                 if fault == WorkFault::LongDesign {
                     assert!(
                         !result.awaiting_continuation,
-                        "mandatory design fits the actual model window; optional dialogue cannot block Q3"
+                        "mandatory design fits the actual model window; optional dialogue cannot block Q3: {}",
+                        result.markdown
                     );
                     assert_eq!(model.calls.load(Ordering::SeqCst), 3);
                     let detail = store

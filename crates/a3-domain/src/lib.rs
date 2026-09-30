@@ -5,6 +5,13 @@ mod job;
 mod platform;
 mod progress;
 mod project;
+pub use project::{
+    AgentPermissionError, AgentPermissionMode, AgentPermissionRevision, AgentPermissionSettings,
+    NO_ADDITIONAL_AGENT_CHECKS, PYTHON_SYNTAX_CHECK,
+};
+pub use project::{
+    MachineFileAction, MachineFileActionError, MachineFileOperation, MachineFilePath,
+};
 mod version;
 
 pub use project::{
@@ -18,6 +25,7 @@ pub use health::Health;
 pub use job::{JobId, JobOwner, JobStatus};
 pub use platform::Platform;
 pub use progress::{Progress, ProgressTransitionError, ProgressValueError};
+pub use project::AgentMachineAction;
 pub use project::{
     AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionRequirement,
     AcceptanceCriterionStatement, AcceptanceCriterionVerification, AcceptanceVerificationError,
@@ -217,4 +225,9 @@ pub use project::{
     FlowValueKind, FunctionFlow, FunctionFlowError, MAX_FUNCTION_FLOW_ELEMENTS,
     MAX_INDEX_FLOW_ELEMENTS,
 };
+pub use project::{
+    MachineHttpAction, MachineHttpError, MachineHttpSchemaVersion, MachineHttpUrl,
+    PreparedMachineHttpAction,
+};
+pub use project::{MachineProcessAction, MachineProcessActionError, MachineProcessEffect};
 pub use version::{ApplicationVersion, ApplicationVersionError};

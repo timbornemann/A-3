@@ -19,6 +19,7 @@ const AGENT_ACTION_SCHEMA_V2: &str = include_str!("../schemas/agent-action-v2.sc
 const AGENT_ACTION_SCHEMA_V3: &str = include_str!("../schemas/agent-action-v3.schema.json");
 const AGENT_ACTION_SCHEMA_V4: &str = include_str!("../schemas/agent-action-v4.schema.json");
 const AGENT_ACTION_SCHEMA_V5: &str = include_str!("../schemas/agent-action-v5.schema.json");
+const AGENT_ACTION_SCHEMA_V6: &str = include_str!("../schemas/agent-action-v6.schema.json");
 const MAX_AGENT_ACTION_DOCUMENT_BYTES: usize = 64 * 1_024;
 
 /// Versioned JSON Schema supplied to a structured-output model provider.
@@ -60,6 +61,14 @@ impl AgentActionJsonSchema {
         }
     }
 
+    /// Returns the historical status-free V5 schema without machine proposals.
+    #[must_use]
+    pub const fn version_five() -> Self {
+        Self {
+            version: AgentActionSchemaVersion::V5,
+        }
+    }
+
     /// Returns the schema used for newly compiled controller turns.
     #[must_use]
     pub const fn current() -> Self {
@@ -82,7 +91,8 @@ impl AgentActionJsonSchema {
             AgentActionSchemaVersion::V2 => AGENT_ACTION_SCHEMA_V2,
             AgentActionSchemaVersion::V3 => AGENT_ACTION_SCHEMA_V3,
             AgentActionSchemaVersion::V4 => AGENT_ACTION_SCHEMA_V4,
-            _ => AGENT_ACTION_SCHEMA_V5,
+            AgentActionSchemaVersion::V5 => AGENT_ACTION_SCHEMA_V5,
+            _ => AGENT_ACTION_SCHEMA_V6,
         }
     }
 
@@ -143,6 +153,7 @@ impl AgentActionTurnAnchors {
 
     fn matches(self, action: &AgentAction) -> bool {
         match action {
+            AgentAction::Machine(action) => action.step_id() == self.step,
             AgentAction::ApplyPatch(patch) => {
                 patch.run_id() == self.run
                     && patch.worktree_id() == self.worktree
@@ -171,6 +182,15 @@ pub struct DecodeAgentAction {
 }
 
 impl DecodeAgentAction {
+    /// Reads the historical status-free V5 contract without machine proposals.
+    #[must_use]
+    pub const fn version_five() -> Self {
+        Self {
+            version: AgentActionSchemaVersion::V5,
+            localization_only: false,
+            anchors: None,
+        }
+    }
     /// Restricts the current status-free contract to reads, including its single repair.
     #[must_use]
     pub const fn for_replan_localization() -> Self {
@@ -285,7 +305,14 @@ impl DecodeAgentAction {
         } else {
             None
         };
-        let action = decode_action(self.version, object(required(root, "action")?)?)?;
+        let action_object = object(required(root, "action")?)?;
+        let action = if self.version == AgentActionSchemaVersion::V6
+            && string(action_object, "kind")? == "machine"
+        {
+            crate::agent_machine_codec::decode_machine_document(raw)?
+        } else {
+            decode_action(self.version, action_object)?
+        };
         if self.localization_only
             && !matches!(action, AgentAction::Search(_) | AgentAction::Inspect(_))
         {
@@ -791,7 +818,7 @@ fn exact_keys(
     Ok(())
 }
 
-fn hex_id(value: &str) -> Result<[u8; 32], AgentActionDecodeError> {
+pub(crate) fn hex_id(value: &str) -> Result<[u8; 32], AgentActionDecodeError> {
     if value.len() != 64
         || value
             .as_bytes()
@@ -1015,7 +1042,7 @@ mod tests {
     #[test]
     fn current_actions_omit_model_status_without_weakening_legacy_notes()
     -> Result<(), Box<dyn std::error::Error>> {
-        let mut document = serde_json::json!({"schema_version":5,"action":{"kind":"finish"}});
+        let mut document = serde_json::json!({"schema_version":6,"action":{"kind":"finish"}});
         let decoder = super::DecodeAgentAction::current();
         let decoded = decoder.decode_envelope(&document.to_string())?;
         assert!(decoded.public_note().is_none());
@@ -1068,7 +1095,13 @@ mod tests {
             .as_object_mut()
             .ok_or("definitions")?
             .remove("publicNote");
-        assert_eq!(super::AgentActionJsonSchema::current().as_json()?, expected);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(super::AGENT_ACTION_SCHEMA_V5)?,
+            expected
+        );
+        let current = super::AgentActionJsonSchema::current().as_json()?;
+        assert_eq!(current["properties"]["schema_version"]["const"], 6);
+        assert!(current["$defs"]["machine"].is_object());
         Ok(())
     }
 

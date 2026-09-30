@@ -28,6 +28,99 @@ use support::TempDirectory;
 const SHELL_CHARACTERS: &str = "literal;$(not-executed) && | > < `still-literal`";
 
 #[test]
+fn machine_v2_runs_a_classified_system_program_and_denies_repository_shadowing()
+-> Result<(), Box<dyn Error>> {
+    use a3_domain::{
+        AgentPermissionMode, AgentPermissionRevision, AgentPermissionSettings, MachineProcessEffect,
+    };
+    let fixture = ProcessFixture::new()?;
+    let names = ["PATH", "SYSTEMROOT", "TEMP", "TMP", "TMPDIR"]
+        .into_iter()
+        .map(|name| ProcessEnvironmentVariable::try_from_string(name.to_owned()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let environment = ProcessHostEnvironment::capture(names)?;
+    let spec = ProcessSpec::new(
+        ProcessSpecSchemaVersion::V2,
+        AgentRunId::from_bytes([4; 32]),
+        fixture.project.worktree().id(),
+        ProcessExecutable::try_from_string("python".to_owned())?,
+        vec![ProcessArgument::try_from_string("--version".to_owned())?],
+        WorkspaceDirectory::Root,
+        environment.admitted_names(),
+        ProcessTimeout::from_millis(5_000)?,
+        ProcessOutputLimit::new(1_024)?,
+        ProcessOutputLimit::new(1_024)?,
+        ProcessExecutionMode::KnownSafe,
+        ProcessPlanBinding::Validated(TaskStepId::from_bytes([5; 32])),
+        ProcessNetworkScope::Denied,
+    )?
+    .with_machine_effect(MachineProcessEffect::ReadOnly);
+    let full = AgentPermissionSettings::new(
+        AgentPermissionMode::FullMachine,
+        AgentPermissionRevision::new(2)?,
+    );
+    let action = spec.policy_action();
+    assert_eq!(
+        full.disposition(&action),
+        a3_domain::PolicyDisposition::Automatic
+    );
+    let decision = automatic_decision(&spec)?.with_permission_settings(full);
+    let runner = WorkspaceProcessRunner::new(environment);
+    let result = futures::executor::block_on(runner.run(
+        &fixture.project,
+        AuthorizedProcessSpec::new(spec.clone(), &decision)?,
+        &ActiveControl,
+        &RecordingEvents::default(),
+    ))?;
+    assert_success(&result.termination())?;
+    assert!(
+        result
+            .stdout()
+            .content()
+            .as_text()
+            .unwrap_or_default()
+            .starts_with("Python ")
+            || result
+                .stderr()
+                .content()
+                .as_text()
+                .unwrap_or_default()
+                .starts_with("Python ")
+    );
+    let unknown = spec
+        .clone()
+        .with_machine_effect(MachineProcessEffect::Unknown);
+    assert!(
+        AuthorizedProcessSpec::new(
+            unknown.clone(),
+            &automatic_decision(&unknown)?.with_permission_settings(full)
+        )
+        .is_err()
+    );
+    let shadow = fixture.root().join(if cfg!(windows) {
+        "python.exe"
+    } else {
+        "python"
+    });
+    fs::copy(&fixture.executable, &shadow)?;
+    let environment = ProcessHostEnvironment::new(vec![(
+        ProcessEnvironmentVariable::try_from_string("PATH".to_owned())?,
+        std::env::join_paths([fixture.root()])?,
+    )])?;
+    let runner = WorkspaceProcessRunner::new(environment);
+    assert_eq!(
+        futures::executor::block_on(runner.run(
+            &fixture.project,
+            AuthorizedProcessSpec::new(spec, &decision)?,
+            &ActiveControl,
+            &RecordingEvents::default()
+        )),
+        Err(ProcessRunFailure::Denied)
+    );
+    Ok(())
+}
+
+#[test]
 fn direct_argv_cwd_executable_and_environment_policy_are_enforced() -> Result<(), Box<dyn Error>> {
     let fixture = ProcessFixture::new()?;
     let runner = WorkspaceProcessRunner::new(fixture.environment()?);

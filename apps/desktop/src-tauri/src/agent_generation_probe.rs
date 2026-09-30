@@ -217,7 +217,7 @@ impl ModelProvider for Observed {
                 Some("A^3 ActionArguments V1") => "arguments",
                 Some("A^3 AfterChange V1") => "after_change",
                 Some("A^3 SourceWork V1") => "source_work",
-                Some("A^3 AgentAction V5") => "action",
+                Some("A^3 AgentAction V6") => "action",
                 _ => "research",
             };
             println!(

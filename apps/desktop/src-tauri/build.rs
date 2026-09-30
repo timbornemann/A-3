@@ -4,6 +4,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "query_function_flows",
+            "query_agent_permissions",
+            "query_agent_approval_v2",
+            "query_agent_machine_recovery",
+            "recover_agent_machine_effect",
+            "update_agent_permissions",
             "activate_catalog_project",
             "cancel_model_probe",
             "list_recent_projects",

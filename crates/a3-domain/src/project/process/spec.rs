@@ -20,6 +20,8 @@ const MAX_OUTPUT_BYTES: u32 = 4 * 1_024 * 1_024;
 pub enum ProcessSpecSchemaVersion {
     /// Initial direct-argv process contract.
     V1,
+    /// Additional process with a closed Core effect classification.
+    V2,
 }
 
 /// Bounded executable name or absolute UTF-8 platform path.
@@ -288,6 +290,7 @@ impl Error for ProcessOutputLimitError {}
 /// Immutable direct-argv process request and its exact central-policy identity.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ProcessSpec {
+    machine_effect: Option<crate::MachineProcessEffect>,
     version: ProcessSpecSchemaVersion,
     run_id: AgentRunId,
     worktree_id: WorktreeId,
@@ -305,6 +308,12 @@ pub struct ProcessSpec {
 }
 
 impl ProcessSpec {
+    /// Returns Core-owned V2 effect classification; historical V1 has no machine effect.
+    #[must_use]
+    pub const fn machine_effect(&self) -> Option<crate::MachineProcessEffect> {
+        self.machine_effect
+    }
+
     /// Canonicalizes the environment allowlist and rejects an implicit shell contract.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -369,7 +378,8 @@ impl ProcessSpec {
             plan_binding,
             network,
         );
-        Ok(Self {
+        let specification = Self {
+            machine_effect: None,
             version,
             run_id,
             worktree_id,
@@ -384,6 +394,11 @@ impl ProcessSpec {
             plan_binding,
             network,
             specification_id,
+        };
+        Ok(if version == ProcessSpecSchemaVersion::V2 {
+            specification.with_machine_effect(crate::MachineProcessEffect::Unknown)
+        } else {
+            specification
         })
     }
 
@@ -474,13 +489,56 @@ impl ProcessSpec {
     /// Projects this exact bounded specification into the central policy engine.
     #[must_use]
     pub fn policy_action(&self) -> PolicyAction {
-        PolicyAction::Process(ProcessPolicyAction::new(
+        let process = ProcessPolicyAction::new(
             self.worktree_id,
             self.specification_id,
             self.execution_mode,
             self.plan_binding,
             self.network,
-        ))
+        );
+        match self.machine_effect {
+            Some(effect) => PolicyAction::MachineProcess { process, effect },
+            None => PolicyAction::Process(process),
+        }
+    }
+
+    /// Binds a privileged Core classification into the V2 specification identity.
+    #[must_use]
+    pub fn with_machine_effect(mut self, effect: crate::MachineProcessEffect) -> Self {
+        let mut hash = blake3::Hasher::new_derive_key("a3.machine-process-spec.v2");
+        let base = derive_specification_id(
+            ProcessSpecSchemaVersion::V2,
+            self.run_id,
+            self.worktree_id,
+            &self.executable,
+            &self.arguments,
+            &self.working_directory,
+            &self.environment_allowlist,
+            self.timeout,
+            self.stdout_limit,
+            self.stderr_limit,
+            self.execution_mode,
+            self.plan_binding,
+            self.network,
+        );
+        hash.update(base.as_bytes());
+        hash.update(&[match effect {
+            crate::MachineProcessEffect::ReadOnly => 0,
+            crate::MachineProcessEffect::Unknown => 1,
+            crate::MachineProcessEffect::Destructive => 2,
+            crate::MachineProcessEffect::Publish => 3,
+        }]);
+        self.specification_id = PolicyResourceId::from_bytes(*hash.finalize().as_bytes());
+        self.version = ProcessSpecSchemaVersion::V2;
+        self.machine_effect = Some(effect);
+        self
+    }
+
+    /// Explicit Core-selected shell program, permitted only by an exact machine approval.
+    #[must_use]
+    pub fn with_explicit_machine_shell(mut self) -> Self {
+        self.execution_mode = ProcessExecutionMode::Shell;
+        self.with_machine_effect(crate::MachineProcessEffect::Unknown)
     }
 }
 
@@ -564,6 +622,7 @@ fn derive_specification_id(
     let mut hasher = blake3::Hasher::new_derive_key("a3.process-spec.v1");
     hasher.update(&[match version {
         ProcessSpecSchemaVersion::V1 => 1,
+        ProcessSpecSchemaVersion::V2 => 2,
     }]);
     hasher.update(run_id.as_bytes());
     hasher.update(worktree_id.as_bytes());

@@ -1,4 +1,45 @@
 use crate::agent_session_manager::PresentationMutation;
+#[tauri::command]
+/// Reads the current app-wide permission setting, without execution side effects.
+pub async fn query_agent_permissions(
+    request: QuerySettingsRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<a3_protocol::AgentPermissionsResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    root.query_agent_permissions().await
+}
+
+#[tauri::command]
+/// Commits an explicit permission choice against the visible settings revision.
+pub async fn update_agent_permissions(
+    request: a3_protocol::UpdateAgentPermissionsRequestV1,
+    root: State<'_, CompositionRoot>,
+    app: tauri::AppHandle,
+) -> Result<a3_protocol::AgentPermissionsResponseV1, CommandErrorV1> {
+    use tauri::Emitter;
+    if request.protocol_version != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let revision = parse_canonical_positive_u64(&request.expected_revision)
+        .ok()
+        .and_then(|value| a3_domain::AgentPermissionRevision::new(value).ok())
+        .ok_or_else(|| {
+            CommandErrorV1::settings(a3_protocol::ErrorCodeV1::InvalidSettingsRequest)
+        })?;
+    let mode = match request.mode {
+        a3_protocol::AgentPermissionModeV1::AskPermissions => {
+            a3_domain::AgentPermissionMode::AskPermissions
+        }
+        a3_protocol::AgentPermissionModeV1::FullMachine => {
+            a3_domain::AgentPermissionMode::FullMachine
+        }
+    };
+    let response = root.update_agent_permissions(revision, mode).await?;
+    let _notification = app.emit("a3:agent-permissions-changed", &response);
+    Ok(response)
+}
 use crate::model_settings_manager::settings_version_from_v1;
 use crate::project_map_atlas_mapping::{
     map_flow_query_from_v1, map_inventory_query_from_v1, map_selection_from_v1,
@@ -706,6 +747,19 @@ pub async fn query_agent_approval(
     root: State<'_, CompositionRoot>,
 ) -> Result<AgentApprovalResponseV1, CommandErrorV1> {
     execute_query_agent_approval(request, root.inner()).await
+}
+
+#[tauri::command]
+/// V2 reads closed machine details; the request remains an opaque task selector only.
+pub async fn query_agent_approval_v2(
+    request: QueryAgentApprovalRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<a3_protocol::AgentApprovalResponseV2, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::new(2) {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let task_id = map_agent_approval_task_id_from_v1(&request)?;
+    root.query_agent_approval_v2(task_id).await
 }
 
 #[tauri::command]

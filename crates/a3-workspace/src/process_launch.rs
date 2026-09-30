@@ -18,6 +18,12 @@ pub(crate) fn prepare_command(
         .map_err(|_| ProcessRunFailure::Denied)?;
     let working_directory = resolve_working_directory(&path_policy, specification)?;
     let executable = resolve_executable(specification.executable().as_str(), environment)?;
+    if specification.machine_effect() == Some(a3_domain::MachineProcessEffect::ReadOnly)
+        && executable.starts_with(path_policy.root().as_path())
+    {
+        // A repository-controlled executable cannot inherit a Core recipe for a system tool.
+        return Err(ProcessRunFailure::Denied);
+    }
 
     let mut command = Command::new(executable);
     command

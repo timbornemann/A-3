@@ -372,10 +372,73 @@ pub enum AgentApprovalActionV1 {
     },
 }
 
+/// Historical V1 details retain their closed patch/process grammar.
+pub type AgentApprovalV1 = AgentApprovalDetails<AgentApprovalActionV1>;
+/// V2 details additionally expose bounded Core-prepared machine scopes.
+pub type AgentApprovalV2 = AgentApprovalDetails<AgentApprovalActionV2>;
+
+/// Closed V2 decision details; paths are presentation, never executable WebView input.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(
+    deny_unknown_fields,
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
+pub enum AgentApprovalActionV2 {
+    /// Existing structured project patch.
+    Patch {
+        /// Exact E3 detail.
+        patch: AgentApprovalPatchV1,
+    },
+    /// Existing or additional exact process.
+    Process {
+        /// Complete direct-argv specification.
+        process: AgentApprovalProcessV1,
+    },
+    /// Canonical external file or bounded HTTP resource.
+    Machine {
+        /// Closed tool-contract version.
+        version: u16,
+        /// File or HTTP adapter boundary.
+        resource_kind: AgentMachineResourceKindV2,
+        /// Canonical path or credential-free URL.
+        target: String,
+        /// Complete-file read/write/delete, or HTTP GET as read.
+        operation: AgentMachineFileOperationV2,
+        /// Exact canonical resource ID.
+        resource_id: String,
+        /// Expected original hash or required absence.
+        expected_hash: Option<String>,
+        /// Proposed complete-file hash, without content.
+        proposed_hash: Option<String>,
+    },
+}
+/// Closed machine resource presentation.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentMachineResourceKindV2 {
+    /// External complete file.
+    File,
+    /// Credential-free GET.
+    Http,
+}
+/// Closed full-file operation presentation.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentMachineFileOperationV2 {
+    /// Observe exact resource.
+    Read,
+    /// Create or replace one complete file.
+    Write,
+    /// Delete one exact hash-bound file.
+    Delete,
+}
+
 /// Current fully informed, exact, task-bound decision surface.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct AgentApprovalV1 {
+pub struct AgentApprovalDetails<A> {
     approval_revision: String,
     ledger_revision: u32,
     ledger_store_version: String,
@@ -390,14 +453,14 @@ pub struct AgentApprovalV1 {
     requested_at_unix_millis: String,
     expires_at_unix_millis: String,
     status: AgentApprovalStatusV1,
-    action: AgentApprovalActionV1,
+    action: A,
     can_allow_once: bool,
     can_deny: bool,
     can_continue: bool,
     can_revoke: bool,
 }
 
-impl AgentApprovalV1 {
+impl<A> AgentApprovalDetails<A> {
     /// Creates the complete Core-revalidated decision surface and available controls.
     #[allow(clippy::too_many_arguments)]
     #[must_use]
@@ -416,7 +479,7 @@ impl AgentApprovalV1 {
         requested_at_unix_millis: String,
         expires_at_unix_millis: String,
         status: AgentApprovalStatusV1,
-        action: AgentApprovalActionV1,
+        action: A,
         can_allow_once: bool,
         can_deny: bool,
         can_continue: bool,
@@ -446,6 +509,11 @@ impl AgentApprovalV1 {
     }
 }
 
+/// Historical V1 query result.
+pub type AgentApprovalResultV1 = AgentApprovalResult<AgentApprovalActionV1>;
+/// V2 query result with closed machine presentation.
+pub type AgentApprovalResultV2 = AgentApprovalResult<AgentApprovalActionV2>;
+
 /// Expected bounded result of current approval inspection.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(
@@ -454,7 +522,7 @@ impl AgentApprovalV1 {
     rename_all_fields = "camelCase",
     tag = "status"
 )]
-pub enum AgentApprovalResultV1 {
+pub enum AgentApprovalResult<A> {
     /// No project is active.
     NoProject,
     /// The selected task no longer exists.
@@ -475,8 +543,26 @@ pub enum AgentApprovalResultV1 {
     /// A fully revalidated exact presentation is available.
     Available {
         /// Current approval details and controls.
-        approval: Box<AgentApprovalV1>,
+        approval: Box<AgentApprovalDetails<A>>,
     },
+}
+
+/// Strict envelope for the versioned V2 approval command.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AgentApprovalResponseV2 {
+    protocol_version: ProtocolVersion,
+    result: AgentApprovalResultV2,
+}
+impl AgentApprovalResponseV2 {
+    /// Binds the response to the narrow V2 command independently of global IPC V1.
+    #[must_use]
+    pub const fn new(result: AgentApprovalResultV2) -> Self {
+        Self {
+            protocol_version: ProtocolVersion::new(2),
+            result,
+        }
+    }
 }
 
 /// Strict envelope for one approval inspection.
@@ -593,6 +679,37 @@ impl AgentApprovalControlResponseV1 {
 mod tests {
     use super::{AgentApprovalControlActionV1, ControlAgentApprovalRequestV1};
     use std::error::Error;
+
+    #[test]
+    fn machine_presentation_is_closed_v2_and_never_accepted_as_v1() -> Result<(), Box<dyn Error>> {
+        let action = super::AgentApprovalActionV2::Machine {
+            version: 1,
+            resource_kind: super::AgentMachineResourceKindV2::File,
+            target: "D:\\scratch\\file.txt".to_owned(),
+            operation: super::AgentMachineFileOperationV2::Write,
+            resource_id: "11".repeat(32),
+            expected_hash: None,
+            proposed_hash: Some("22".repeat(32)),
+        };
+        let wire = serde_json::to_value(&action)?;
+        assert_eq!(wire["resourceKind"], "file");
+        assert_eq!(wire["expectedHash"], serde_json::Value::Null);
+        assert_eq!(
+            serde_json::from_value::<super::AgentApprovalActionV2>(wire.clone())?,
+            action
+        );
+        assert!(serde_json::from_value::<super::AgentApprovalActionV1>(wire.clone()).is_err());
+        let mut injected = wire;
+        injected["argv"] = serde_json::json!(["erase"]);
+        assert!(serde_json::from_value::<super::AgentApprovalActionV2>(injected).is_err());
+        assert_eq!(
+            serde_json::to_value(super::AgentApprovalResponseV2::new(
+                super::AgentApprovalResultV2::Unavailable
+            ))?["protocolVersion"],
+            2
+        );
+        Ok(())
+    }
 
     #[test]
     fn process_binding_and_network_use_frontend_field_names() -> Result<(), Box<dyn Error>> {

@@ -541,7 +541,7 @@ fn controller_reads_real_flow_evidence_and_rejects_a_live_unindexed_edit()
         let provider = StubModelProvider::new(
             durable.profile.provider_id().clone(),
             StubModelProviderBehavior::Events(provider_events(&format!(
-                r#"{{"schema_version":5,"action":{{"kind":"inspect","target":{{"kind":"function_flow","symbol_id":"{}","call_path":[],"view":{{"kind":"steps","offset":0}}}}}}}}"#,
+                r#"{{"schema_version":6,"action":{{"kind":"inspect","target":{{"kind":"function_flow","symbol_id":"{}","call_path":[],"view":{{"kind":"steps","offset":0}}}}}}}}"#,
                 owner.id()
             ))?),
         );
@@ -614,7 +614,7 @@ async fn evaluate_fixture(fixture: FixtureDefinition) -> Result<(), Box<dyn Erro
     let search_provider = StubModelProvider::new(
         durable.profile.provider_id().clone(),
         StubModelProviderBehavior::Events(provider_events(&format!(
-            r#"{{"schema_version":5,"action":{{"kind":"search","query":"{}","limit":5}}}}"#,
+            r#"{{"schema_version":6,"action":{{"kind":"search","query":"{}","limit":5}}}}"#,
             fixture.definition.query
         ))?),
     );
@@ -677,7 +677,7 @@ async fn evaluate_fixture(fixture: FixtureDefinition) -> Result<(), Box<dyn Erro
         .await?;
 
     let update_document = format!(
-        r#"{{"schema_version":5,"action":{{"kind":"update_ledger","step_id":"{}","update":{{"kind":"record_result","summary":"located current source evidence for {}"}}}}}}"#,
+        r#"{{"schema_version":6,"action":{{"kind":"update_ledger","step_id":"{}","update":{{"kind":"record_result","summary":"located current source evidence for {}"}}}}}}"#,
         durable.step_id, fixture.definition.query
     );
     let update_provider = StubModelProvider::new(

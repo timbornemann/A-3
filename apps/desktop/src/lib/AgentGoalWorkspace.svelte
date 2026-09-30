@@ -38,7 +38,7 @@
     type AgentApprovalControlActionV1,
     type AgentApprovalControlResponseV1,
     type AgentApprovalResponseV1,
-    type AgentApprovalV1,
+    type AgentApprovalV2,
   } from './agent-approval';
   import { agentGoalRecoveryMessage } from './command-error';
   import type { GlobalRunStatus } from './global-status';
@@ -57,7 +57,7 @@
     approvalLoader?: (taskId: string) => Promise<AgentApprovalResponseV1>;
     approvalController?: (
       taskId: string,
-      approval: AgentApprovalV1,
+      approval: AgentApprovalV2,
       action: AgentApprovalControlActionV1,
     ) => Promise<AgentApprovalControlResponseV1>;
     activityLoader?: (taskId: string) => Promise<AgentActivityResponseV1>;

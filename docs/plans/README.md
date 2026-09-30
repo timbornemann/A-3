@@ -24,6 +24,8 @@ Diese Pl채ne zerlegen A^3 in 체berpr체fbare vertikale Arbeitspakete. Sie sind f�
 18. [Bedienbare Agentenausf체hrung](19-AGENT-EXECUTION-UX.md)
 19. [Kompakter, frei lesbarer Agentenverlauf](20-AGENT-CONVERSATION-INTERACTION.md)
 
+20. [Auftragsbezogene Umsetzung und Berechtigungsmodi](21-TASK-SCOPE-AND-PERMISSIONS.md)
+
 ## Ausf체hrungsregeln f체r Codex
 
 - Genau ein Arbeitspaket gleichzeitig auf In Progress setzen.

@@ -59,6 +59,7 @@ fn now() -> Result<AgentRunTimestamp, Box<dyn Error>> {
 
 fn check_scope(case: LiveCodingCase, action: &AgentApprovalAction) -> Result<(), Box<dyn Error>> {
     let allowed = match action {
+        a3_application::AgentApprovalAction::Machine { .. } => false,
         AgentApprovalAction::Patch(patch) => {
             !patch.files().is_empty()
                 && patch.files().len() <= case.maximum_patch_file_count()
@@ -697,6 +698,8 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
     let executor = Arc::new(
         ProductionAgentRunExecutor::new(
             ProductionAgentRunPorts {
+                ledgers: store.clone(),
+                permissions: None,
                 workspace: store.clone(),
                 journal: store.clone(),
                 actions: store.clone(),

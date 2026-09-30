@@ -66,6 +66,73 @@ impl AgentMutationResultRecord {
     }
 }
 
+/// Exact bounded external resource descriptor retained before an effect; never source content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MachineEffectScope {
+    kind: AgentMutationKind,
+    step: TaskStepId,
+    resource: a3_domain::PolicyResourceId,
+    target: String,
+    expected: Option<a3_domain::ContentHash>,
+    proposed: Option<a3_domain::ContentHash>,
+}
+impl MachineEffectScope {
+    /// Accepts only Core-prepared machine scopes with a bounded, secret-free target.
+    pub fn new(
+        kind: AgentMutationKind,
+        step: TaskStepId,
+        resource: a3_domain::PolicyResourceId,
+        target: String,
+        expected: Option<a3_domain::ContentHash>,
+        proposed: Option<a3_domain::ContentHash>,
+    ) -> Result<Self, AgentRecoveryStoreFailure> {
+        if !matches!(
+            kind,
+            AgentMutationKind::MachineFile
+                | AgentMutationKind::MachineProcess
+                | AgentMutationKind::MachineNetwork
+        ) || target.is_empty()
+            || target.len() > 4096
+            || target.chars().any(char::is_control)
+            || a3_domain::SecretCandidateClassifierV1::classify(&target).is_some()
+        {
+            return Err(AgentRecoveryStoreFailure::InvalidStoredData);
+        }
+        Ok(Self {
+            kind,
+            step,
+            resource,
+            target,
+            expected,
+            proposed,
+        })
+    }
+    /// Original exact task step owning the effect.
+    pub const fn step(&self) -> TaskStepId {
+        self.step
+    }
+    /// Exact adapter boundary.
+    pub const fn kind(&self) -> AgentMutationKind {
+        self.kind
+    }
+    /// Content-free canonical resource identity.
+    pub const fn resource(&self) -> a3_domain::PolicyResourceId {
+        self.resource
+    }
+    /// Canonical path, canonical URL or executable name; contains no argv or source body.
+    pub fn target(&self) -> &str {
+        &self.target
+    }
+    /// Required original state when supplied.
+    pub const fn expected(&self) -> Option<a3_domain::ContentHash> {
+        self.expected
+    }
+    /// Proposed file hash, without file content.
+    pub const fn proposed(&self) -> Option<a3_domain::ContentHash> {
+        self.proposed
+    }
+}
+
 /// Storage operations that must be atomic at the crash/restart boundary.
 pub trait AgentRecoveryStore: fmt::Debug + Send + Sync {
     /// Persists a new attempt before invoking the corresponding tool capability.
@@ -90,6 +157,78 @@ pub trait AgentRecoveryStore: fmt::Debug + Send + Sync {
         kind: AgentMutationKind,
         started_at: AgentRunTimestamp,
     ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt>;
+
+    /// Starts Unknown and stores its exact machine scope in the same transaction.
+    #[allow(clippy::too_many_arguments)]
+    fn begin_machine_mutation_attempt<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+        snapshot_id: SnapshotId,
+        tool_run_id: ToolRunId,
+        fingerprint: MutationActionFingerprint,
+        scope: &'a MachineEffectScope,
+        started_at: AgentRunTimestamp,
+    ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
+        let _ = (
+            project,
+            run_id,
+            snapshot_id,
+            tool_run_id,
+            fingerprint,
+            scope,
+            started_at,
+        );
+        Box::pin(async { Err(AgentRecoveryStoreFailure::Unavailable) })
+    }
+
+    /// Reads only the bounded scope recorded before the selected machine effect.
+    fn load_machine_effect_scope<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+    ) -> AgentRecoveryStoreFuture<'a, Option<MachineEffectScope>> {
+        let _ = (project, tool_run_id, attempt);
+        Box::pin(async { Err(AgentRecoveryStoreFailure::Unavailable) })
+    }
+
+    /// Records an explicitly scoped human acknowledgement after any required authorized file read.
+    #[allow(clippy::too_many_arguments)]
+    fn acknowledge_machine_recovery<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+        fingerprint: MutationActionFingerprint,
+        resource: a3_domain::PolicyResourceId,
+        observed_hash: Option<a3_domain::ContentHash>,
+        read_decision: Option<a3_domain::PolicyDecisionId>,
+        observed_at: AgentRunTimestamp,
+    ) -> AgentRecoveryStoreFuture<'a, ()> {
+        let _ = (
+            project,
+            tool_run_id,
+            attempt,
+            fingerprint,
+            resource,
+            observed_hash,
+            read_decision,
+            observed_at,
+        );
+        Box::pin(async { Err(AgentRecoveryStoreFailure::Unavailable) })
+    }
+
+    /// Reports whether a machine scope has its exact durable human acknowledgement.
+    fn machine_recovery_acknowledged<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+    ) -> AgentRecoveryStoreFuture<'a, bool> {
+        let _ = (project, tool_run_id, attempt);
+        Box::pin(async { Err(AgentRecoveryStoreFailure::Unavailable) })
+    }
 
     /// Terminates an attempt that failed before a normalized result could be journaled.
     fn finish_agent_tool_attempt<'a>(

@@ -165,6 +165,19 @@ Stand: 2026-08-03
     Reads MÜSSEN nutzbaren Kontextplatz erhalten. Revalidierte alte Evidence darf eine aktuelle
     eindeutige Zielquelle weder verdrängen noch deren erneuten sicheren Read ersetzen.
 
+20. Appweite Agent-Berechtigungen MÜSSEN als typisierter Modus mit append-only Revision im
+    globalen Katalog liegen. Die WebView darf ausschließlich versionierte Query-/CAS-Update-
+    Commands nutzen. Eine Modellaktion darf weder den Modus wählen noch eine Einmalfreigabe
+    simulieren. Automatische Entscheidungen tragen die aktuelle Revision; Werkzeugadmission
+    revalidiert sie. Wartende nun erlaubte Aktionen werden gegen aktuelle Anker neu bewertet.
+    Strengere Workspace-Regeln, Capability-Grenzen und unbekannte/destruktive/veröffentlichende
+    Wirkungen bleiben verbindlich. Siehe [ADR-0118](adrs/0118-appweite-agent-berechtigungsmodi.md).
+21. Neue Arbeitspläne dürfen ausschließlich Umsetzungsschritte besitzen. Die Verifikations-
+    entscheidung unterscheidet vorhandene Prüfungen, kurze Funktionskontrollen und begründete
+    Testerstellung. Prüfabsichten dürfen keine Testartefakte implizieren; ein fehlender Command
+    erzwingt kein Scaffolding. Diff-Evidence darf keine Laufzeitbehauptung verifizieren.
+    Siehe [ADR-0117](adrs/0117-auftragsbezogene-tests-und-verifikation.md).
+
 ## 11. Tests
 
 1. Domain-Invarianten benötigen Unit- und gegebenenfalls Property-Tests.

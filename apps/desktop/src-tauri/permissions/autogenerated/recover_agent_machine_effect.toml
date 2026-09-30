@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-recover-agent-machine-effect"
+description = "Enables the recover_agent_machine_effect command without any pre-configured scope."
+commands.allow = ["recover_agent_machine_effect"]
+
+[[permission]]
+identifier = "deny-recover-agent-machine-effect"
+description = "Denies the recover_agent_machine_effect command without any pre-configured scope."
+commands.deny = ["recover_agent_machine_effect"]

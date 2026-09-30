@@ -104,6 +104,7 @@ pub enum PolicyDecisionReason {
 /// Content-free durable central policy decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolicyDecision {
+    permission_settings: Option<super::AgentPermissionSettings>,
     id: PolicyDecisionId,
     run_id: AgentRunId,
     action_fingerprint: PolicyActionFingerprint,
@@ -246,6 +247,7 @@ impl PolicyDecision {
             return Err(PolicyDecisionError::InvalidShape);
         }
         Ok(Self {
+            permission_settings: None,
             id,
             run_id,
             action_fingerprint,
@@ -272,6 +274,7 @@ impl PolicyDecision {
         timing: PolicyEvaluationTiming,
     ) -> Self {
         Self {
+            permission_settings: None,
             id,
             run_id,
             action_fingerprint: action.fingerprint(),
@@ -284,6 +287,23 @@ impl PolicyDecision {
             approval_id,
             timing,
         }
+    }
+
+    /// Returns decision identity.
+    /// Binds the immutable decision to the privileged user's permission snapshot.
+    #[must_use]
+    pub const fn with_permission_settings(
+        mut self,
+        settings: super::AgentPermissionSettings,
+    ) -> Self {
+        self.permission_settings = Some(settings);
+        self
+    }
+
+    /// Historical decisions have no permission-mode context.
+    #[must_use]
+    pub const fn permission_settings(&self) -> Option<super::AgentPermissionSettings> {
+        self.permission_settings
     }
 
     /// Returns decision identity.

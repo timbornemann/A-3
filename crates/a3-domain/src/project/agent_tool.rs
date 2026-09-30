@@ -25,6 +25,44 @@ impl MutationActionFingerprint {
                 hasher.update(run.step_id().as_bytes());
                 hasher.update(run.command_id().as_bytes());
             }
+            AgentAction::Machine(machine) => {
+                hasher.update(&[2]);
+                hasher.update(machine.step_id().as_bytes());
+                match machine {
+                    crate::AgentMachineAction::File(action) => {
+                        hasher.update(&[0]);
+                        hasher.update(&(action.path().as_str().len() as u64).to_le_bytes());
+                        hasher.update(action.path().as_str().as_bytes());
+                        let (tag, expected, proposed) = match action.operation() {
+                            crate::MachineFileOperation::Read(hash) => (0, *hash, None),
+                            crate::MachineFileOperation::Write { expected, content } => {
+                                (1, *expected, Some(content.content_hash()))
+                            }
+                            crate::MachineFileOperation::Delete(hash) => (2, Some(*hash), None),
+                        };
+                        hasher.update(&[tag]);
+                        for hash in [expected, proposed] {
+                            hasher.update(&[u8::from(hash.is_some())]);
+                            if let Some(hash) = hash {
+                                hasher.update(hash.as_bytes());
+                            }
+                        }
+                    }
+                    crate::AgentMachineAction::Process(action) => {
+                        hasher.update(&[1]);
+                        hasher.update(&(action.executable().as_str().len() as u64).to_le_bytes());
+                        hasher.update(action.executable().as_str().as_bytes());
+                        for arg in action.arguments() {
+                            hasher.update(&(arg.as_str().len() as u64).to_le_bytes());
+                            hasher.update(arg.as_str().as_bytes());
+                        }
+                    }
+                    crate::AgentMachineAction::HttpGet(action) => {
+                        hasher.update(&[2]);
+                        hasher.update(action.url().as_str().as_bytes());
+                    }
+                }
+            }
             AgentAction::Search(_)
             | AgentAction::Inspect(_)
             | AgentAction::UpdateLedger(_)
@@ -254,6 +292,12 @@ pub enum AgentMutationKind {
     Patch,
     /// Direct argv process selected from the confirmed command catalog.
     Process,
+    /// Canonical external complete-file operation.
+    MachineFile,
+    /// Core-classified additional argv process.
+    MachineProcess,
+    /// Bounded credential-free HTTP observation.
+    MachineNetwork,
     /// Pre-V22 in-flight attempt whose original boundary kind was not persisted.
     UnclassifiedLegacy,
 }

@@ -95,6 +95,18 @@ impl<'a> ReconcileUnknownMutation<'a> {
         {
             return Err(MutationReconciliationError::AttemptState);
         }
+        if matches!(
+            selected.kind(),
+            a3_domain::AgentMutationKind::MachineFile
+                | a3_domain::AgentMutationKind::MachineProcess
+                | a3_domain::AgentMutationKind::MachineNetwork
+        ) && !self
+            .recovery
+            .machine_recovery_acknowledged(project, tool_run_id, attempt_number)
+            .await?
+        {
+            return Err(MutationReconciliationError::AttemptState);
+        }
         let lease = self.coordinator.try_acquire(
             run.id(),
             project.worktree().id(),

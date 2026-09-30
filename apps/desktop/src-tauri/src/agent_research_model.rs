@@ -232,7 +232,7 @@ impl DecisionIssue {
             ) = phase
         {
             let result = if phase.is_some_and(ResearchOutputPhase::is_design) {
-                "kind=designDecision, evidence=[]. Make concrete future decisions; for tests give inputs, expected outcomes and a verification method consistent with prerequisite decisions"
+                "kind=designDecision, evidence=[]. Make concrete future decisions; verification uses existing or brief checks, with new tests only on request or justified concrete risk, never against explicit no-tests"
             } else {
                 "kind=interpretation with current E-window anchor_ref evidence. Explain the actual delivered implementation"
             };
@@ -258,7 +258,7 @@ impl DecisionIssue {
             }
             Some(ResearchOutputPhase::DesignTests(id)) => {
                 return format!(
-                    "DesignTests Q{}: schema_version=7; response.kind=designDecision and exactly one result in response.result: question_id={}, concrete text, evidence=[]. Derive concrete test inputs, expected results and verification methods from the original request and admitted design. Defining these tests is your assigned work; never ask the user to supply or confirm routine scenarios. No note, work, decision, progress, new research, changed prerequisites or implementation claims. Maximum result text 4096 UTF-8 bytes. Failure category: {}.",
+                    "DesignTests Q{}: schema_version=7; response.kind=designDecision, exactly one result at response.result: question_id={}, text <=4096 UTF-8 bytes, evidence=[]. Select existing or brief checks: inputs, expected results and verification methods. New tests require explicit request or concrete complexity, regression/security risk and short reason; no-tests overrides. If none: No additional checks are required. never ask the user to confirm routine scenarios. No note/work/decision/progress, reads, changed prerequisites or implementation claims. Failure category: {}.",
                     id.get(),
                     id.get(),
                     self.code()
@@ -282,7 +282,7 @@ impl DecisionIssue {
                 );
             }
             Some(ResearchOutputPhase::Finalize) => {
-                "Finalize: return schema_version=7 and response kind=plan with summary, changes, interfaces, tests and assumptions. Changes/tests are nonempty arrays of single-line concrete verifiable outcomes. No note, work, decision, progress, markdown field, markers, headings, citations, source_refs, evidence_status, new research or question. The Core formats the plan and attaches admitted original evidence."
+                "Finalize: return schema_version=7 and response kind=plan with summary, changes, interfaces, tests and assumptions. Changes is nonempty; tests may be empty. Both are arrays of single-line concrete verifiable outcomes. No note, work, decision, progress, markdown field, markers, headings, citations, source_refs, evidence_status, new research or question. The Core formats the plan and attaches admitted original evidence."
             }
             None => return self.repair_hint(source_count),
         };
@@ -379,7 +379,7 @@ impl DecisionIssue {
                 "The response stream did not produce exactly one nonempty completed document. Return one concise, complete JSON document under the supplied schema."
             }
             Self::PlanShape => {
-                "A sufficient planning answer must begin PLAN: with Markdown headings Summary, Implementation Changes, Interfaces, Test Plan, Assumptions. Include nonempty ordered change and test steps (at most 64 total) and current source citations. Use QUESTION: only for a genuinely blocking user choice. Proposed new interfaces and formats belong in the plan as explicit design assumptions, not missing evidence. Do not ask the user to restart for an output-format error."
+                "A sufficient planning answer must begin PLAN: with Markdown headings Summary, Implementation Changes, Interfaces, Test Plan, Assumptions. Include nonempty ordered change steps, optional check steps (at most 64 total) and current source citations. New test code requires a request or concrete risk with a reason; no-tests wins. Use QUESTION: only for a genuinely blocking user choice. Proposed new interfaces and formats belong in the plan as explicit design assumptions, not missing evidence. Do not ask the user to restart for an output-format error."
             }
             Self::Json => {
                 "Return a complete JSON object, without fences or prose. Close all strings, arrays and objects."

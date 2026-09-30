@@ -39,7 +39,8 @@
     AgentApprovalControlActionV1,
     AgentApprovalControlResponseV1,
     AgentApprovalResponseV1,
-    AgentApprovalV1,
+    AgentApprovalResponseV2,
+    AgentApprovalV2,
   } from './agent-approval';
   import type {
     AgentInspectionLogResponseV1,
@@ -50,6 +51,8 @@
   import AgentDetailDialog from './AgentDetailDialog.svelte';
   import AgentPlanCard from './AgentPlanCard.svelte';
   import AgentApprovalCenter from './AgentApprovalCenter.svelte';
+  import AgentPermissionsControl from './AgentPermissionsControl.svelte';
+  import AgentMachineRecovery from './AgentMachineRecovery.svelte';
   import AgentInspectionPanel from './AgentInspectionPanel.svelte';
   import AgentAskResearch from './AgentAskResearch.svelte';
   import AgentDiagrams from './AgentDiagrams.svelte';
@@ -72,10 +75,10 @@
     workPlanLoader?: (query: { taskId: string }) => Promise<TaskLensTaskResponseV1>;
     approvalController?: (
       taskId: string,
-      approval: AgentApprovalV1,
+      approval: AgentApprovalV2,
       action: AgentApprovalControlActionV1,
     ) => Promise<AgentApprovalControlResponseV1>;
-    approvalLoader?: (taskId: string) => Promise<AgentApprovalResponseV1>;
+    approvalLoader?: (taskId: string) => Promise<AgentApprovalResponseV1 | AgentApprovalResponseV2>;
     inspectionLoader?: (taskId: string) => Promise<AgentInspectionResponseV1>;
     inspectionLogLoader?: (
       taskId: string,
@@ -1968,6 +1971,7 @@
                   </p>
                 {/if}
 
+                <AgentMachineRecovery taskId={visibleTaskId} refreshKey={activity} />
                 <nav class="execution-links" aria-label="Ausführungsdetails">
                   <button
                     class="agent-work-plan"
@@ -2112,6 +2116,7 @@
       </div>
 
       <div class="composer-wrap">
+        <AgentPermissionsControl />
         {#if !followConversation && selectedSummary}
           <button class="follow-latest" type="button" onclick={resumeConversationFollow}>
             ↓ Zum neuesten Schritt

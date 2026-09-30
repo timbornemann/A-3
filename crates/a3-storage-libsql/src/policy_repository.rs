@@ -250,6 +250,25 @@ pub(crate) async fn load_decision(
     {
         return Err(PolicyRepositoryError::InvalidStoredData);
     }
+    let mut contexts = connection.query("SELECT permission_revision, permission_mode FROM policy_permission_context WHERE policy_decision_id = ?1", params![id_bytes(decision_id)]).await.map_err(PolicyRepositoryError::Read)?;
+    let decision = if let Some(context) =
+        contexts.next().await.map_err(PolicyRepositoryError::Read)?
+    {
+        let revision: i64 = context.get(0).map_err(PolicyRepositoryError::Read)?;
+        let revision = u64::try_from(revision)
+            .ok()
+            .and_then(|value| a3_domain::AgentPermissionRevision::new(value).ok())
+            .ok_or(PolicyRepositoryError::InvalidStoredData)?;
+        let mode: String = context.get(1).map_err(PolicyRepositoryError::Read)?;
+        let mode = match mode.as_str() {
+            "askPermissions" => a3_domain::AgentPermissionMode::AskPermissions,
+            "fullMachine" => a3_domain::AgentPermissionMode::FullMachine,
+            _ => return Err(PolicyRepositoryError::InvalidStoredData),
+        };
+        decision.with_permission_settings(a3_domain::AgentPermissionSettings::new(mode, revision))
+    } else {
+        decision
+    };
     Ok(Some(decision))
 }
 
@@ -537,6 +556,10 @@ async fn write_decision(
         )
         .await
         .map_err(classify_write)?;
+    if let Some(settings) = decision.permission_settings() {
+        transaction.execute("INSERT INTO policy_permission_context (policy_decision_id, permission_revision, permission_mode) VALUES (?1, ?2, ?3)", params![id_bytes(decision.id()), u64_to_i64(settings.revision().get())?, settings.mode().as_str()]).await.map_err(classify_write)?;
+    }
+
     Ok(())
 }
 

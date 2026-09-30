@@ -287,7 +287,7 @@ fn decode_work_plan(
     };
     let steps = |name| -> Result<String, AskResearchDecisionDecodeError> {
         let values = array(value, name)?;
-        if values.is_empty() || values.len() > 32 {
+        if (name != "tests" && values.is_empty()) || values.len() > 32 {
             return Err(AskResearchDecisionDecodeError::InvalidValue);
         }
         values

@@ -3,6 +3,16 @@ import { parseAgentActivityResponseV1, queryAgentActivity } from './agent-activi
 
 const id = (value: string) => value.repeat(64);
 
+it('does not backport machine selections into the closed activity V1 enum', () => {
+  const response = availableResponse();
+  const event = response.result.activity.run.timeline.find(
+    (item) => item.event.kind === 'modelInteraction',
+  )?.event;
+  if (!event || !('turn' in event) || !event.turn) throw new Error('missing fixture turn');
+  event.turn.selectedAction = 'machine';
+  expect(() => parseAgentActivityResponseV1(response)).toThrow();
+});
+
 function availableResponse() {
   return {
     protocolVersion: 1,

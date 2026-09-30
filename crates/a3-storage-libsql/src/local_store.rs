@@ -1,4 +1,20 @@
 use crate::project_catalog::ProjectCatalogError;
+impl a3_application::AgentPermissionStore for LibsqlKnowledgeStore {
+    fn load_agent_permissions(&self) -> a3_application::AgentPermissionFuture<'_> {
+        Box::pin(crate::agent_permission_repository::load(&self.catalog))
+    }
+    fn update_agent_permissions(
+        &self,
+        expected: a3_domain::AgentPermissionRevision,
+        mode: a3_domain::AgentPermissionMode,
+    ) -> a3_application::AgentPermissionFuture<'_> {
+        Box::pin(crate::agent_permission_repository::update(
+            &self.catalog,
+            expected,
+            mode,
+        ))
+    }
+}
 use crate::{
     CatalogDatabase, CatalogOpenError, KnowledgeDatabase, KnowledgeOpenError,
     ProjectStorageLayoutError, StorageLayout,
@@ -1942,10 +1958,127 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
                 tool_run_id,
                 fingerprint,
                 kind,
+                None,
                 started_at,
             )
             .await
             .map_err(|error| error.classify())
+        })
+    }
+
+    fn begin_machine_mutation_attempt<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+        snapshot_id: SnapshotId,
+        tool_run_id: ToolRunId,
+        fingerprint: MutationActionFingerprint,
+        scope: &'a a3_application::MachineEffectScope,
+        started_at: AgentRunTimestamp,
+    ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
+            agent_recovery_repository::begin_mutation_attempt(
+                &connection,
+                project.worktree().id(),
+                run_id,
+                snapshot_id,
+                tool_run_id,
+                fingerprint,
+                scope.kind(),
+                Some(scope),
+                started_at,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_machine_effect_scope<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        tool: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+    ) -> AgentRecoveryStoreFuture<'a, Option<a3_application::MachineEffectScope>> {
+        Box::pin(async move {
+            let db = self.open_project_knowledge_for_recovery(project).await?;
+            let conn = db
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
+            agent_recovery_repository::load_machine_scope(
+                &conn,
+                project.worktree().id(),
+                tool,
+                attempt,
+            )
+            .await
+            .map_err(|e| e.classify())
+        })
+    }
+    fn machine_recovery_acknowledged<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        tool: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+    ) -> AgentRecoveryStoreFuture<'a, bool> {
+        Box::pin(async move {
+            let db = self.open_project_knowledge_for_recovery(project).await?;
+            let conn = db
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
+            if agent_recovery_repository::load_machine_scope(
+                &conn,
+                project.worktree().id(),
+                tool,
+                attempt,
+            )
+            .await
+            .map_err(|e| e.classify())?
+            .is_none()
+            {
+                return Ok(false);
+            }
+            agent_recovery_repository::machine_acknowledged(&conn, tool, attempt)
+                .await
+                .map_err(|e| e.classify())
+        })
+    }
+    fn acknowledge_machine_recovery<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        tool: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+        fingerprint: MutationActionFingerprint,
+        resource: a3_domain::PolicyResourceId,
+        observed_hash: Option<a3_domain::ContentHash>,
+        read_decision: Option<PolicyDecisionId>,
+        observed_at: AgentRunTimestamp,
+    ) -> AgentRecoveryStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let db = self.open_project_knowledge_for_recovery(project).await?;
+            let conn = db
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
+            agent_recovery_repository::acknowledge_machine(
+                &conn,
+                project.worktree().id(),
+                tool,
+                attempt,
+                fingerprint,
+                resource,
+                observed_hash,
+                read_decision,
+                observed_at,
+            )
+            .await
+            .map_err(|e| e.classify())
         })
     }
 

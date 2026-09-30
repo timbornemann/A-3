@@ -184,7 +184,7 @@ pub fn research_work_phase_schema(
             if matches!(phase, ResearchOutputPhase::DesignTests(_)) {
                 schema["$defs"]["work"]["properties"]["results"]["minItems"] = json!(1);
                 schema["$defs"]["work"]["properties"]["results"]["description"] = json!(
-                    "Return exactly one concrete test design consistent with admitted prerequisites: inputs, expected outcomes and verification methods. Do not ask the user to define or confirm tests. No new repository reads."
+                    "One verification decision: existing/brief checks or none. New tests need request or concrete complexity/regression/security risk with reason; no-tests wins. No reads."
                 );
             }
         } else {
@@ -334,7 +334,7 @@ pub fn research_work_decision_schema() -> Result<Value, DecodeError> {
         "summary":{"type":"string","minLength":1,"maxLength":4096},
         "changes":{"type":"array","minItems":1,"maxItems":32,"items":{"$ref":"#/$defs/planStep"}},
         "interfaces":{"type":"string","minLength":1,"maxLength":4096},
-        "tests":{"type":"array","minItems":1,"maxItems":32,"items":{"$ref":"#/$defs/planStep"}},
+        "tests":{"type":"array","minItems":0,"maxItems":32,"items":{"$ref":"#/$defs/planStep"}},
         "assumptions":{"type":"string","minLength":1,"maxLength":4096}}}),
     );
     definitions.insert(

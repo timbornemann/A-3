@@ -26,7 +26,7 @@ struct OwnedWindow {
 const CORE_PLAN_OUTCOMES: [&str; 3] = [
     "Explain the current entry points, APIs and integration constraints needed for the original request using the named original files. Do not require unrequested conventions or a pre-existing implementation of the requested new feature.",
     "Define the concrete requested implementation, interfaces, ordering and error handling as future design. Cover the original request and state safe reversible assumptions; do not search for the new implementation.",
-    "Define concrete acceptance and regression tests for every requested outcome, success and failure case. New tests and test scaffolding are a design choice, not missing repository evidence.",
+    "Choose existing/brief checks or none. New tests need a request or concrete complexity, regression or security risk with a short reason; no-tests wins.",
 ];
 
 /// Literal request clauses, not inferred facts or a new semantic planner. Only split
@@ -550,7 +550,7 @@ impl AskResearchWorkingSet {
                     change_number = change_number.saturating_add(1);
                     change_lines.push(format!("{change_number}. {}", step.outcome()));
                 }
-                a3_domain::AgentWorkPlanVerificationIntent::Test => {
+                a3_domain::AgentWorkPlanVerificationIntent::Check => {
                     test_number = test_number.saturating_add(1);
                     test_lines.push(format!("{test_number}. {}", step.outcome()));
                 }
@@ -559,7 +559,7 @@ impl AskResearchWorkingSet {
         let (basis, refs) = self.render_work_answer(false)?;
         Some((
             format!(
-                "PLAN:\n\n## Summary\n\nDer Plan übernimmt die festgehaltenen Änderungs- und Testentscheidungen. Er ist noch nicht umgesetzt.\n\n## Implementation Changes\n\n{}\n\n## Interfaces\n\nSchnittstellen, Reihenfolge und Fehlerverhalten sind im vollständigen Änderungsentwurf oben festgelegt. Bestehende Integrationsgrenzen stehen in der Recherchegrundlage.\n\n## Test Plan\n\n{}\n\n## Assumptions\n\nEs gelten die ausdrücklich im Änderungsentwurf genannten Annahmen; diese Darstellung ergänzt keine weiteren Entscheidungen. Recherche ist keine Implementierungsverifikation.\n\n## Recherchegrundlage\n\n{basis}",
+                "PLAN:\n\n## Summary\n\nDer Plan übernimmt die festgehaltenen Änderungs- und Verifikationsentscheidungen. Er ist noch nicht umgesetzt.\n\n## Implementation Changes\n\n{}\n\n## Interfaces\n\nSchnittstellen, Reihenfolge und Fehlerverhalten sind im vollständigen Änderungsentwurf oben festgelegt. Bestehende Integrationsgrenzen stehen in der Recherchegrundlage.\n\n## Test Plan\n\n{}\n\n## Assumptions\n\nEs gelten die ausdrücklich im Änderungsentwurf genannten Annahmen; diese Darstellung ergänzt keine weiteren Entscheidungen. Recherche ist keine Implementierungsverifikation.\n\n## Recherchegrundlage\n\n{basis}",
                 change_lines.join("\n"),
                 test_lines.join("\n")
             ),

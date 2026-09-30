@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ErrorCodeV1 {
+    /// Global permission selection changed concurrently.
+    AgentPermissionsChanged,
+    /// Durable app-wide permission settings are unavailable.
+    AgentPermissionsUnavailable,
     /// The request used a protocol version this build does not support.
     UnsupportedProtocolVersion,
     /// The native picker did not return a usable local directory.
@@ -356,6 +360,12 @@ impl CommandErrorV1 {
             ErrorCodeV1::DeepMapNotPaused => {
                 "No validated paused Deep Map checkpoint is available."
             }
+            ErrorCodeV1::AgentPermissionsChanged => {
+                "The agent permissions changed. Reload the setting before selecting again."
+            }
+            ErrorCodeV1::AgentPermissionsUnavailable => {
+                "Agent permissions are unavailable. Reload the setting before starting automatic work."
+            }
             ErrorCodeV1::InvalidSettingsRequest => {
                 "The Settings request is outside the supported bounds or no longer current."
             }
@@ -426,6 +436,19 @@ impl CommandErrorV1 {
                 "The saved model settings could not be validated. Open Settings to diagnose and recover invalid model profiles. Project data has not been reset.",
             ),
             _ => Self::project_open(code),
+        }
+    }
+
+    /// Content-free permission failure; never reports a model configuration problem.
+    #[must_use]
+    pub fn agent_permissions(code: ErrorCodeV1) -> Self {
+        if code == ErrorCodeV1::LocalStorageInvalidData {
+            Self::new(
+                code,
+                "The saved agent permissions are invalid. Automatic work is disabled until the setting can be validated.",
+            )
+        } else {
+            Self::project_open(code)
         }
     }
 
