@@ -18,6 +18,8 @@ use a3_domain::{
     WorkspacePolicyRule, WorktreeId,
 };
 
+mod loopback;
+
 pub(crate) async fn verify<F>(factory: &F, workspace: &ContractWorkspace) -> ContractResult<()>
 where
     F: KnowledgeStoreContractFactory,
@@ -319,6 +321,7 @@ where
 
     crate::release_contract_store(reopened);
     crate::release_contract_store(store);
+    loopback::verify(factory, workspace).await?;
     crate::complete_contract_phase()
 }
 

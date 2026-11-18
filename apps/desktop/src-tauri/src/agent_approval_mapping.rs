@@ -161,7 +161,10 @@ fn map_action(value: &AgentApprovalAction) -> Option<AgentApprovalActionV1> {
                 process.specification_id().to_string(),
             ),
         },
-        AgentApprovalAction::Machine { .. } => return None,
+        AgentApprovalAction::Machine { .. }
+        | AgentApprovalAction::LoopbackStart { .. }
+        | AgentApprovalAction::LoopbackStartup { .. }
+        | AgentApprovalAction::LoopbackProbe { .. } => return None,
     })
 }
 

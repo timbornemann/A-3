@@ -1,6 +1,7 @@
 use super::{
-    AgentRunId, DiscoveredCommandId, DiscoveredCommandKind, PolicyResourceId, RepositoryPath,
-    StepVerificationId, TaskEvidenceId, VerificationSpecId,
+    AgentRunId, DiscoveredCommandId, DiscoveredCommandKind, PolicyResourceId,
+    PythonIntegerTranslation, RepositoryPath, StepVerificationId, TaskEvidenceId,
+    VerificationSpecId,
 };
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -179,6 +180,8 @@ pub enum VerificationMethod {
     UserConfirm,
     /// A command kind must be resolved from a later current published index before execution.
     DeferredCommand,
+    /// A closed start/probe/stop recipe verifies a local HTTP service.
+    LoopbackHttp,
 }
 
 /// Declared repository breadth used to order relevant process verifications narrowly first.
@@ -193,7 +196,7 @@ pub enum VerificationScope {
 }
 
 /// One bounded selector for structured test evidence.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TestCaseSelector {
     /// Every case reported by the selected test command is relevant.
     All,
@@ -253,7 +256,7 @@ pub enum DiffInvariantMode {
 }
 
 /// Typed path invariant with a canonical bounded path set.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DiffInvariantVerification {
     mode: DiffInvariantMode,
     paths: Vec<RepositoryPath>,
@@ -442,6 +445,8 @@ pub enum VerificationTarget {
     },
     /// A later current published index must resolve one closed command kind before execution.
     DeferredCommand(DeferredCommandVerification),
+    /// One exact owned service lifecycle must observe the required HTTP responses.
+    LoopbackHttp(super::LoopbackHttpRecipe),
 }
 
 impl VerificationTarget {
@@ -456,6 +461,7 @@ impl VerificationTarget {
             Self::Diagnostic { .. } => VerificationMethod::Diagnostic,
             Self::UserConfirm { .. } => VerificationMethod::UserConfirm,
             Self::DeferredCommand(_) => VerificationMethod::DeferredCommand,
+            Self::LoopbackHttp(_) => VerificationMethod::LoopbackHttp,
         }
     }
 
@@ -472,6 +478,7 @@ pub struct VerificationSpec {
     id: VerificationSpecId,
     target: VerificationTarget,
     requirement: VerificationRequirement,
+    python_integer_translation: Option<PythonIntegerTranslation>,
 }
 
 impl VerificationSpec {
@@ -485,6 +492,7 @@ impl VerificationSpec {
             id,
             target: self.target.clone(),
             requirement: self.requirement.clone(),
+            python_integer_translation: self.python_integer_translation.clone(),
         }
     }
 
@@ -501,6 +509,7 @@ impl VerificationSpec {
             id,
             target: VerificationTarget::Legacy(method),
             requirement,
+            python_integer_translation: None,
         }
     }
 
@@ -516,6 +525,7 @@ impl VerificationSpec {
             id,
             target: VerificationTarget::Command { command_id, scope },
             requirement,
+            python_integer_translation: None,
         }
     }
 
@@ -538,7 +548,38 @@ impl VerificationSpec {
                 scope,
             },
             requirement,
+            python_integer_translation: None,
         }
+    }
+
+    /// Creates a structured-test specification that also needs an exact current source proof.
+    #[must_use]
+    pub const fn test_with_python_integer_translation(
+        id: VerificationSpecId,
+        requirement: VerificationRequirement,
+        command_id: DiscoveredCommandId,
+        selector: TestCaseSelector,
+        minimum_cases: MinimumTestCaseCount,
+        scope: VerificationScope,
+        translation: PythonIntegerTranslation,
+    ) -> Self {
+        Self {
+            id,
+            target: VerificationTarget::Test {
+                command_id,
+                selector,
+                minimum_cases,
+                scope,
+            },
+            requirement,
+            python_integer_translation: Some(translation),
+        }
+    }
+
+    /// Returns the immutable additional source-proof obligation, when required.
+    #[must_use]
+    pub const fn python_integer_translation(&self) -> Option<&PythonIntegerTranslation> {
+        self.python_integer_translation.as_ref()
     }
 
     /// Creates an operational deterministic diff-invariant specification.
@@ -552,6 +593,7 @@ impl VerificationSpec {
             id,
             target: VerificationTarget::DiffInvariant(invariant),
             requirement,
+            python_integer_translation: None,
         }
     }
 
@@ -572,6 +614,7 @@ impl VerificationSpec {
                 scope,
             },
             requirement,
+            python_integer_translation: None,
         }
     }
 
@@ -586,6 +629,7 @@ impl VerificationSpec {
             id,
             target: VerificationTarget::UserConfirm { scope_id },
             requirement,
+            python_integer_translation: None,
         }
     }
 
@@ -600,6 +644,22 @@ impl VerificationSpec {
             id,
             target: VerificationTarget::DeferredCommand(deferred),
             requirement,
+            python_integer_translation: None,
+        }
+    }
+
+    /// Creates a specification for one exact local service verification recipe.
+    #[must_use]
+    pub const fn loopback_http(
+        id: VerificationSpecId,
+        requirement: VerificationRequirement,
+        recipe: super::LoopbackHttpRecipe,
+    ) -> Self {
+        Self {
+            id,
+            target: VerificationTarget::LoopbackHttp(recipe),
+            requirement,
+            python_integer_translation: None,
         }
     }
 

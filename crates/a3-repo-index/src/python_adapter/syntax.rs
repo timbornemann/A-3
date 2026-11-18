@@ -197,11 +197,13 @@ impl<'a> PythonExtractor<'a> {
     fn add_root_module(&mut self, root: Node<'_>) -> Result<LocalSymbolId, LanguageParseFailure> {
         let id = self.take_symbol_id()?;
         let declaration = source_range_for_node(root)?;
+        // Tree-sitter can skip leading layout or a BOM before the module begins.
+        // Its synthetic name selection must remain inside that actual declaration.
         let selection = SourceRange::new(
-            0,
-            0,
-            a3_domain::SourcePosition::new(0, 0),
-            a3_domain::SourcePosition::new(0, 0),
+            declaration.start_byte() as usize,
+            declaration.start_byte() as usize,
+            declaration.start_position(),
+            declaration.start_position(),
         )
         .map_err(|_| LanguageParseFailure::InvalidResult)?;
         let mut symbol = ParsedSymbol::new(
@@ -1118,13 +1120,10 @@ impl<'a> PythonExtractor<'a> {
         test_scope: Option<PythonTestScope>,
         stack: &mut Vec<Frame<'tree>>,
     ) -> Result<(), LanguageParseFailure> {
-        for index in (0..node.named_child_count()).rev() {
+        let pending = stack.len();
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
             self.poll_work()?;
-            let index =
-                u32::try_from(index).map_err(|_| LanguageParseFailure::ResourceLimitExceeded)?;
-            let child = node
-                .named_child(index)
-                .ok_or(LanguageParseFailure::InvalidResult)?;
             stack.push(Frame {
                 node: child,
                 container,
@@ -1133,6 +1132,7 @@ impl<'a> PythonExtractor<'a> {
                 test_scope,
             });
         }
+        stack[pending..].reverse();
         Ok(())
     }
 
@@ -1233,13 +1233,9 @@ impl<'a> PythonExtractor<'a> {
     }
 
     fn module_has_main_guard(&mut self, root: Node<'_>) -> Result<bool, LanguageParseFailure> {
-        for index in 0..root.named_child_count() {
+        let mut cursor = root.walk();
+        for statement in root.named_children(&mut cursor) {
             self.poll_work()?;
-            let index =
-                u32::try_from(index).map_err(|_| LanguageParseFailure::ResourceLimitExceeded)?;
-            let Some(statement) = root.named_child(index) else {
-                return Err(LanguageParseFailure::InvalidResult);
-            };
             if statement.kind() != "if_statement" {
                 continue;
             }

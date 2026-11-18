@@ -149,7 +149,7 @@ impl WorkspaceProcessRunner {
                 Err(RecvTimeoutError::Timeout) => {}
             }
             match child.try_wait() {
-                Ok(Some(status)) => {
+                Ok(Some(status)) if stdout_done && stderr_done => {
                     let exit = match ProcessExit::new(status.code(), status.success()) {
                         Ok(exit) => exit,
                         Err(_) => {
@@ -159,7 +159,10 @@ impl WorkspaceProcessRunner {
                     };
                     break (ProcessTermination::Exited(exit), false);
                 }
-                Ok(None) => {}
+                // The direct process can exit while a descendant still owns its pipes.
+                // Keep the same process group, deadline and cancellation owner active
+                // until both bounded readers have observed EOF.
+                Ok(Some(_)) | Ok(None) => {}
                 Err(_) => {
                     cleanup_failed_run(&mut child, receiver, readers)?;
                     return Err(ProcessRunFailure::TerminationUnavailable);
@@ -212,7 +215,7 @@ impl ProcessRunner for WorkspaceProcessRunner {
     }
 }
 
-fn spawn_process_group(command: &mut Command) -> Result<GroupChild, ProcessRunFailure> {
+pub(crate) fn spawn_process_group(command: &mut Command) -> Result<GroupChild, ProcessRunFailure> {
     #[cfg(windows)]
     {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;

@@ -1,8 +1,8 @@
 use super::{
-    AgentRunId, GoalContractReference, StepVerification, TaskEvidenceId, TaskId,
-    TaskLedgerTimestamp, TaskStep, TaskStepBlockingReason, TaskStepCancellationReason,
-    TaskStepDefinition, TaskStepFailureReason, TaskStepId, TaskStepResultSummary,
-    TaskStepStaleCause, TaskStepStatus, TaskStepTransitionError,
+    AgentRunId, GoalContractReference, PendingPlanning, PendingPlanningStage, StepVerification,
+    TaskEvidenceId, TaskId, TaskLedgerTimestamp, TaskStep, TaskStepBlockingReason,
+    TaskStepCancellationReason, TaskStepDefinition, TaskStepFailureReason, TaskStepId,
+    TaskStepResultSummary, TaskStepStaleCause, TaskStepStatus, TaskStepTransitionError,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -144,6 +144,15 @@ impl fmt::Display for TaskReplanReasonError {
 
 impl Error for TaskReplanReasonError {}
 
+/// Core-owned reason class. Models may propose steps, never this classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskLedgerReplanCause {
+    /// A failed or stale decomposition is corrected under the existing retry budget.
+    ErrorCorrection,
+    /// A verified horizon ended with original proof obligations still unplanned.
+    HorizonExtension,
+}
+
 /// Immutable audit record for one material Task Ledger replan.
 #[derive(Clone, PartialEq, Eq)]
 pub struct TaskLedgerReplan {
@@ -153,6 +162,7 @@ pub struct TaskLedgerReplan {
     retired_step_ids: Vec<TaskStepId>,
     added_step_ids: Vec<TaskStepId>,
     created_at: TaskLedgerTimestamp,
+    cause: TaskLedgerReplanCause,
 }
 
 impl TaskLedgerReplan {
@@ -194,7 +204,27 @@ impl TaskLedgerReplan {
             retired_step_ids,
             added_step_ids,
             created_at,
+            cause: TaskLedgerReplanCause::ErrorCorrection,
         })
+    }
+
+    /// Restores the closed Core cause; ordinary legacy reconstruction remains ErrorCorrection.
+    pub fn with_cause(mut self, cause: TaskLedgerReplanCause) -> Result<Self, TaskLedgerError> {
+        if cause == TaskLedgerReplanCause::HorizonExtension
+            && (!self.retired_step_ids.is_empty()
+                || self.added_step_ids.is_empty()
+                || self.added_step_ids.len() > 3)
+        {
+            return Err(TaskLedgerError::InvalidReplanHistory);
+        }
+        self.cause = cause;
+        Ok(self)
+    }
+
+    /// Returns the Core cause, independent of free-form rationale or model assertions.
+    #[must_use]
+    pub const fn cause(&self) -> TaskLedgerReplanCause {
+        self.cause
     }
 
     /// Returns the plan revision produced by this replan.
@@ -241,6 +271,7 @@ impl fmt::Debug for TaskLedgerReplan {
             .field("revision", &self.revision)
             .field("previous_revision", &self.previous_revision)
             .field("reason", &self.reason)
+            .field("cause", &self.cause)
             .field("retired_step_ids", &self.retired_step_ids)
             .field("added_step_ids", &self.added_step_ids)
             .field("created_at", &self.created_at)
@@ -282,6 +313,7 @@ pub struct TaskLedger {
     revision: TaskLedgerRevision,
     steps: BTreeMap<TaskStepId, TaskStep>,
     replans: Vec<TaskLedgerReplan>,
+    pending_planning: Option<Box<PendingPlanning>>,
     created_at: TaskLedgerTimestamp,
     updated_at: TaskLedgerTimestamp,
 }
@@ -316,6 +348,7 @@ impl TaskLedger {
             revision: TaskLedgerRevision::INITIAL,
             steps,
             replans: Vec::new(),
+            pending_planning: None,
             created_at,
             updated_at: created_at,
         };
@@ -440,6 +473,7 @@ impl TaskLedger {
             revision,
             steps: step_map,
             replans,
+            pending_planning: None,
             created_at,
             updated_at,
         };
@@ -511,6 +545,9 @@ impl TaskLedger {
         run_id: AgentRunId,
         started_at: TaskLedgerTimestamp,
     ) -> Result<(), TaskLedgerError> {
+        if self.pending_planning.is_some() {
+            return Err(TaskLedgerError::PlanningAlreadyPending);
+        }
         self.ensure_time(started_at)?;
         if self.has_active_step() {
             return Err(TaskLedgerError::ActiveStepExists);
@@ -757,6 +794,112 @@ impl TaskLedger {
         Ok(())
     }
 
+    /// Returns the durable planning handoff, including an inert terminal run's audit marker.
+    #[must_use]
+    pub fn pending_planning(&self) -> Option<&PendingPlanning> {
+        self.pending_planning.as_deref()
+    }
+
+    /// Attaches a restored marker after intrinsic validation only. Run/Event checks belong
+    /// after both writes; this method intentionally performs no persistence lookups.
+    pub fn with_pending_planning(
+        mut self,
+        pending: PendingPlanning,
+    ) -> Result<Self, TaskLedgerError> {
+        pending.validate_for_ledger(&self)?;
+        self.pending_planning = Some(Box::new(pending));
+        Ok(self)
+    }
+
+    /// Checkpoints one Core-bound request after the current horizon is wholly completed.
+    pub fn request_horizon_planning(
+        &mut self,
+        pending: PendingPlanning,
+        at: TaskLedgerTimestamp,
+    ) -> Result<(), TaskLedgerError> {
+        self.ensure_time(at)?;
+        if self.pending_planning.is_some() {
+            return Err(TaskLedgerError::PlanningAlreadyPending);
+        }
+        pending.validate_for_ledger(self)?;
+        if !matches!(pending.stage(), PendingPlanningStage::NeedsPlan)
+            || self.has_active_step()
+            || self
+                .steps
+                .values()
+                .filter(|step| step.is_active_plan_step())
+                .any(|step| step.status() != TaskStepStatus::Completed)
+        {
+            return Err(TaskLedgerError::InvalidPendingPlanning);
+        }
+        self.pending_planning = Some(Box::new(pending));
+        self.updated_at = at;
+        Ok(())
+    }
+
+    /// Appends one through three admitted definitions without retiring prior history.
+    /// The marker is retained until activation; provider work is not performed here.
+    pub fn append_horizon(
+        &mut self,
+        additions: Vec<TaskStepDefinition>,
+        reason: TaskReplanReason,
+        at: TaskLedgerTimestamp,
+    ) -> Result<TaskLedgerRevision, TaskLedgerError> {
+        let pending = self
+            .pending_planning
+            .clone()
+            .ok_or(TaskLedgerError::PlanningNotPending)?;
+        if !matches!(pending.stage(), PendingPlanningStage::NeedsPlan)
+            || self.has_active_step()
+            || self
+                .steps
+                .values()
+                .filter(|step| step.is_active_plan_step())
+                .any(|step| step.status() != TaskStepStatus::Completed)
+        {
+            return Err(TaskLedgerError::InvalidPendingPlanning);
+        }
+        if additions.is_empty() || additions.len() > 3 {
+            return Err(TaskLedgerError::InvalidHorizonStepCount(additions.len()));
+        }
+        let mut candidate = self.clone();
+        candidate.pending_planning = None;
+        let revision = candidate.replan(Vec::new(), additions, reason, at)?;
+        let record = candidate
+            .replans
+            .last_mut()
+            .ok_or(TaskLedgerError::InvalidReplanHistory)?;
+        record.cause = TaskLedgerReplanCause::HorizonExtension;
+        let added = record.added_step_ids.clone();
+        candidate.pending_planning = Some(Box::new(pending.appended(revision, added)?));
+        *self = candidate;
+        Ok(revision)
+    }
+
+    /// Starts an actual appended Ready step and consumes only its exact owning marker.
+    pub fn start_appended_horizon(
+        &mut self,
+        step_id: TaskStepId,
+        run_id: AgentRunId,
+        at: TaskLedgerTimestamp,
+    ) -> Result<(), TaskLedgerError> {
+        let pending = self
+            .pending_planning
+            .as_ref()
+            .ok_or(TaskLedgerError::PlanningNotPending)?;
+        let PendingPlanningStage::PlanAppended { added_step_ids, .. } = pending.stage() else {
+            return Err(TaskLedgerError::InvalidPendingPlanning);
+        };
+        if pending.run_id() != run_id || !added_step_ids.contains(&step_id) {
+            return Err(TaskLedgerError::InvalidPendingPlanning);
+        }
+        let mut candidate = self.clone();
+        candidate.pending_planning = None;
+        candidate.start_step(step_id, run_id, at)?;
+        *self = candidate;
+        Ok(())
+    }
+
     /// Retires selected future steps and adds immutable replacements as the next plan revision.
     pub fn replan(
         &mut self,
@@ -765,6 +908,9 @@ impl TaskLedger {
         reason: TaskReplanReason,
         replanned_at: TaskLedgerTimestamp,
     ) -> Result<TaskLedgerRevision, TaskLedgerError> {
+        if self.pending_planning.is_some() {
+            return Err(TaskLedgerError::PlanningAlreadyPending);
+        }
         self.ensure_time(replanned_at)?;
         if self.has_active_step() {
             return Err(TaskLedgerError::ActiveStepExists);
@@ -830,6 +976,7 @@ impl TaskLedger {
             retired_step_ids,
             added_step_ids: added_ids,
             created_at: replanned_at,
+            cause: TaskLedgerReplanCause::ErrorCorrection,
         });
         candidate.revision = revision;
         candidate.updated_at = replanned_at;
@@ -1025,6 +1172,14 @@ fn is_acyclic(
 /// Invalid Task Ledger graph, replan, evidence invalidation, or state transition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskLedgerError {
+    /// A pending Core job must be consumed through its checked horizon operations.
+    PlanningAlreadyPending,
+    /// No pending horizon can be appended or activated.
+    PlanningNotPending,
+    /// Planning identity, revision, stage or retained history is inconsistent.
+    InvalidPendingPlanning,
+    /// A bounded next preview must contain one through three definitions.
+    InvalidHorizonStepCount(usize),
     /// Current plan must contain between one and 256 active steps.
     InvalidActiveStepCount(usize),
     /// Historical retention exceeded the fixed 1,024-step bound.
@@ -1082,6 +1237,17 @@ pub enum TaskLedgerError {
 impl fmt::Display for TaskLedgerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::PlanningAlreadyPending => {
+                formatter.write_str("Task Ledger already has pending planning")
+            }
+            Self::PlanningNotPending => formatter.write_str("Task Ledger has no pending planning"),
+            Self::InvalidPendingPlanning => {
+                formatter.write_str("Task Ledger planning checkpoint is invalid")
+            }
+            Self::InvalidHorizonStepCount(count) => write!(
+                formatter,
+                "Task Ledger horizon has {count} steps; expected 1 through 3"
+            ),
             Self::InvalidActiveStepCount(count) => write!(
                 formatter,
                 "Task Ledger has {count} active steps; expected 1 through {MAX_ACTIVE_STEPS}"

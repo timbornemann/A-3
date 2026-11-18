@@ -1018,7 +1018,10 @@ fn validate_combined_approval(
     action: &a3_application::AgentApprovalAction,
 ) -> Result<(), Box<dyn Error>> {
     match action {
-        a3_application::AgentApprovalAction::Machine { .. } => {
+        a3_application::AgentApprovalAction::Machine { .. }
+        | a3_application::AgentApprovalAction::LoopbackStart { .. }
+        | a3_application::AgentApprovalAction::LoopbackStartup { .. }
+        | a3_application::AgentApprovalAction::LoopbackProbe { .. } => {
             Err("unexpected machine scope in project fixture".into())
         }
         a3_application::AgentApprovalAction::Patch(patch) => {

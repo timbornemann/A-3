@@ -173,6 +173,18 @@ impl ProductionAgentRunExecutor {
         {
             return Err(AgentRunExecutionFailure::AnchorsChanged);
         }
+        if stored.ledger().steps().any(|step| {
+            step.is_active_plan_step()
+                && step.definition().verification_spec().method()
+                    == a3_domain::VerificationMethod::LoopbackHttp
+        }) {
+            return Err(AgentRunExecutionFailure::InvalidState);
+        }
+        // Partial source goals remain durable intake state; no execution owner may
+        // acquire providers, resume pending actions or touch tools before intake is complete.
+        a3_application::AdmitAgentGoalExecution
+            .execute_task(task.goal_contract(), stored.ledger())
+            .map_err(|_| AgentRunExecutionFailure::InvalidState)?;
         let (mut ledger, mut ledger_version) = stored.into_parts();
         let (mut step_id, run_id) =
             if let AgentRunExecutionTrigger::MachineRecoveryAcknowledged(scope) = request.trigger()
@@ -1039,7 +1051,14 @@ impl ProductionAgentRunExecutor {
         reason: TaskReplanReason,
         control: &AgentAttemptControl<'_>,
     ) -> Result<TaskStepId, AgentRunExecutionFailure> {
-        if ledger.replans().len() >= MAX_AUTOMATIC_REPLANS_PER_RUN
+        if ledger
+            .replans()
+            .iter()
+            .filter(|revision| {
+                revision.cause() == a3_domain::TaskLedgerReplanCause::ErrorCorrection
+            })
+            .count()
+            >= MAX_AUTOMATIC_REPLANS_PER_RUN
             || self
                 .replan_seen_at_snapshot(project, run, ledger, control)
                 .await?
@@ -1248,6 +1267,9 @@ impl ProductionAgentRunExecutor {
             | MutationControllerOutcome::MachineObserved(_) => false,
             MutationControllerOutcome::StepVerified { .. } => false,
             MutationControllerOutcome::ReplanRequired { .. } => false,
+            MutationControllerOutcome::BoundVerificationReady { .. } => {
+                return Err(AgentRunExecutionFailure::Unavailable);
+            }
             MutationControllerOutcome::Denied
             | MutationControllerOutcome::ReconciliationRequired { .. }
             | MutationControllerOutcome::Stopped { .. } => {
@@ -1814,6 +1836,8 @@ fn repeated_replan_revisions(ledger: &TaskLedger) -> BTreeSet<a3_domain::TaskLed
                     step.definition().intended_outcome() == trigger.definition().intended_outcome()
                         && step.definition().acceptance_criteria()
                             == trigger.definition().acceptance_criteria()
+                        && step.definition().addressed_criteria()
+                            == trigger.definition().addressed_criteria()
                 })
             })
         })
@@ -1860,6 +1884,8 @@ fn is_deferred_verification_binding(
                 added.definition().intended_outcome() == retired.definition().intended_outcome()
                     && added.definition().acceptance_criteria()
                         == retired.definition().acceptance_criteria()
+                    && added.definition().addressed_criteria()
+                        == retired.definition().addressed_criteria()
                     && matches!(
                         added.definition().verification_spec().target(),
                         VerificationTarget::Command { .. } | VerificationTarget::Test { .. }
@@ -1913,7 +1939,7 @@ fn automatic_replan_steps(
             .map(|parent| replacement_ids.get(&parent).copied().unwrap_or(parent));
         let dependencies =
             remap_dependencies(definition.dependencies(), &replacement_ids, &retire_set)?;
-        let replacement = attach_acceptance_criteria(
+        let replacement = attach_criterion_coverage(
             TaskStepDefinition::new(
                 replacement_id,
                 parent_step_id,
@@ -1933,6 +1959,7 @@ fn automatic_replan_steps(
                     .verification_spec()
                     .reidentified(VerificationSpecId::from_bytes(random_id()?)),
             ),
+            definition.addressed_criteria(),
             definition.acceptance_criteria(),
         )
         .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
@@ -2009,7 +2036,7 @@ fn deferred_binding_steps(
                 .verification_spec()
                 .reidentified(VerificationSpecId::from_bytes(random_id()?))
         };
-        let replacement = attach_acceptance_criteria(
+        let replacement = attach_criterion_coverage(
             TaskStepDefinition::new(
                 replacement_id,
                 parent_step_id,
@@ -2019,6 +2046,7 @@ fn deferred_binding_steps(
                 definition.expected_evidence().to_vec(),
                 verification_spec,
             ),
+            definition.addressed_criteria(),
             definition.acceptance_criteria(),
         )
         .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
@@ -2027,15 +2055,16 @@ fn deferred_binding_steps(
     Ok((retire_step_ids, additions))
 }
 
-fn attach_acceptance_criteria(
+fn attach_criterion_coverage(
     definition: Result<TaskStepDefinition, a3_domain::TaskStepDefinitionError>,
-    criteria: &[a3_domain::AcceptanceCriterionId],
+    addresses: &[a3_domain::AcceptanceCriterionId],
+    proves: &[a3_domain::AcceptanceCriterionId],
 ) -> Result<TaskStepDefinition, a3_domain::TaskStepDefinitionError> {
     let definition = definition?;
-    if criteria.is_empty() {
+    if addresses.is_empty() && proves.is_empty() {
         Ok(definition)
     } else {
-        definition.with_acceptance_criteria(criteria.to_vec())
+        definition.with_criterion_coverage(addresses.to_vec(), proves.to_vec())
     }
 }
 
@@ -3130,16 +3159,25 @@ mod tests {
     fn deferred_test_binding_replaces_the_ready_step_and_remaps_its_successor()
     -> Result<(), Box<dyn std::error::Error>> {
         let criterion = AcceptanceCriterionId::from_bytes([31; 32]);
+        let addressed = AcceptanceCriterionId::from_bytes([38; 32]);
         let goal = GoalContract::initial(
             TaskId::from_bytes([32; 32]),
             GoalContractDraft::new(
                 GoalObjective::try_from_string("create and test the server".to_owned())?,
-                vec![AcceptanceCriterion::new(
-                    criterion,
-                    AcceptanceCriterionStatement::try_from_string(
-                        "the server works and its tests pass".to_owned(),
-                    )?,
-                )],
+                vec![
+                    AcceptanceCriterion::new(
+                        criterion,
+                        AcceptanceCriterionStatement::try_from_string(
+                            "the server works and its tests pass".to_owned(),
+                        )?,
+                    ),
+                    AcceptanceCriterion::new(
+                        addressed,
+                        AcceptanceCriterionStatement::try_from_string(
+                            "preserve the staged scaffold".to_owned(),
+                        )?,
+                    ),
+                ],
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
@@ -3167,7 +3205,7 @@ mod tests {
                 )?,
             ),
         )?
-        .with_acceptance_criteria(vec![criterion])?;
+        .with_criterion_coverage(vec![addressed], vec![criterion])?;
         let successor = step(
             successor_id,
             vec![StepDependency::new(deferred_id)],
@@ -3194,7 +3232,23 @@ mod tests {
                 .collect(),
             vec![CommandDiscoveryEvidence::File(revision)],
         )?;
+        let reason = TaskReplanReason::try_from_string(
+            "revisit the bounded implementation slice".to_owned(),
+        )?;
+        let (_, replanned) = automatic_replan_steps(&ledger, &reason)?;
+        let copy = replanned
+            .iter()
+            .find(|step| step.intended_outcome().as_str() == "run the created tests")
+            .ok_or("replanned step missing")?;
+        assert_eq!(copy.addressed_criteria(), &[addressed]);
+        assert_eq!(copy.acceptance_criteria(), &[criterion]);
         let (retired, additions) = deferred_binding_steps(&ledger, deferred_id, &command)?;
+        let copy = additions
+            .iter()
+            .find(|step| step.intended_outcome().as_str() == "run the created tests")
+            .ok_or("bound step missing")?;
+        assert_eq!(copy.addressed_criteria(), &[addressed]);
+        assert_eq!(copy.acceptance_criteria(), &[criterion]);
         assert_eq!(retired.len(), 2);
         let replacement = additions
             .iter()

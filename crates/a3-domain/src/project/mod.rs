@@ -1,3 +1,11 @@
+mod goal_intake_review;
+pub use goal_intake_review::{
+    GoalIntakeFinding, GoalIntakeFindingKind, GoalIntakeOpenQuestion, GoalIntakeQuestionDraft,
+    GoalIntakeQuestionId, GoalIntakeQuestionKind, GoalIntakeReview, GoalIntakeReviewBatch,
+    GoalIntakeReviewBatchProposal, GoalIntakeReviewError, GoalIntakeReviewRevision,
+    MAX_GOAL_INTAKE_BATCH_FINDINGS, MAX_GOAL_INTAKE_BATCH_QUESTIONS, MAX_GOAL_INTAKE_QUESTIONS,
+    MAX_GOAL_INTAKE_REVIEW_BATCHES, MAX_GOAL_INTAKE_REVIEW_PATH_BYTES,
+};
 mod agent_action;
 mod agent_machine_action;
 mod agent_permissions;
@@ -37,7 +45,13 @@ pub use function_flow_read::{FunctionFlowReadRequest, FunctionFlowReadView};
 mod git;
 pub use function_flow::StaticImportBinding;
 pub use function_flow::{FlowProcess, FlowProcessMode, FlowProcessTarget};
+mod criterion_evidence;
 mod goal_contract;
+mod goal_intake;
+mod goal_original_binding;
+mod goal_original_coverage;
+mod goal_original_entry;
+mod goal_original_request;
 mod graph;
 mod graph_retrieval;
 mod id;
@@ -47,6 +61,7 @@ mod index_trace;
 mod indexed_function_flow;
 mod invalidation;
 mod language;
+mod python_integer_translation;
 pub use indexed_function_flow::{FlowCallLink, FunctionFlowBatch, IndexedFunctionFlow};
 mod lexical_retrieval;
 mod model;
@@ -68,12 +83,15 @@ pub use research_work::{
     ResearchQuestionId, ResearchQuestionKind, ResearchQuestionPriority, ResearchQuestionStatus,
     ResearchResult, ResearchResultKind, ResearchResultSource, ResearchWorkError, ResearchWorkState,
 };
+mod pending_planning;
 mod run_memory;
 mod secret;
 mod semantic_card;
 mod slash_command;
 mod snapshot;
 mod task_ledger;
+pub use pending_planning::{PendingPlanning, PendingPlanningStage};
+mod loopback_http;
 mod task_lens;
 mod task_step;
 mod task_verification;
@@ -148,6 +166,9 @@ pub use context_pack::{
     ContextBudgetError, ContextBudgetPlan, ContextBudgetUsage, ContextCompilerPolicyVersion,
     ContextDigest, ContextSection,
 };
+pub use criterion_evidence::{
+    CriterionEvidenceRequirement, CriterionOrigin, CriterionVerificationMismatch,
+};
 pub use deep_map::{
     CoverageRequirement, DeepMapPlanError, DeepMapPlanner, ExpectedInformationGain,
     ExpectedInformationGainError, ExplorationStopPolicy, ExplorationStopReason,
@@ -197,6 +218,14 @@ pub use goal_contract::{
     GoalContractRevisionFailure, GoalContractTextError, GoalContractTextField,
     GoalContractTextViolation, GoalContractTimestamp, GoalContractTimestampError, GoalObjective,
     GoalRevisionReason, NonGoal, SuccessVerification, UserDecision,
+};
+pub use goal_intake::{GoalIntakeError, PendingGoalIntake};
+pub use goal_original_binding::GoalOriginalBindingError;
+pub use goal_original_coverage::{GoalOriginalCoverage, GoalOriginalCoverageError};
+pub use goal_original_entry::{GoalOriginalEntry, GoalOriginalEntryKind, GoalOriginalEntryOrdinal};
+pub use goal_original_request::{
+    GoalOriginalDigest, GoalOriginalError, GoalOriginalRange, GoalOriginalRequest,
+    MAX_GOAL_ORIGINAL_BYTES, MAX_GOAL_ORIGINAL_PART_BYTES, MAX_GOAL_ORIGINAL_PARTS,
 };
 pub use graph::{
     Centrality, CentralityError, EvidenceRef, GraphEdge, GraphEndpoint, GraphSymbol,
@@ -248,6 +277,15 @@ pub use lexical_retrieval::{
     LexicalSearchPageSizeError, LexicalSearchPosition, LexicalSearchQuery, LexicalSearchSymbol,
     LexicalSearchTarget, LexicalSearchTerm, LexicalSearchTermError,
 };
+pub use loopback_http::{
+    LOOPBACK_CLEANUP_RESERVE_MILLIS, LOOPBACK_DEFAULT_PORT, LoopbackExpectedBody,
+    LoopbackFailureExitCode, LoopbackHeaderChecks, LoopbackHttpCheck, LoopbackHttpError,
+    LoopbackHttpEvidence, LoopbackHttpEvidenceContext, LoopbackHttpMismatch,
+    LoopbackHttpMismatchDiagnostic, LoopbackHttpObservation, LoopbackHttpProcess,
+    LoopbackHttpRecipe, LoopbackMethod, LoopbackProbe, LoopbackProcessSettings, LoopbackStart,
+    LoopbackStartupEvidence, LoopbackStartupPhase, MAX_LOOPBACK_BODY_BYTES, MAX_LOOPBACK_PROBES,
+    MAX_LOOPBACK_PROCESS_MILLIS, loopback_script_path,
+};
 pub use model::{ModelId, ModelIdentityError, ModelIdentityKind, ModelProfileId, ModelProviderId};
 pub use model_profile::{
     ModelCapabilities, ModelContextLimit, ModelContextLimitError, ModelOutputLimit,
@@ -294,6 +332,10 @@ pub use process::{
     ProcessRunResultError, ProcessSpec, ProcessSpecError, ProcessSpecSchemaVersion, ProcessStream,
     ProcessTermination, ProcessTimeout, ProcessTimeoutError,
 };
+pub use python_integer_translation::{
+    MAX_PYTHON_TRANSLATION_SOURCE_BYTES, PythonIntegerTranslation, PythonIntegerTranslationError,
+    PythonIntegerTranslationWitness,
+};
 pub use retrieval::{
     ExactSearchCursor, ExactSearchCursorError, ExactSearchExplanation, ExactSearchHit,
     ExactSearchHitError, ExactSearchPage, ExactSearchPageError, ExactSearchPageSize,
@@ -337,8 +379,9 @@ pub use snapshot::{
     WorktreeGeneration, WorktreeGenerationError,
 };
 pub use task_ledger::{
-    TaskLedger, TaskLedgerError, TaskLedgerInvalidation, TaskLedgerReplan, TaskLedgerRevision,
-    TaskLedgerRevisionError, TaskReplanReason, TaskReplanReasonError, TaskReplanReasonViolation,
+    TaskLedger, TaskLedgerError, TaskLedgerInvalidation, TaskLedgerReplan, TaskLedgerReplanCause,
+    TaskLedgerRevision, TaskLedgerRevisionError, TaskReplanReason, TaskReplanReasonError,
+    TaskReplanReasonViolation,
 };
 pub use task_lens::{
     TaskLens, TaskLensClaim, TaskLensClaimError, TaskLensCompileError, TaskLensDiagnosticKind,
@@ -347,9 +390,9 @@ pub use task_lens::{
     TaskLensTarget, TaskLensTokenBudget, TaskLensTokenBudgetError, TaskLensZoomLevel,
 };
 pub use task_step::{
-    StepDependency, TaskStep, TaskStepAttempt, TaskStepAttemptDetails, TaskStepAttemptNumber,
-    TaskStepAttemptNumberError, TaskStepAttemptOutcome, TaskStepAttemptTiming,
-    TaskStepBlockingReason, TaskStepCancellationReason, TaskStepDefinition,
+    PlannedFileAddition, StepDependency, TaskStep, TaskStepAttempt, TaskStepAttemptDetails,
+    TaskStepAttemptNumber, TaskStepAttemptNumberError, TaskStepAttemptOutcome,
+    TaskStepAttemptTiming, TaskStepBlockingReason, TaskStepCancellationReason, TaskStepDefinition,
     TaskStepDefinitionError, TaskStepFailureReason, TaskStepMaterializedState, TaskStepOutcome,
     TaskStepRationale, TaskStepResultSummary, TaskStepStaleCause, TaskStepStatus,
     TaskStepTextError, TaskStepTextViolation, TaskStepTransitionError,

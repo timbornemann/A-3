@@ -18,9 +18,14 @@ serde_json.workspace = true
 rustix.workspace = true
 
 [dev-dependencies]
+a3-repo-index.workspace = true
+a3-workspace.workspace = true
 a3-context.workspace = true
+a3-provider.workspace = true
 a3-storage-contract-tests.workspace = true
 futures.workspace = true
+sha2 = "=0.10.9"
+tokio = { workspace = true, features = ["rt", "time"] }
 
 [lints]
 workspace = true

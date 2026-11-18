@@ -2,10 +2,10 @@ use super::{
     AgentRunId, DiagnosticPolicy, DiffInvariantMode, DiscoveredCommandId, FileDelta, FileRevision,
     IndexRunId, PatchActionDigest, PatchChange, PatchChangeSet, PolicyDecisionId, PolicyResourceId,
     ProcessDuration, ProcessOutputCapture, ProcessOutputDigest, ProcessOutputRedaction,
-    ProcessRunResult, ProcessTermination, PublishedIndex, RepositoryFileState, RepositoryPath,
-    SnapshotDelta, SnapshotId, TaskEvidenceId, TaskLedgerTimestamp, TestCaseSelector, ToolRunId,
-    VerificationMethod, VerificationRunId, VerificationSpec, VerificationSpecId,
-    VerificationTarget,
+    ProcessRunResult, ProcessTermination, PublishedIndex, PythonIntegerTranslationWitness,
+    RepositoryFileState, RepositoryPath, SnapshotDelta, SnapshotId, SourceRange, TaskEvidenceId,
+    TaskLedgerTimestamp, TestCaseSelector, ToolRunId, VerificationMethod, VerificationRunId,
+    VerificationSpec, VerificationSpecId, VerificationTarget,
 };
 use std::error::Error;
 use std::fmt;
@@ -552,6 +552,7 @@ pub struct TestEvidence {
     id: TaskEvidenceId,
     command: CommandEvidence,
     cases: Vec<TestCaseEvidence>,
+    python_integer_translation: Option<PythonIntegerTranslationWitness>,
 }
 
 impl TestEvidence {
@@ -573,7 +574,30 @@ impl TestEvidence {
             return Err(VerificationEvidenceBuildError::DuplicateTestCase);
         }
         let id = derive_test_evidence_id(command.id(), &cases);
-        Ok(Self { id, command, cases })
+        Ok(Self {
+            id,
+            command,
+            cases,
+            python_integer_translation: None,
+        })
+    }
+
+    /// Binds a current source witness to the same exact process proof and reported cases.
+    #[must_use]
+    pub fn with_python_integer_translation(
+        mut self,
+        witness: PythonIntegerTranslationWitness,
+    ) -> Self {
+        let test_id = derive_test_evidence_id(self.command.id(), &self.cases);
+        self.id = derive_guarded_test_evidence_id(test_id, &witness);
+        self.python_integer_translation = Some(witness);
+        self
+    }
+
+    /// Returns the additional closed source proof, when the adapter supplied one.
+    #[must_use]
+    pub const fn python_integer_translation(&self) -> Option<&PythonIntegerTranslationWitness> {
+        self.python_integer_translation.as_ref()
     }
 
     /// Returns the test evidence identity, distinct from its underlying command evidence.
@@ -1060,6 +1084,8 @@ pub enum VerificationEvidence {
     Diagnostic(DiagnosticEvidence),
     /// Explicit user confirmation of one exact scope.
     UserConfirmation(UserConfirmationEvidence),
+    /// Complete ordered observations from one settled local HTTP recipe.
+    LoopbackHttp(super::LoopbackHttpEvidence),
 }
 
 impl VerificationEvidence {
@@ -1072,6 +1098,7 @@ impl VerificationEvidence {
             Self::Diff(evidence) => evidence.id(),
             Self::Diagnostic(evidence) => evidence.id(),
             Self::UserConfirmation(evidence) => evidence.id(),
+            Self::LoopbackHttp(evidence) => evidence.id(),
         }
     }
 
@@ -1084,6 +1111,7 @@ impl VerificationEvidence {
             Self::Diff(evidence) => evidence.spec_id(),
             Self::Diagnostic(evidence) => evidence.command().spec_id(),
             Self::UserConfirmation(evidence) => evidence.spec_id(),
+            Self::LoopbackHttp(evidence) => evidence.context().spec_id,
         }
     }
 
@@ -1096,6 +1124,7 @@ impl VerificationEvidence {
             Self::Diff(evidence) => evidence.run_id(),
             Self::Diagnostic(evidence) => evidence.command().run_id(),
             Self::UserConfirmation(evidence) => evidence.run_id(),
+            Self::LoopbackHttp(evidence) => evidence.context().run_id,
         }
     }
 
@@ -1108,6 +1137,7 @@ impl VerificationEvidence {
             Self::Diff(evidence) => evidence.verification_run_id(),
             Self::Diagnostic(evidence) => evidence.command().verification_run_id(),
             Self::UserConfirmation(evidence) => evidence.verification_run_id(),
+            Self::LoopbackHttp(evidence) => evidence.context().verification_run_id,
         }
     }
 
@@ -1120,6 +1150,7 @@ impl VerificationEvidence {
             Self::Diff(evidence) => evidence.snapshot_id(),
             Self::Diagnostic(evidence) => evidence.command().snapshot_id(),
             Self::UserConfirmation(evidence) => evidence.snapshot_id(),
+            Self::LoopbackHttp(evidence) => evidence.context().snapshot_id,
         }
     }
 
@@ -1132,6 +1163,7 @@ impl VerificationEvidence {
             Self::Diff(_) => VerificationMethod::DiffInvariant,
             Self::Diagnostic(_) => VerificationMethod::Diagnostic,
             Self::UserConfirmation(_) => VerificationMethod::UserConfirm,
+            Self::LoopbackHttp(_) => VerificationMethod::LoopbackHttp,
         }
     }
 
@@ -1149,7 +1181,7 @@ impl VerificationEvidence {
             }
             Self::Diff(evidence) => Some(evidence.dependencies()),
             Self::Diagnostic(evidence) => Some(evidence.command().dependencies()),
-            Self::UserConfirmation(_) => None,
+            Self::UserConfirmation(_) | Self::LoopbackHttp(_) => None,
         }
     }
 }
@@ -1168,6 +1200,24 @@ impl EvidenceFreshness {
     #[must_use]
     pub fn evaluate(evidence: &VerificationEvidence, current: &PublishedIndex) -> Self {
         let current_graph = current.publication().graph();
+        if let VerificationEvidence::LoopbackHttp(http) = evidence {
+            if evidence.snapshot_id() != current_graph.snapshot_id() {
+                return Self::Stale(EvidenceFreshnessFailure::SnapshotChanged);
+            }
+            if !current_graph.files().contains(http.script()) {
+                return Self::Stale(EvidenceFreshnessFailure::DependencyChanged);
+            }
+        }
+        if let VerificationEvidence::Test(test) = evidence
+            && let Some(witness) = test.python_integer_translation()
+        {
+            if evidence.snapshot_id() != current_graph.snapshot_id() {
+                return Self::Stale(EvidenceFreshnessFailure::SnapshotChanged);
+            }
+            if !current_graph.files().contains(witness.revision()) {
+                return Self::Stale(EvidenceFreshnessFailure::DependencyChanged);
+            }
+        }
         let Some(dependencies) = evidence.dependencies() else {
             return if evidence.snapshot_id() == current_graph.snapshot_id() {
                 Self::Fresh
@@ -1243,7 +1293,19 @@ impl VerificationEvidenceEvaluation {
                     ..
                 },
                 VerificationEvidence::Test(actual),
-            ) => evaluate_test(*command_id, selector, minimum_cases.get(), actual),
+            ) => {
+                let result = evaluate_test(*command_id, selector, minimum_cases.get(), actual);
+                if result == Self::Passed
+                    && actual
+                        .python_integer_translation()
+                        .map(PythonIntegerTranslationWitness::requirement)
+                        != spec.python_integer_translation()
+                {
+                    Self::Failed(VerificationEvidenceFailure::SourceProofMismatch)
+                } else {
+                    result
+                }
+            }
             (VerificationTarget::DiffInvariant(invariant), VerificationEvidence::Diff(actual)) => {
                 evaluate_diff(invariant.mode(), invariant.paths(), actual)
             }
@@ -1259,6 +1321,16 @@ impl VerificationEvidenceEvaluation {
             ) if *scope_id == actual.scope_id() => Self::Passed,
             (VerificationTarget::UserConfirm { .. }, VerificationEvidence::UserConfirmation(_)) => {
                 Self::Failed(VerificationEvidenceFailure::ConfirmationScopeMismatch)
+            }
+            (
+                VerificationTarget::LoopbackHttp(recipe),
+                VerificationEvidence::LoopbackHttp(actual),
+            ) => {
+                if actual.matches(recipe) {
+                    Self::Passed
+                } else {
+                    Self::Failed(VerificationEvidenceFailure::LoopbackHttpMismatch)
+                }
             }
             _ => Self::Failed(VerificationEvidenceFailure::EvidenceKindMismatch),
         }
@@ -1284,6 +1356,8 @@ pub enum VerificationEvidenceFailure {
     TooFewPassingTestCases,
     /// At least one selected structured test case failed.
     SelectedTestCaseFailed,
+    /// The otherwise successful test did not carry the exact required source proof.
+    SourceProofMismatch,
     /// A partial patch action cannot satisfy a final diff invariant.
     IncompleteChangeSet,
     /// Actual changed paths did not satisfy the declared relation.
@@ -1294,6 +1368,8 @@ pub enum VerificationEvidenceFailure {
     WarningDiagnosticsPresent,
     /// Confirmation was granted for another scope.
     ConfirmationScopeMismatch,
+    /// The exact HTTP recipe or one required response did not match.
+    LoopbackHttpMismatch,
 }
 
 /// Invalid structured evidence supplied by an adapter or patch boundary.
@@ -1511,6 +1587,37 @@ fn derive_test_evidence_id(
     TaskEvidenceId::from_bytes(*hasher.finalize().as_bytes())
 }
 
+fn derive_guarded_test_evidence_id(
+    test_id: TaskEvidenceId,
+    witness: &PythonIntegerTranslationWitness,
+) -> TaskEvidenceId {
+    let mut hasher = blake3::Hasher::new_derive_key("a3.guarded-python-test-evidence.v1");
+    let requirement = witness.requirement();
+    hasher.update(test_id.as_bytes());
+    hasher.update(&[PythonIntegerTranslationWitness::VERSION]);
+    update_bytes(&mut hasher, requirement.path().as_bytes());
+    update_bytes(&mut hasher, requirement.function().as_str().as_bytes());
+    hasher.update(&requirement.delta().to_le_bytes());
+    hasher.update(witness.revision().content_hash().as_bytes());
+    for range in [witness.declaration(), witness.expression()] {
+        update_source_range(&mut hasher, range);
+    }
+    TaskEvidenceId::from_bytes(*hasher.finalize().as_bytes())
+}
+
+fn update_source_range(hasher: &mut blake3::Hasher, range: SourceRange) {
+    for field in [
+        range.start_byte(),
+        range.end_byte(),
+        range.start_position().row(),
+        range.start_position().column(),
+        range.end_position().row(),
+        range.end_position().column(),
+    ] {
+        hasher.update(&field.to_le_bytes());
+    }
+}
+
 fn derive_diff_evidence_id(evidence: &DiffEvidence) -> TaskEvidenceId {
     let mut hasher = blake3::Hasher::new_derive_key("a3.diff-evidence.v1");
     hasher.update(evidence.verification_run_id.as_bytes());
@@ -1602,8 +1709,9 @@ mod tests {
         IndexRunSequence, IndexRunStatus, LinkedGraph, MinimumTestCaseCount, ModulePolicyVersion,
         ModuleProjection, ModuleSymbolSet, PatchAction, PatchActionSchemaVersion, PatchAdd,
         PatchFileContent, PatchOperation, PatchRationale, ProcessExit, ProcessOutputContent,
-        ProcessStream, RankProjection, RankingPolicyVersion, RepositoryCard, TaskStepId,
-        TestCaseSelectorName, VerificationRequirement, WorktreeId,
+        ProcessStream, PythonIntegerTranslation, RankProjection, RankingPolicyVersion,
+        RepositoryCard, SourcePosition, SymbolName, TaskStepId, TestCaseSelectorName,
+        VerificationRequirement, WorktreeId,
     };
 
     #[test]
@@ -1635,6 +1743,106 @@ mod tests {
         assert_eq!(
             VerificationEvidenceEvaluation::evaluate(&spec, &passed),
             VerificationEvidenceEvaluation::Passed
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn guarded_green_test_requires_exact_source_witness_and_current_revision()
+    -> Result<(), Box<dyn Error>> {
+        let path = RepositoryPath::try_from_bytes(b"offset.py".to_vec())?;
+        let function = SymbolName::try_from_string("offset".to_owned())?;
+        let translation = PythonIntegerTranslation::new(path.clone(), function.clone(), 1)?;
+        let command_id = DiscoveredCommandId::from_bytes([8; 32]);
+        let snapshot = SnapshotId::from_bytes([3; 32]);
+        let spec = VerificationSpec::test_with_python_integer_translation(
+            VerificationSpecId::from_bytes([2; 32]),
+            requirement()?,
+            command_id,
+            TestCaseSelector::All,
+            MinimumTestCaseCount::new(1)?,
+            crate::VerificationScope::Targeted,
+            translation.clone(),
+        );
+        assert_eq!(
+            spec.reidentified(VerificationSpecId::from_bytes([4; 32]))
+                .python_integer_translation(),
+            Some(&translation)
+        );
+        let green = TestEvidence::new(
+            successful_command(spec.id(), command_id, snapshot)?,
+            vec![TestCaseEvidence::new(
+                TestCaseName::try_from_string("test_example".to_owned())?,
+                TestCaseOutcome::Passed,
+            )],
+        )?;
+        let missing = VerificationEvidenceEvaluation::Failed(
+            VerificationEvidenceFailure::SourceProofMismatch,
+        );
+        assert_eq!(
+            VerificationEvidenceEvaluation::evaluate(
+                &spec,
+                &VerificationEvidence::Test(green.clone())
+            ),
+            missing
+        );
+
+        let revision = FileRevision::new(path.clone(), ContentHash::from_bytes([15; 32]));
+        let declaration =
+            SourceRange::new(0, 34, SourcePosition::new(0, 0), SourcePosition::new(1, 16))?;
+        let expression = SourceRange::new(
+            29,
+            34,
+            SourcePosition::new(1, 11),
+            SourcePosition::new(1, 16),
+        )?;
+        let witness = |predicate| {
+            PythonIntegerTranslationWitness::new(
+                predicate,
+                revision.clone(),
+                declaration,
+                expression,
+            )
+        };
+        let wrong =
+            green
+                .clone()
+                .with_python_integer_translation(witness(PythonIntegerTranslation::new(
+                    path.clone(),
+                    function,
+                    -1,
+                )?)?);
+        assert_eq!(
+            VerificationEvidenceEvaluation::evaluate(&spec, &VerificationEvidence::Test(wrong)),
+            missing
+        );
+
+        let guarded = green
+            .clone()
+            .with_python_integer_translation(witness(translation)?);
+        assert_ne!(guarded.id(), green.id());
+        let evidence = VerificationEvidence::Test(guarded);
+        assert_eq!(
+            VerificationEvidenceEvaluation::evaluate(&spec, &evidence),
+            VerificationEvidenceEvaluation::Passed
+        );
+        let current = published_index(snapshot, vec![revision.clone()])?;
+        assert_eq!(
+            EvidenceFreshness::evaluate(&evidence, &current),
+            EvidenceFreshness::Fresh
+        );
+        let changed = published_index(
+            snapshot,
+            vec![FileRevision::new(path, ContentHash::from_bytes([16; 32]))],
+        )?;
+        assert_eq!(
+            EvidenceFreshness::evaluate(&evidence, &changed),
+            EvidenceFreshness::Stale(EvidenceFreshnessFailure::DependencyChanged)
+        );
+        let later = published_index(SnapshotId::from_bytes([17; 32]), vec![revision])?;
+        assert_eq!(
+            EvidenceFreshness::evaluate(&evidence, &later),
+            EvidenceFreshness::Stale(EvidenceFreshnessFailure::SnapshotChanged)
         );
         Ok(())
     }
@@ -1923,6 +2131,147 @@ mod tests {
             capture(ProcessStream::Stdout)?,
             capture(ProcessStream::Stderr)?,
         )?)
+    }
+
+    #[test]
+    fn loopback_requires_the_exact_ordered_responses_and_current_script()
+    -> Result<(), Box<dyn Error>> {
+        use crate::{
+            CriterionEvidenceRequirement, CriterionVerificationMismatch, LoopbackExpectedBody,
+            LoopbackHeaderChecks, LoopbackHttpCheck, LoopbackHttpEvidence,
+            LoopbackHttpEvidenceContext, LoopbackHttpObservation, LoopbackHttpProcess,
+            LoopbackHttpRecipe, LoopbackMethod, LoopbackProbe, LoopbackProcessSettings,
+            LoopbackStart, ProcessOutputLimit, ProcessTimeout, TaskStepId, WorktreeId,
+        };
+        let path = RepositoryPath::try_from_bytes(b"server.py".to_vec())?;
+        let script = FileRevision::new(path.clone(), ContentHash::from_bytes([10; 32]));
+        let body = ContentHash::from_bytes(*blake3::hash(b"Healthy\n").as_bytes());
+        let plain = LoopbackHeaderChecks {
+            plain_utf8: true,
+            allow_get: false,
+        };
+        let allow = LoopbackHeaderChecks {
+            plain_utf8: false,
+            allow_get: true,
+        };
+        let checks = vec![
+            LoopbackHttpCheck::new(
+                LoopbackProbe::new(LoopbackMethod::Get, "/health".to_owned())?,
+                200,
+                LoopbackExpectedBody::Exact {
+                    hash: body,
+                    bytes: 8,
+                },
+                plain,
+            )?,
+            LoopbackHttpCheck::new(
+                LoopbackProbe::new(LoopbackMethod::Post, "/health".to_owned())?,
+                405,
+                LoopbackExpectedBody::AnyBounded,
+                allow,
+            )?,
+        ];
+        let port = std::num::NonZeroU16::try_from(8765)?;
+        let recipe =
+            LoopbackHttpRecipe::new(path.clone(), LoopbackStart::Default, port, checks.clone())?;
+        let changed = LoopbackHttpRecipe::new(path, LoopbackStart::Explicit, port, checks)?;
+        let context = LoopbackHttpEvidenceContext {
+            verification_run_id: VerificationRunId::from_bytes([1; 32]),
+            spec_id: VerificationSpecId::from_bytes([2; 32]),
+            run_id: AgentRunId::from_bytes([3; 32]),
+            tool_run_id: ToolRunId::from_bytes([4; 32]),
+            step_id: TaskStepId::from_bytes([5; 32]),
+            snapshot_id: SnapshotId::from_bytes([6; 32]),
+        };
+        let limits = ProcessOutputLimit::new(512)?;
+        let process = LoopbackHttpProcess::from_spec(&recipe.process_spec(
+            context.run_id,
+            WorktreeId::from_bytes([9; 32]),
+            context.step_id,
+            LoopbackProcessSettings {
+                timeout: ProcessTimeout::from_millis(10_000)?,
+                stdout_limit: limits,
+                stderr_limit: limits,
+                system_root: false,
+            },
+        )?)?;
+        let requirement =
+            VerificationRequirement::try_from_string("Verify the exact HTTP service".to_owned())?;
+        let spec =
+            VerificationSpec::loopback_http(context.spec_id, requirement.clone(), recipe.clone());
+        let original = CriterionEvidenceRequirement::LoopbackHttp(recipe.clone());
+        assert_eq!(original.validate_spec(&spec), Ok(()));
+        assert_eq!(
+            original.validate_spec(&VerificationSpec::loopback_http(
+                context.spec_id,
+                requirement,
+                changed
+            )),
+            Err(CriterionVerificationMismatch::LoopbackHttpMismatch)
+        );
+
+        let decision = |value| PolicyDecisionId::from_bytes([value; 32]);
+        let get = LoopbackHttpObservation::new(decision(7), 200, body, 8, plain)?;
+        let post = LoopbackHttpObservation::new(decision(8), 405, body, 8, allow)?;
+        let no_allow = LoopbackHttpObservation::new(decision(8), 405, body, 8, plain)?;
+        let other_body = LoopbackHttpObservation::new(
+            decision(7),
+            200,
+            ContentHash::from_bytes([7; 32]),
+            8,
+            plain,
+        )?;
+        let artifact = |observations| {
+            LoopbackHttpEvidence::new(
+                context,
+                recipe.id(),
+                script.clone(),
+                process,
+                decision(6),
+                observations,
+            )
+            .map(VerificationEvidence::LoopbackHttp)
+        };
+        let matching = artifact(vec![get, post])?;
+        assert_eq!(
+            VerificationEvidenceEvaluation::evaluate(&spec, &matching),
+            VerificationEvidenceEvaluation::Passed
+        );
+        for observations in [
+            vec![get],
+            vec![post, get],
+            vec![get, no_allow],
+            vec![other_body, post],
+        ] {
+            let rejected = artifact(observations)?;
+            assert_ne!(rejected.id(), matching.id());
+            assert_eq!(
+                VerificationEvidenceEvaluation::evaluate(&spec, &rejected),
+                VerificationEvidenceEvaluation::Failed(
+                    VerificationEvidenceFailure::LoopbackHttpMismatch
+                )
+            );
+        }
+        assert!(artifact(vec![get, get]).is_err());
+        assert_eq!(
+            EvidenceFreshness::evaluate(
+                &matching,
+                &published_index(context.snapshot_id, vec![script.clone()])?
+            ),
+            EvidenceFreshness::Fresh,
+        );
+        assert_eq!(
+            EvidenceFreshness::evaluate(&matching, &published_index(context.snapshot_id, vec![])?),
+            EvidenceFreshness::Stale(EvidenceFreshnessFailure::DependencyChanged),
+        );
+        assert_eq!(
+            EvidenceFreshness::evaluate(
+                &matching,
+                &published_index(SnapshotId::from_bytes([12; 32]), vec![script])?
+            ),
+            EvidenceFreshness::Stale(EvidenceFreshnessFailure::SnapshotChanged),
+        );
+        Ok(())
     }
 
     fn published_index(

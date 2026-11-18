@@ -6,8 +6,8 @@ use a3_application::{
 };
 use a3_domain::{
     ContentHash, DiscoveredFileRoles, FileRevision, LanguageParseResult, ParseDiagnosticCode,
-    Progress, RepositoryPath, SymbolKind, SymbolRole, SymbolVisibility, SyntaxRelationKind,
-    SyntaxTarget,
+    Progress, RepositoryPath, SourcePosition, SymbolKind, SymbolRole, SymbolVisibility,
+    SyntaxRelationKind, SyntaxSource, SyntaxTarget,
 };
 use a3_repo_index::{ParserPoolSize, PythonLanguageAdapter};
 use std::error::Error;
@@ -61,6 +61,168 @@ impl LanguageParseControl for RejectProgressControl {
     fn report_progress(&self, _progress: Progress) -> Result<(), LanguageParseControlError> {
         Err(LanguageParseControlError::Unavailable)
     }
+}
+
+#[test]
+fn wide_comment_siblings_keep_symbol_order_scopes_and_late_main_guard() -> Result<(), Box<dyn Error>>
+{
+    let comments = "# comment \u{03a9} \u{1f680}\r\n".repeat(600);
+    let source = format!(
+        "{comments}def first():\r\n    return 1\r\n\r\nclass Box:\r\n    def method(self):\r\n        return first()\r\n\r\n{comments}def last():\r\n    return first()\r\n\r\nif __name__ == '__main__':\r\n    last()\r\n"
+    );
+    let adapter = PythonLanguageAdapter::new(ParserPoolSize::new(1)?)?;
+    let result = parse(&adapter, b"src/worker.py", source.as_bytes())?;
+    assert!(result.coverage().is_complete());
+    assert!(result.diagnostics().is_empty());
+    assert_eq!(
+        result
+            .symbols()
+            .iter()
+            .map(|symbol| (symbol.id().get(), symbol.name().as_str(), symbol.kind()))
+            .collect::<Vec<_>>(),
+        vec![
+            (1, "worker", SymbolKind::Module),
+            (2, "first", SymbolKind::Function),
+            (3, "Box", SymbolKind::Class),
+            (4, "method", SymbolKind::Method),
+            (5, "last", SymbolKind::Function)
+        ]
+    );
+    let module = symbol(&result, "worker", SymbolKind::Module)?;
+    let class = symbol(&result, "Box", SymbolKind::Class)?;
+    let method = symbol(&result, "method", SymbolKind::Method)?;
+    assert!(module.roles().contains(SymbolRole::Entrypoint));
+    assert!(
+        class
+            .declaration_range()
+            .contains(method.declaration_range())
+    );
+    assert!(result.relations().iter().any(|relation| {
+        relation.kind() == SyntaxRelationKind::Contains
+            && relation.source() == SyntaxSource::Symbol(class.id())
+            && relation.target() == &SyntaxTarget::Symbol(method.id())
+    }));
+    assert_eq!(
+        result,
+        parse(&adapter, b"src/worker.py", source.as_bytes())?
+    );
+    Ok(())
+}
+
+#[test]
+fn module_selection_follows_actual_declaration_after_leading_layout_and_bom()
+-> Result<(), Box<dyn Error>> {
+    let adapter = PythonLanguageAdapter::new(ParserPoolSize::new(1)?)?;
+    for (prefix, body, position) in [
+        (
+            b"".as_slice(),
+            b"def run():\n    return 1\n".as_slice(),
+            SourcePosition::new(0, 0),
+        ),
+        (
+            b"\n".as_slice(),
+            b"def run():\n    return 1\n".as_slice(),
+            SourcePosition::new(1, 0),
+        ),
+        (
+            b"\r\n".as_slice(),
+            b"def run():\r\n    return 1\r\n".as_slice(),
+            SourcePosition::new(1, 0),
+        ),
+        (
+            b"\xef\xbb\xbf".as_slice(),
+            b"def run():\n    return 1\n".as_slice(),
+            SourcePosition::new(0, 3),
+        ),
+        (
+            b"\xef\xbb\xbf\n".as_slice(),
+            b"def run():\n    return 1\n".as_slice(),
+            SourcePosition::new(1, 0),
+        ),
+        (
+            b"\xef\xbb\xbf\r\n\r\n".as_slice(),
+            b"def run():\r\n    return 1\r\n".as_slice(),
+            SourcePosition::new(2, 0),
+        ),
+    ] {
+        let source = [prefix, body].concat();
+        let result = parse(&adapter, b"server.py", &source)
+            .map_err(|error| format!("prefix {prefix:?} failed: {error}"))?;
+        assert!(result.coverage().is_complete());
+        assert!(result.diagnostics().is_empty());
+        let module = symbol(&result, "server", SymbolKind::Module)?;
+        let declaration = module.declaration_range();
+        let selection = module.selection_range();
+        assert_eq!(declaration.start_byte(), u32::try_from(prefix.len())?);
+        assert_eq!(declaration.end_byte(), u32::try_from(source.len())?);
+        assert_eq!(declaration.start_position(), position);
+        assert_eq!(selection.start_byte(), declaration.start_byte());
+        assert_eq!(selection.end_byte(), declaration.start_byte());
+        assert_eq!(selection.start_position(), position);
+        assert_eq!(selection.end_position(), position);
+        assert!(declaration.contains(selection));
+        let function = symbol(&result, "run", SymbolKind::Function)?;
+        let name = function.selection_range();
+        assert_eq!(
+            &source[name.start_byte() as usize..name.end_byte() as usize],
+            b"run"
+        );
+        assert_eq!(result, parse(&adapter, b"server.py", &source)?);
+    }
+    for source in [
+        b"".as_slice(),
+        b"\n\n".as_slice(),
+        b"\r\n\r\n".as_slice(),
+        b"\xef\xbb\xbf".as_slice(),
+    ] {
+        let result = parse(&adapter, b"server.py", source)?;
+        assert!(result.coverage().is_complete());
+        assert!(result.diagnostics().is_empty());
+        let module = symbol(&result, "server", SymbolKind::Module)?;
+        assert!(
+            module
+                .declaration_range()
+                .contains(module.selection_range())
+        );
+        assert!(module.selection_range().is_empty());
+        assert_eq!(
+            module.selection_range().start_byte(),
+            u32::try_from(source.len())?
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn leading_blank_server_module_keeps_import_class_and_entrypoint_anchors()
+-> Result<(), Box<dyn Error>> {
+    // Minimized shape of the observed Ornith A04 source; the leading LF is intentional.
+    let source = b"\nimport argparse\nfrom http.server import BaseHTTPRequestHandler\n\nclass Handler(BaseHTTPRequestHandler):\n    def do_GET(self):\n        return None\n\nif __name__ == '__main__':\n    parser = argparse.ArgumentParser()\n";
+    let adapter = PythonLanguageAdapter::new(ParserPoolSize::new(1)?)?;
+    let result = parse(&adapter, b"server.py", source)?;
+    assert!(result.coverage().is_complete());
+    assert!(result.diagnostics().is_empty());
+    let module = symbol(&result, "server", SymbolKind::Module)?;
+    assert!(module.roles().contains(SymbolRole::Entrypoint));
+    assert_eq!(module.selection_range().start_byte(), 1);
+    assert_eq!(
+        module.selection_range().start_position(),
+        SourcePosition::new(1, 0)
+    );
+    assert_symbol(&result, "Handler", SymbolKind::Class)?;
+    assert_symbol(&result, "do_GET", SymbolKind::Method)?;
+    let imports = unresolved_targets(&result, SyntaxRelationKind::Imports);
+    assert!(imports.contains(&"argparse"));
+    assert!(imports.contains(&"http.server.BaseHTTPRequestHandler"));
+    for symbol in result.symbols() {
+        assert!(
+            symbol
+                .declaration_range()
+                .contains(symbol.selection_range())
+        );
+        assert!(symbol.declaration_range().end_byte() as usize <= source.len());
+    }
+    Ok(())
 }
 
 #[test]

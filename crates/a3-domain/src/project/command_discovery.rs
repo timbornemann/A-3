@@ -58,7 +58,7 @@ impl DiscoveredCommandKind {
 /// Exact indexed source evidence supporting one discovered command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandDiscoveryEvidence {
-    /// A complete manifest or package-manager marker revision.
+    /// A complete revision supporting the template, such as a manifest, marker or test file.
     File(FileRevision),
     /// A precise manifest field or relationship range.
     Source(EvidenceRef),
@@ -144,6 +144,29 @@ impl DiscoveredCommand {
             stderr_limit,
             evidence,
         })
+    }
+
+    /// Creates a discovered command with a caller-supplied lifetime cap.
+    ///
+    /// A cap can only shorten the existing kind-specific limit. The effective
+    /// cap participates in the command identity and the generated ProcessSpec.
+    pub fn try_new_with_timeout_cap(
+        kind: DiscoveredCommandKind,
+        working_directory: WorkspaceDirectory,
+        executable: String,
+        arguments: Vec<String>,
+        evidence: Vec<CommandDiscoveryEvidence>,
+        timeout_cap: ProcessTimeout,
+    ) -> Result<Self, DiscoveredCommandError> {
+        let mut command = Self::try_new(kind, working_directory, executable, arguments, evidence)?;
+        if timeout_cap < command.timeout {
+            let mut hasher = blake3::Hasher::new_derive_key("a3.discovered-command.timeout-cap.v1");
+            hasher.update(command.id.as_bytes());
+            hasher.update(&timeout_cap.as_millis().to_le_bytes());
+            command.id = DiscoveredCommandId::from_bytes(*hasher.finalize().as_bytes());
+            command.timeout = timeout_cap;
+        }
+        Ok(command)
     }
 
     /// Returns the exact evidence- and argv-bound command identity.
@@ -774,6 +797,42 @@ mod tests {
         assert_eq!(DiscoveredCommandKind::Build.timeout_millis(), 120_000);
         assert_eq!(DiscoveredCommandKind::Lint.timeout_millis(), 60_000);
         assert_eq!(DiscoveredCommandKind::Format.timeout_millis(), 60_000);
+    }
+
+    #[test]
+    fn tighter_command_timeout_changes_identity_and_cannot_extend_default()
+    -> Result<(), Box<dyn Error>> {
+        let original = command("Cargo.toml", [2; 32])?;
+        let with_cap = |millis| -> Result<DiscoveredCommand, Box<dyn Error>> {
+            Ok(DiscoveredCommand::try_new_with_timeout_cap(
+                original.kind(),
+                original.working_directory().clone(),
+                original.executable().as_str().to_owned(),
+                original
+                    .arguments()
+                    .iter()
+                    .map(|argument| argument.as_str().to_owned())
+                    .collect(),
+                original.evidence().to_vec(),
+                ProcessTimeout::from_millis(millis)?,
+            )?)
+        };
+        let capped = with_cap(30_000)?;
+        assert_ne!(capped.id(), original.id());
+        assert_ne!(capped.id(), with_cap(31_000)?.id());
+        assert_eq!(capped, with_cap(30_000)?);
+        assert_eq!(original, with_cap(121_000)?);
+        let id = capped.id();
+        let catalog = ProjectCommandCatalog::new(
+            CommandDiscoverySchemaVersion::V1,
+            WorktreeId::from_bytes([1; 32]),
+            vec![capped],
+        )?;
+        let preview = catalog.preview(AgentRunId::from_bytes([3; 32]), id)?;
+        assert_eq!(preview.timeout().as_millis(), 30_000);
+        assert_eq!(preview.plan_binding(), ProcessPlanBinding::Unbound);
+        assert_eq!(preview.network(), ProcessNetworkScope::Denied);
+        Ok(())
     }
 
     #[test]

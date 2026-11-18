@@ -413,6 +413,30 @@ async fn load_target(
         }
         AgentActivityLoadResult::Available(activity) => activity,
     };
+    let stored = activity.anchor().task_ledger();
+    if stored.ledger().pending_planning().is_some() {
+        let (owner, _, disposition) =
+            crate::load_pending_planning_pair(project, stored.ledger(), ports.journal.as_ref())
+                .await
+                .map_err(|_| {
+                    AgentTaskControlFailure::Recovery(AgentRecoveryError::AnchorMismatch)
+                })?;
+        // A stale job remains explicitly cancellable. Resume revalidates the
+        // current published snapshot in RecoverAgentRun immediately before CAS.
+        if disposition == crate::PendingPlanningPairDisposition::TerminalInert {
+            return Ok(ControlTargetResult::Expected(
+                AgentTaskRecoveryLoadResult::RunNotControllable {
+                    state: owner.state(),
+                },
+            ));
+        }
+        return Ok(ControlTargetResult::Available(ControlTarget {
+            run_id: owner.id(),
+            state: owner.state(),
+            ledger_revision: stored.ledger().revision().get(),
+            ledger_store_version: stored.version(),
+        }));
+    }
     let Some(selected) = activity.run() else {
         return Ok(ControlTargetResult::Expected(
             AgentTaskRecoveryLoadResult::RunUnavailable,

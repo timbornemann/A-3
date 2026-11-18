@@ -10,6 +10,18 @@ use libsql::{Connection, Transaction, TransactionBehavior, params};
 use std::error::Error;
 use std::fmt;
 
+#[path = "goal_contract_original.rs"]
+mod original;
+
+#[path = "goal_contract_intake.rs"]
+pub(crate) mod intake;
+
+#[path = "goal_contract_intake_review.rs"]
+pub(crate) mod intake_review;
+
+#[path = "intake_phase_reservation_repository.rs"]
+pub(crate) mod phase_reservations;
+
 const SQLITE_CONSTRAINT: i32 = 19;
 const MAX_COLLECTION_ITEMS: usize = 64;
 
@@ -18,6 +30,9 @@ pub(crate) async fn create(
     worktree_id: WorktreeId,
     contract: &GoalContract,
 ) -> Result<(), GoalContractRepositoryError> {
+    contract
+        .validate_original_binding()
+        .map_err(|_| GoalContractRepositoryError::InvalidInput)?;
     if contract.revision() != GoalContractRevision::INITIAL
         || contract.previous_revision().is_some()
         || contract.revision_reason().is_some()
@@ -28,30 +43,37 @@ pub(crate) async fn create(
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .await
         .map_err(GoalContractRepositoryError::Begin)?;
-    let result = async {
-        if task_current_revision(&transaction, worktree_id, contract.task_id())
-            .await?
-            .is_some()
-        {
-            return Err(GoalContractRepositoryError::TaskAlreadyExists);
-        }
-        transaction
-            .execute(
-                "INSERT INTO tasks (task_id, worktree_id, created_at_unix_millis,\n\
-                 current_goal_revision) VALUES (?1, ?2, ?3, ?4)",
-                params![
-                    contract.task_id().as_bytes().to_vec(),
-                    worktree_id.as_bytes().to_vec(),
-                    timestamp_to_i64(contract.created_at())?,
-                    i64::from(contract.revision().get())
-                ],
-            )
-            .await
-            .map_err(classify_unexpected_constraint)?;
-        write_revision(&transaction, contract).await
-    }
-    .await;
+    let result = create_initial_in_transaction(&transaction, worktree_id, contract).await;
     close_write_transaction(transaction, result).await
+}
+
+async fn create_initial_in_transaction(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    contract: &GoalContract,
+) -> Result<(), GoalContractRepositoryError> {
+    original::require_supported_schema(transaction, contract).await?;
+    intake::reject_pending_for_create(transaction, worktree_id, contract.task_id()).await?;
+    if task_current_revision(transaction, worktree_id, contract.task_id())
+        .await?
+        .is_some()
+    {
+        return Err(GoalContractRepositoryError::TaskAlreadyExists);
+    }
+    transaction
+        .execute(
+            "INSERT INTO tasks (task_id, worktree_id, created_at_unix_millis,\n\
+             current_goal_revision) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                contract.task_id().as_bytes().to_vec(),
+                worktree_id.as_bytes().to_vec(),
+                timestamp_to_i64(contract.created_at())?,
+                i64::from(contract.revision().get())
+            ],
+        )
+        .await
+        .map_err(classify_unexpected_constraint)?;
+    write_revision(transaction, contract).await
 }
 
 pub(crate) async fn append_revision(
@@ -59,6 +81,9 @@ pub(crate) async fn append_revision(
     worktree_id: WorktreeId,
     contract: &GoalContract,
 ) -> Result<(), GoalContractRepositoryError> {
+    contract
+        .validate_original_binding()
+        .map_err(|_| GoalContractRepositoryError::InvalidInput)?;
     let Some(previous_revision) = contract.previous_revision() else {
         return Err(GoalContractRepositoryError::InvalidInput);
     };
@@ -73,6 +98,7 @@ pub(crate) async fn append_revision(
         .await
         .map_err(GoalContractRepositoryError::Begin)?;
     let result = async {
+        original::require_supported_schema(&transaction, contract).await?;
         let current = task_current_revision(&transaction, worktree_id, contract.task_id())
             .await?
             .ok_or(GoalContractRepositoryError::TaskNotFound)?;
@@ -85,6 +111,19 @@ pub(crate) async fn append_revision(
                 .ok_or(GoalContractRepositoryError::InvalidStoredData)?;
         if contract.created_at() < previous_created_at {
             return Err(GoalContractRepositoryError::InvalidInput);
+        }
+        let previous = load_revision_from_transaction(
+            &transaction,
+            worktree_id,
+            contract.task_id(),
+            previous_revision,
+        )
+        .await?
+        .ok_or(GoalContractRepositoryError::InvalidStoredData)?;
+        if previous.original().is_some() || contract.original().is_some() {
+            contract
+                .validate_successor_of(&previous)
+                .map_err(|_| GoalContractRepositoryError::InvalidInput)?;
         }
         write_revision(&transaction, contract).await?;
         let changed = transaction
@@ -147,12 +186,20 @@ async fn write_revision(
     transaction: &Transaction,
     contract: &GoalContract,
 ) -> Result<(), GoalContractRepositoryError> {
+    let sql = if contract.original().is_some() {
+        "INSERT INTO goal_contract_revisions (
+         task_id, revision, previous_revision, objective, success_verification,
+         revision_reason, created_at_unix_millis, original_contract_version
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)"
+    } else {
+        "INSERT INTO goal_contract_revisions (
+         task_id, revision, previous_revision, objective, success_verification,
+         revision_reason, created_at_unix_millis
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+    };
     transaction
         .execute(
-            "INSERT INTO goal_contract_revisions (\n\
-             task_id, revision, previous_revision, objective, success_verification,\n\
-             revision_reason, created_at_unix_millis\n\
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            sql,
             params![
                 contract.task_id().as_bytes().to_vec(),
                 i64::from(contract.revision().get()),
@@ -196,7 +243,8 @@ async fn write_revision(
             .iter()
             .map(UserDecision::as_str),
     )
-    .await
+    .await?;
+    original::write(transaction, contract).await
 }
 
 async fn write_acceptance_criteria(
@@ -257,12 +305,21 @@ pub(crate) async fn load_revision_from_transaction(
     task_id: TaskId,
     revision: GoalContractRevision,
 ) -> Result<Option<GoalContract>, GoalContractRepositoryError> {
+    let supports_original = original::schema_supports_original(transaction).await?;
+    let sql = if supports_original {
+        "SELECT r.previous_revision, r.objective, r.success_verification,
+         r.revision_reason, r.created_at_unix_millis, r.original_contract_version
+         FROM tasks t JOIN goal_contract_revisions r ON r.task_id = t.task_id
+         WHERE t.task_id = ?1 AND t.worktree_id = ?2 AND r.revision = ?3"
+    } else {
+        "SELECT r.previous_revision, r.objective, r.success_verification,
+         r.revision_reason, r.created_at_unix_millis, NULL
+         FROM tasks t JOIN goal_contract_revisions r ON r.task_id = t.task_id
+         WHERE t.task_id = ?1 AND t.worktree_id = ?2 AND r.revision = ?3"
+    };
     let mut rows = transaction
         .query(
-            "SELECT r.previous_revision, r.objective, r.success_verification,\n\
-             r.revision_reason, r.created_at_unix_millis\n\
-             FROM tasks t JOIN goal_contract_revisions r ON r.task_id = t.task_id\n\
-             WHERE t.task_id = ?1 AND t.worktree_id = ?2 AND r.revision = ?3",
+            sql,
             params![
                 task_id.as_bytes().to_vec(),
                 worktree_id.as_bytes().to_vec(),
@@ -288,6 +345,7 @@ pub(crate) async fn load_revision_from_transaction(
         .transpose()
         .map_err(|_| GoalContractRepositoryError::InvalidStoredData)?;
     let created_at = read_timestamp(&row, 4)?;
+    let original_version: Option<i64> = row.get(5).map_err(GoalContractRepositoryError::Read)?;
     if rows
         .next()
         .await
@@ -330,7 +388,7 @@ pub(crate) async fn load_revision_from_transaction(
         success_verification,
     )
     .map_err(|_| GoalContractRepositoryError::InvalidStoredData)?;
-    GoalContract::reconstruct(
+    let contract = GoalContract::reconstruct(
         task_id,
         revision,
         previous_revision,
@@ -338,8 +396,10 @@ pub(crate) async fn load_revision_from_transaction(
         draft,
         created_at,
     )
-    .map(Some)
-    .map_err(|_| GoalContractRepositoryError::InvalidStoredData)
+    .map_err(|_| GoalContractRepositoryError::InvalidStoredData)?;
+    original::restore(transaction, contract, supports_original, original_version)
+        .await
+        .map(Some)
 }
 
 async fn read_acceptance_criteria(
@@ -424,7 +484,7 @@ async fn read_text_items(
     Ok(items)
 }
 
-async fn task_current_revision(
+pub(crate) async fn task_current_revision(
     transaction: &Transaction,
     worktree_id: WorktreeId,
     task_id: TaskId,
@@ -628,11 +688,18 @@ pub(crate) enum GoalContractRepositoryError {
     Commit(libsql::Error),
     Rollback(libsql::Error),
     InvalidInput,
+    OriginalSchemaUnsupported,
     InvalidStoredData,
     ResourceLimit,
     TaskAlreadyExists,
     TaskNotFound,
     RevisionConflict,
+    IntakeVersionConflict,
+    IntakeNotPending,
+    InvalidIntakePromotion,
+    IntakeReviewVersionConflict,
+    InvalidIntakeReview,
+    ReviewSchemaUnsupported,
 }
 
 impl GoalContractRepositoryError {
@@ -644,6 +711,16 @@ impl GoalContractRepositoryError {
             Self::TaskAlreadyExists => GoalContractStoreFailure::TaskAlreadyExists,
             Self::TaskNotFound => GoalContractStoreFailure::TaskNotFound,
             Self::RevisionConflict => GoalContractStoreFailure::RevisionConflict,
+            Self::IntakeVersionConflict => GoalContractStoreFailure::IntakeVersionConflict,
+            Self::IntakeNotPending => GoalContractStoreFailure::IntakeNotPending,
+            Self::IntakeReviewVersionConflict => {
+                GoalContractStoreFailure::IntakeReviewVersionConflict
+            }
+            Self::InvalidIntakeReview => GoalContractStoreFailure::InvalidIntakeReview,
+            Self::InvalidIntakePromotion => GoalContractStoreFailure::InvalidIntakePromotion,
+            Self::OriginalSchemaUnsupported | Self::ReviewSchemaUnsupported => {
+                GoalContractStoreFailure::UnsupportedSchema
+            }
             Self::Begin(error)
             | Self::Read(error)
             | Self::Write(error)
@@ -668,11 +745,18 @@ impl fmt::Display for GoalContractRepositoryError {
             Self::Commit(_) => "Goal Contract transaction could not commit",
             Self::Rollback(_) => "Goal Contract transaction could not roll back",
             Self::InvalidInput => "Goal Contract input was invalid",
+            Self::OriginalSchemaUnsupported => "Goal original requires the candidate schema",
             Self::InvalidStoredData => "Goal Contract data was invalid",
             Self::ResourceLimit => "Goal Contract data exceeded a resource limit",
             Self::TaskAlreadyExists => "Goal Contract task already exists",
             Self::TaskNotFound => "Goal Contract task was not found",
             Self::RevisionConflict => "Goal Contract revision conflicted",
+            Self::IntakeVersionConflict => "Goal intake version conflicted",
+            Self::IntakeNotPending => "Goal intake is not pending",
+            Self::InvalidIntakePromotion => "Goal intake promotion is invalid",
+            Self::IntakeReviewVersionConflict => "Goal intake review revision conflicted",
+            Self::InvalidIntakeReview => "Goal intake review proposal is invalid",
+            Self::ReviewSchemaUnsupported => "Goal intake review requires the candidate schema",
         })
     }
 }
@@ -686,11 +770,18 @@ impl Error for GoalContractRepositoryError {
             | Self::Commit(error)
             | Self::Rollback(error) => Some(error),
             Self::InvalidInput
+            | Self::OriginalSchemaUnsupported
             | Self::InvalidStoredData
             | Self::ResourceLimit
             | Self::TaskAlreadyExists
             | Self::TaskNotFound
-            | Self::RevisionConflict => None,
+            | Self::RevisionConflict
+            | Self::IntakeVersionConflict
+            | Self::IntakeNotPending
+            | Self::InvalidIntakePromotion
+            | Self::IntakeReviewVersionConflict
+            | Self::InvalidIntakeReview
+            | Self::ReviewSchemaUnsupported => None,
         }
     }
 }

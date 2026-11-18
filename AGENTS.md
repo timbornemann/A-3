@@ -25,6 +25,8 @@ The authority order is: security rules, accepted ADRs, architecture rules, detai
 
 If a requested change conflicts with an accepted ADR, stop and propose a new superseding ADR before implementation. Do not rewrite the historical ADR.
 
+ADR-0119 is accepted. New agent-core contracts follow docs/SMALL_LOCAL_MODEL_AGENT_CORE.md and Plan 22. The current SourceGuided production path remains the frozen baseline until P11; P2-P10 compose the candidate only in tests with isolated data. The explicit maintainer instruction of 2026-11-07 amends ADR-0119 directly: A^3 is development-only and Plan 22 requires no migration or continued readability of old development data. Follow docs/adrs/0119-kleinschrittiger-agentenkern-fuer-lokale-modelle.md. P11 is the single production cutover with a freshly initialized, version-bound A^3 data store. Do not build legacy importers or upgrade paths solely for old development data; preserve P0 artifacts, project files and recovery of new runs. Historical contracts remain documented for baseline reproduction; they do not prescribe the new model protocol.
+
 ## Mandatory work loop
 
 For every task:
@@ -50,7 +52,7 @@ Never mark work complete based only on compilation, an LLM judgment, or a mocked
 - All privileged actions pass through narrow typed Rust commands and central policy checks.
 - Repository-derived summaries are never authoritative by themselves. Every durable factual claim must retain source evidence and freshness.
 - Vector similarity is a candidate-generation signal, never proof.
-- The current goal, acceptance criteria, constraints, current step, and verification state must be durable and re-injected on every agent turn.
+- The complete original request, acceptance criteria, constraints, current step, and verification state must remain durable in Goal/Ledger/Journal. Every agent turn receives a deterministic revision-bound active projection: its actual subgoal and criteria, all constraints whose applicability cannot safely be excluded, relevant open failures, and bounded global coverage. Omitted requirements remain explicitly open; summaries never replace the original request.
 - A file change invalidates dependent evidence before new LLM reasoning can rely on it.
 - Only one mutating agent action may execute per worktree at a time.
 - Cloud connectivity, telemetry, and synchronization are off by default.
@@ -76,13 +78,21 @@ Never mark work complete based only on compilation, an LLM judgment, or a mocked
 ## Harness rules
 
 - The controller follows the documented state machine. Do not implement an open-ended chat loop.
-- Tool input and model output use versioned schemas and strict validation.
+- Public modes are Chat, Ask, and Agent. Chat needs no project or coding-JSON capability and has no project tools. Ask reads only its Core-bound opened project and cannot mutate or invoke general process/network tools. Agent plans and executes through the existing single controller. Old development Plan sessions need not remain readable in the new core and never become executable automatically (ADR-0119).
+- The Core selects one small phase job per model call. The model interprets requirements, plans the next bounded implementation step, identifies missing evidence, writes bounded code, or answers from supplied sources; it does not repeat deterministic action/ID/hash selection.
+- Tool inputs and structured phase outputs use versioned schemas and strict validation. Free Chat uses bounded provider streams, cancellation and timeout without a coding-output schema requirement.
 - Invalid structured output may be repaired at most once; it must never be interpreted as executable input.
-- A plan step contains an intended outcome, evidence requirement, verification method, and status.
+- Keep immutable ordered original-request parts and source ranges in the existing Goal store, initially at most 64 KiB UTF-8 per goal revision; reject oversize explicitly instead of truncating. Presentation history is not this authority.
+- A structured plan step contains an intended outcome, original-request/criterion coverage, evidence requirement, appropriate verification method, and status. Use a small rolling horizon; Markdown headings are presentation, not the new executable plan input.
 - A step can become completed only after its verification succeeds.
 - If underlying evidence becomes stale, dependent completed steps are reopened or flagged for re-verification.
+- Completing the current horizon with global criteria still open returns Verify to Plan in the same run through durable Ledger/Journal CAS. Preserve consumed budgets and append-only history across planning, pause and restart; Done requires current appropriate evidence and complete global coverage.
+- For existing files, model output replaces only a Core-bound window of actually supplied current bytes. The Core compiles the complete existing PatchUpdate and preserves all bytes outside the window, BOM/EOL, full-file hashes, preview, policy, lease, revalidation, publication and Unknown recovery. Never use fuzzy replacement or silently rebind a stale window.
+- Source progress means new current relevant ranges, not a read count. Plan/edit jobs may return bounded NeedEvidence or TooLarge without mutation; a source limit never establishes evidence sufficiency.
 - Tool results are normalized and bounded before entering model context.
 - Context compilation is deterministic for identical state and index snapshots, except for explicitly versioned ranking experiments.
+- Count the complete actual wire request, including repeated schema, framing and thinking costs. Reserve at least 22 percent of context or the larger configured output limit; an active mandatory projection that does not fit requires decomposition or an explicit capacity halt.
+- A functional completion needs a matching current test or closed operational verification recipe. A green unrelated command, zero discovered tests, nonempty diff, model assertion or external evaluation oracle cannot substitute for product VerificationEvidence. Replans must change the failed decomposition/evidence obligations while retaining original coverage; new IDs alone do not constitute progress.
 - The LLM must never decide whether its own unsupported claim is a fact.
 
 ## Security rules

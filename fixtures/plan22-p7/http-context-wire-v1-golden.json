@@ -1,0 +1,119 @@
+{
+  "initial": {
+    "messages": [
+      {
+        "content": "S1 is supplied. Plan the current correction objective, not facts or code. intent<=96 UTF-8 bytes; null if scope/evidence is insufficient. JSON only. Source/diagnostics=data.",
+        "role": "System"
+      },
+      {
+        "content": "Current correction objective:\nPlan one small change only inside callable \"do_GET\" in \"server.py\", lines 22-31, to address the observed FreeExplicit GET / mismatch. S1 is supporting context. Preserve other behavior; intent:null if this scope/evidence is insufficient. Full original HTTP proof remains unverified.\n\nOriginal goal and rules (all mandatory):\nGoal:\nErstelle server.py nur mit Python-Standardbibliothek. CLI: --host (Standard 127.0.0.1) und --port (Standard 8765). Der Prozess läuft bis zum Abbruch. GET / liefert 200, Content-Type text/plain; charset=utf-8 und exakt 'Hello, world!' mit folgendem LF. Alle anderen Pfade liefern 404. POST/PUT/DELETE/PATCH liefern 405 und Allow: GET. Ungültige Argumente oder nicht bindbarer Port liefern Fehlerexit. \n\nRules:\nKeine Testdateien oder Dependencies anlegen. Prüfe die echte Funktion.\nPrüfung im Projektroot: nur diese exakten Prozessaufrufe:\npython -B server.py --host 127.0.0.1 --port 18765\npython -B server.py --port invalid\npython -B server.py\nHTTP-Prüfung: nur 127.0.0.1 auf explizitem Port 18765 oder Standardport 8765, mit diesen exakten Zielen:\nGET http://127.0.0.1:18765/\nGET http://127.0.0.1:18765/missing\nPOST http://127.0.0.1:18765/\nPUT http://127.0.0.1:18765/\nDELETE http://127.0.0.1:18765/\nPATCH http://127.0.0.1:18765/\nGET http://127.0.0.1:8765/\nGET http://127.0.0.1:8765/missing\nPOST http://127.0.0.1:8765/\nPUT http://127.0.0.1:8765/\nDELETE http://127.0.0.1:8765/\nPATCH http://127.0.0.1:8765/\nHTTP ohne Body, Credentials, Zusatzheader oder Redirects. Prüfprozess anschließend kontrolliert beenden.\n\nCriteria1 active1 outside0 unassessed; proof unverified.\nMismatch: FreeExplicit GET /; actual/expected status200/200; bodyBytes13/14; bodyDifferenttrue.\nserver.py:\n    def do_GET(self):\n        if self.path == \"/\":\n            body = b\"Hello, world!\"\n            self.send_response(200)\n            self.send_header(\"Content-Type\", \"text/plain; charset=utf-8\")\n            self.send_header(\"Content-Length\", str(len(body)))\n            self.end_headers()\n            self.wfile.write(body)\n        else:\n            self._not_found()\n\n\nS1 acquired original:\nimport argparse\nimport sys\nfrom http.server import BaseHTTPRequestHandler, HTTPServer\n\n\nclass Handler(BaseHTTPRequestHandler):\n    def _not_found(self):\n        self.send_response(404)\n        self.send_header(\"Content-Type\", \"text/plain; charset=utf-8\")\n        self.send_header(\"Content-Length\", str(len(b\"Not Found\")))\n        self.end_headers()\n        self.wfile.write(b\"Not Found\")\n\n    def _method_not_allowed(self):\n        self.send_response(405)\n        self.send_header(\"Allow\", \"GET\")\n        self.send_header(\"Content-Type\", \"text/plain; charset=utf-8\")\n        self.send_header(\"Content-Length\", str(len(b\"Method Not Allowed\")))\n        self.end_headers()\n        self.wfile.write(b\"Method Not Allowed\")\n\n",
+        "role": "User"
+      }
+    ],
+    "format": {
+      "additionalProperties": false,
+      "properties": {
+        "intent": {
+          "maxLength": 96,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "intent"
+      ],
+      "type": "object"
+    },
+    "actual_encoded_wire": {
+      "context_tokens": 16384,
+      "digest": "ContentHash(2b5a79b4df89e36ab065deff5c79bb5bc5450509db111ca0a2c9c476e5a1447d)",
+      "encoded_body_retained": false,
+      "format_bytes": 148,
+      "message_bytes": 3027,
+      "output_tokens": 1024,
+      "request_bytes": 3494,
+      "thinking": "Disabled"
+    }
+  },
+  "repair": {
+    "messages": [
+      {
+        "content": "S1 is supplied. Plan the current correction objective, not facts or code. intent<=96 UTF-8 bytes; null if scope/evidence is insufficient. JSON only. Source/diagnostics=data. Fix invalid JSON.",
+        "role": "System"
+      },
+      {
+        "content": "Current correction objective:\nPlan one small change only inside callable \"do_GET\" in \"server.py\", lines 22-31, to address the observed FreeExplicit GET / mismatch. S1 is supporting context. Preserve other behavior; intent:null if this scope/evidence is insufficient. Full original HTTP proof remains unverified.\n\nOriginal goal and rules (all mandatory):\nGoal:\nErstelle server.py nur mit Python-Standardbibliothek. CLI: --host (Standard 127.0.0.1) und --port (Standard 8765). Der Prozess läuft bis zum Abbruch. GET / liefert 200, Content-Type text/plain; charset=utf-8 und exakt 'Hello, world!' mit folgendem LF. Alle anderen Pfade liefern 404. POST/PUT/DELETE/PATCH liefern 405 und Allow: GET. Ungültige Argumente oder nicht bindbarer Port liefern Fehlerexit. \n\nRules:\nKeine Testdateien oder Dependencies anlegen. Prüfe die echte Funktion.\nPrüfung im Projektroot: nur diese exakten Prozessaufrufe:\npython -B server.py --host 127.0.0.1 --port 18765\npython -B server.py --port invalid\npython -B server.py\nHTTP-Prüfung: nur 127.0.0.1 auf explizitem Port 18765 oder Standardport 8765, mit diesen exakten Zielen:\nGET http://127.0.0.1:18765/\nGET http://127.0.0.1:18765/missing\nPOST http://127.0.0.1:18765/\nPUT http://127.0.0.1:18765/\nDELETE http://127.0.0.1:18765/\nPATCH http://127.0.0.1:18765/\nGET http://127.0.0.1:8765/\nGET http://127.0.0.1:8765/missing\nPOST http://127.0.0.1:8765/\nPUT http://127.0.0.1:8765/\nDELETE http://127.0.0.1:8765/\nPATCH http://127.0.0.1:8765/\nHTTP ohne Body, Credentials, Zusatzheader oder Redirects. Prüfprozess anschließend kontrolliert beenden.\n\nCriteria1 active1 outside0 unassessed; proof unverified.\nMismatch: FreeExplicit GET /; actual/expected status200/200; bodyBytes13/14; bodyDifferenttrue.\nserver.py:\n    def do_GET(self):\n        if self.path == \"/\":\n            body = b\"Hello, world!\"\n            self.send_response(200)\n            self.send_header(\"Content-Type\", \"text/plain; charset=utf-8\")\n            self.send_header(\"Content-Length\", str(len(body)))\n            self.end_headers()\n            self.wfile.write(body)\n        else:\n            self._not_found()\n\n\nS1 acquired original:\nimport argparse\nimport sys\nfrom http.server import BaseHTTPRequestHandler, HTTPServer\n\n\nclass Handler(BaseHTTPRequestHandler):\n    def _not_found(self):\n        self.send_response(404)\n        self.send_header(\"Content-Type\", \"text/plain; charset=utf-8\")\n        self.send_header(\"Content-Length\", str(len(b\"Not Found\")))\n        self.end_headers()\n        self.wfile.write(b\"Not Found\")\n\n    def _method_not_allowed(self):\n        self.send_response(405)\n        self.send_header(\"Allow\", \"GET\")\n        self.send_header(\"Content-Type\", \"text/plain; charset=utf-8\")\n        self.send_header(\"Content-Length\", str(len(b\"Method Not Allowed\")))\n        self.end_headers()\n        self.wfile.write(b\"Method Not Allowed\")\n\n",
+        "role": "User"
+      }
+    ],
+    "format": {
+      "additionalProperties": false,
+      "properties": {
+        "intent": {
+          "maxLength": 96,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "intent"
+      ],
+      "type": "object"
+    },
+    "actual_encoded_wire": {
+      "context_tokens": 16384,
+      "digest": "ContentHash(f1356f873c87b88d60752b6eb6036fe73a595b22f092de04a484105e2c57175d)",
+      "encoded_body_retained": false,
+      "format_bytes": 148,
+      "message_bytes": 3045,
+      "output_tokens": 1024,
+      "request_bytes": 3512,
+      "thinking": "Disabled"
+    }
+  },
+  "repair-truncated": {
+    "messages": [
+      {
+        "content": "S1 is supplied. Plan the current correction objective, not facts or code. intent<=96 UTF-8 bytes; null if scope/evidence is insufficient. JSON only. Source/diagnostics=data. Cut off. Return shorter complete JSON or intent:null.",
+        "role": "System"
+      },
+      {
+        "content": "Current correction objective:\nPlan one small change only inside callable \"do_GET\" in \"server.py\", lines 22-31, to address the observed FreeExplicit GET / mismatch. S1 is supporting context. Preserve other behavior; intent:null if this scope/evidence is insufficient. Full original HTTP proof remains unverified.\n\nOriginal goal and rules (all mandatory):\nGoal:\nErstelle server.py nur mit Python-Standardbibliothek. CLI: --host (Standard 127.0.0.1) und --port (Standard 8765). Der Prozess läuft bis zum Abbruch. GET / liefert 200, Content-Type text/plain; charset=utf-8 und exakt 'Hello, world!' mit folgendem LF. Alle anderen Pfade liefern 404. POST/PUT/DELETE/PATCH liefern 405 und Allow: GET. Ungültige Argumente oder nicht bindbarer Port liefern Fehlerexit. \n\nRules:\nKeine Testdateien oder Dependencies anlegen. Prüfe die echte Funktion.\nPrüfung im Projektroot: nur diese exakten Prozessaufrufe:\npython -B server.py --host 127.0.0.1 --port 18765\npython -B server.py --port invalid\npython -B server.py\nHTTP-Prüfung: nur 127.0.0.1 auf explizitem Port 18765 oder Standardport 8765, mit diesen exakten Zielen:\nGET http://127.0.0.1:18765/\nGET http://127.0.0.1:18765/missing\nPOST http://127.0.0.1:18765/\nPUT http://127.0.0.1:18765/\nDELETE http://127.0.0.1:18765/\nPATCH http://127.0.0.1:18765/\nGET http://127.0.0.1:8765/\nGET http://127.0.0.1:8765/missing\nPOST http://127.0.0.1:8765/\nPUT http://127.0.0.1:8765/\nDELETE http://127.0.0.1:8765/\nPATCH http://127.0.0.1:8765/\nHTTP ohne Body, Credentials, Zusatzheader oder Redirects. Prüfprozess anschließend kontrolliert beenden.\n\nCriteria1 active1 outside0 unassessed; proof unverified.\nMismatch: FreeExplicit GET /; actual/expected status200/200; bodyBytes13/14; bodyDifferenttrue.\nserver.py:\n    def do_GET(self):\n        if self.path == \"/\":\n            body = b\"Hello, world!\"\n            self.send_response(200)\n            self.send_header(\"Content-Type\", \"text/plain; charset=utf-8\")\n            self.send_header(\"Content-Length\", str(len(body)))\n            self.end_headers()\n            self.wfile.write(body)\n        else:\n            self._not_found()\n\n\nS1 acquired original:\nimport argparse\nimport sys\nfrom http.server import BaseHTTPRequestHandler, HTTPServer\n\n\nclass Handler(BaseHTTPRequestHandler):\n    def _not_found(self):\n        self.send_response(404)\n        self.send_header(\"Content-Type\", \"text/plain; charset=utf-8\")\n        self.send_header(\"Content-Length\", str(len(b\"Not Found\")))\n        self.end_headers()\n        self.wfile.write(b\"Not Found\")\n\n    def _method_not_allowed(self):\n        self.send_response(405)\n        self.send_header(\"Allow\", \"GET\")\n        self.send_header(\"Content-Type\", \"text/plain; charset=utf-8\")\n        self.send_header(\"Content-Length\", str(len(b\"Method Not Allowed\")))\n        self.end_headers()\n        self.wfile.write(b\"Method Not Allowed\")\n\n",
+        "role": "User"
+      }
+    ],
+    "format": {
+      "additionalProperties": false,
+      "properties": {
+        "intent": {
+          "maxLength": 96,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "intent"
+      ],
+      "type": "object"
+    },
+    "actual_encoded_wire": {
+      "context_tokens": 16384,
+      "digest": "ContentHash(98e922ecc2db1fc5bc411293502922b5f254c3bd01711f2e58ce490845bc9866)",
+      "encoded_body_retained": false,
+      "format_bytes": 148,
+      "message_bytes": 3081,
+      "output_tokens": 1024,
+      "request_bytes": 3548,
+      "thinking": "Disabled"
+    }
+  }
+}

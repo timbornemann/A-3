@@ -1,0 +1,758 @@
+{
+  "schema": "a3.plan22.pilot-summary.v1",
+  "date": "2026-11-06",
+  "baseline_commit": "38a07ce97f4f1d84c68101e531fdb027be5fa529",
+  "baseline_tree": "927b30dba9544307c179b67d6d58a2d421830739",
+  "purpose": "Initial diagnostic pilots only; not the P10 model matrix or candidate acceptance.",
+  "attempts_retained": true,
+  "automatic_retries": 0,
+  "raw_prompts_or_model_actions_included": false,
+  "semantic_operator_reviews_available": false,
+  "attempts": [
+    {
+      "attempt_id": "20261106T140910Z-d716d966d7c243f5aac8d22436075a50",
+      "report_sha256": "b1091a045d2b8b6569b6011863ee56e3eeaccd97a1e2ba3610630fb5b605d843",
+      "artifact_directory": "target/plan22-runs/20261106T140910Z-d716d966d7c243f5aac8d22436075a50",
+      "model": "ornith-1.5:9b",
+      "model_digest": "e5df7dcdd8a263994df62d610317e07be0d6af23f96fcbd8543273058fce575e",
+      "profile": {
+        "context_limit": 8192,
+        "output_limit": 2048,
+        "parallelism": 1,
+        "schema_grounding": "FormatFieldOnly",
+        "temperature_milli": 0,
+        "thinking": false,
+        "top_p_milli": 1000
+      },
+      "case_id": "A01",
+      "variant": "development",
+      "worker_binary_sha256": "b9f0eff7befd203b35213cc4ea18a1deb795f04b0ee40036f5d67475d4ec3e1f",
+      "harness_sources_sha256": {
+        "apps/desktop/src-tauri/src/agent_session_manager.rs": "99f443f77aae77599588c67f9cfc9d37b6c88977252e8af18e1bc8888485b52a",
+        "apps/desktop/src-tauri/src/plan22_baseline.rs": "dfb88fc56ae2ec12c3d6db0bc41b95b715818646e3eb9f6499ba3734bbf28715",
+        "fixtures/local-agent-eval-v1/baseline.json": "a06ad6cc81b622b8ec67d478e3be9cb3b010415f19e47731c25ac46594a2b000",
+        "fixtures/local-agent-eval-v1/cases.py": "33b94b9f42636a3662f92e4d603e6f0412636ffdf45138c31518666a1d56bfc8",
+        "fixtures/local-agent-eval-v1/oracle.py": "07cc8a6844aa14caa63929b7ee2e9b9f4bd1f397b1dfa09372f2dd68dc97122a",
+        "fixtures/local-agent-eval-v1/run_baseline.py": "17e64d69f14287bfa619613140fd693109853d088d278dd06907497d8f8537b9",
+        "fixtures/local-agent-eval-v1/test_runner.py": "e385ecda0a24516d2ba2b437f6b22ca0c0a96568ec0a94108ec6d6b50dbdc7c3"
+      },
+      "metadata_stable": true,
+      "recorded_status": "incomplete",
+      "independent_status": "correct",
+      "independently_correct": true,
+      "false_done": false,
+      "formal_completed": false,
+      "native_exit_code": 0,
+      "session_state": "Failed",
+      "run_state": "Failed",
+      "failure_code": null,
+      "task_elapsed_millis": 69766,
+      "probe_elapsed_millis": 19202,
+      "task_provider_metrics": {
+        "calls": 28,
+        "completed": 28,
+        "format_schema_utf8_bytes": 22839,
+        "message_utf8_bytes": 111451,
+        "missing_output_usage_calls": 0,
+        "missing_prompt_usage_calls": 0,
+        "output_bytes": 16265,
+        "probe_requests": 1,
+        "provider_output_tokens": 3999,
+        "provider_prompt_tokens": 39832,
+        "record_overflow": 0,
+        "reported_output_tokens_sum": 3999,
+        "reported_prompt_tokens_sum": 39832,
+        "stream_errors": 0,
+        "thinking": false
+      },
+      "output_limit_completions": 1,
+      "ledger": {
+        "replans": 2,
+        "revision": 3,
+        "steps": [
+          "InProgress",
+          "Completed"
+        ],
+        "verification": [
+          {
+            "acceptance_criteria_count": 1,
+            "evidence_count": 0,
+            "method": "DeferredCommand",
+            "passed": null
+          },
+          {
+            "acceptance_criteria_count": 0,
+            "evidence_count": 1,
+            "method": "DiffInvariant",
+            "passed": true
+          }
+        ]
+      },
+      "product_verification": {
+        "evidence": [
+          {
+            "fresh": false,
+            "kind": "diff"
+          }
+        ],
+        "evidence_count": 1,
+        "external_oracle_evidence_imported": false,
+        "truncated": false
+      },
+      "cleanup": {
+        "agent_stopped": true,
+        "conversation_stopped": true,
+        "scheduler_joined": true
+      },
+      "oracle_checks": [
+        {
+          "id": "protected:pyproject.toml",
+          "passed": true
+        },
+        {
+          "id": "protected:tests/__init__.py",
+          "passed": true
+        },
+        {
+          "id": "protected:tests/test_behavior.py",
+          "passed": true
+        },
+        {
+          "id": "subject.adjust.executed",
+          "passed": true
+        },
+        {
+          "id": "subject.adjust.independent_inputs",
+          "passed": true
+        },
+        {
+          "id": "existing_tests_executed",
+          "passed": true
+        },
+        {
+          "id": "nonzero_expected_test_ids",
+          "passed": true
+        },
+        {
+          "id": "existing_tests_pass",
+          "passed": true
+        }
+      ],
+      "assessment": {
+        "classification": "product_failed_after_correct_edit",
+        "reason": "The actual run ended Failed; the last general action output reached OutputLimit. No product test evidence was recorded.",
+        "success_claim": false
+      }
+    },
+    {
+      "attempt_id": "20261106T141227Z-c54158375ace4ef6810ca73cf9123e63",
+      "report_sha256": "90c60635e4feb6fa06261e8dd8315e410c4d2d844785a1b1ab8e181d339aa02b",
+      "artifact_directory": "target/plan22-runs/20261106T141227Z-c54158375ace4ef6810ca73cf9123e63",
+      "model": "qwen38-27b-iq3s:latest",
+      "model_digest": "3b8e5b0c73869bffda41a1fb4cf096cfc9bf589cd38b1776b6724bda360bc7f8",
+      "profile": {
+        "context_limit": 8192,
+        "output_limit": 2048,
+        "parallelism": 1,
+        "schema_grounding": "FormatFieldOnly",
+        "temperature_milli": 0,
+        "thinking": false,
+        "top_p_milli": 1000
+      },
+      "case_id": "A01",
+      "variant": "development",
+      "worker_binary_sha256": "b9f0eff7befd203b35213cc4ea18a1deb795f04b0ee40036f5d67475d4ec3e1f",
+      "harness_sources_sha256": {
+        "apps/desktop/src-tauri/src/agent_session_manager.rs": "99f443f77aae77599588c67f9cfc9d37b6c88977252e8af18e1bc8888485b52a",
+        "apps/desktop/src-tauri/src/plan22_baseline.rs": "dfb88fc56ae2ec12c3d6db0bc41b95b715818646e3eb9f6499ba3734bbf28715",
+        "fixtures/local-agent-eval-v1/baseline.json": "a06ad6cc81b622b8ec67d478e3be9cb3b010415f19e47731c25ac46594a2b000",
+        "fixtures/local-agent-eval-v1/cases.py": "33b94b9f42636a3662f92e4d603e6f0412636ffdf45138c31518666a1d56bfc8",
+        "fixtures/local-agent-eval-v1/oracle.py": "07cc8a6844aa14caa63929b7ee2e9b9f4bd1f397b1dfa09372f2dd68dc97122a",
+        "fixtures/local-agent-eval-v1/run_baseline.py": "17e64d69f14287bfa619613140fd693109853d088d278dd06907497d8f8537b9",
+        "fixtures/local-agent-eval-v1/test_runner.py": "e385ecda0a24516d2ba2b437f6b22ca0c0a96568ec0a94108ec6d6b50dbdc7c3"
+      },
+      "metadata_stable": true,
+      "recorded_status": "native_error",
+      "independent_status": "correct",
+      "independently_correct": true,
+      "false_done": false,
+      "formal_completed": false,
+      "native_exit_code": 101,
+      "session_state": "AwaitingApproval",
+      "run_state": "AwaitApproval",
+      "failure_code": "approval_scope_denied",
+      "task_elapsed_millis": 56903,
+      "probe_elapsed_millis": 10237,
+      "task_provider_metrics": {
+        "calls": 21,
+        "completed": 21,
+        "format_schema_utf8_bytes": 13587,
+        "message_utf8_bytes": 81228,
+        "missing_output_usage_calls": 0,
+        "missing_prompt_usage_calls": 0,
+        "output_bytes": 3818,
+        "probe_requests": 1,
+        "provider_output_tokens": 1218,
+        "provider_prompt_tokens": 28020,
+        "record_overflow": 0,
+        "reported_output_tokens_sum": 1218,
+        "reported_prompt_tokens_sum": 28020,
+        "stream_errors": 0,
+        "thinking": false
+      },
+      "output_limit_completions": 0,
+      "ledger": {
+        "replans": 1,
+        "revision": 2,
+        "steps": [
+          "AwaitingApproval",
+          "Completed"
+        ],
+        "verification": [
+          {
+            "acceptance_criteria_count": 1,
+            "evidence_count": 0,
+            "method": "DeferredCommand",
+            "passed": null
+          },
+          {
+            "acceptance_criteria_count": 0,
+            "evidence_count": 1,
+            "method": "DiffInvariant",
+            "passed": true
+          }
+        ]
+      },
+      "product_verification": null,
+      "cleanup": {
+        "agent_stopped": true,
+        "conversation_stopped": true,
+        "scheduler_joined": true
+      },
+      "oracle_checks": [
+        {
+          "id": "protected:pyproject.toml",
+          "passed": true
+        },
+        {
+          "id": "protected:tests/__init__.py",
+          "passed": true
+        },
+        {
+          "id": "protected:tests/test_behavior.py",
+          "passed": true
+        },
+        {
+          "id": "subject.adjust.executed",
+          "passed": true
+        },
+        {
+          "id": "subject.adjust.independent_inputs",
+          "passed": true
+        },
+        {
+          "id": "existing_tests_executed",
+          "passed": true
+        },
+        {
+          "id": "nonzero_expected_test_ids",
+          "passed": true
+        },
+        {
+          "id": "existing_tests_pass",
+          "passed": true
+        }
+      ],
+      "assessment": {
+        "classification": "measurement_scope_admission_failure",
+        "reason": "The pending action was classified execute_open; the first worker admitted KnownSafe only, and would reject even exact-approved Open argv. The actual argv was not retained, so matching the manifest is not proven. This is neither a successful agent run nor an isolated product failure.",
+        "success_claim": false
+      }
+    },
+    {
+      "attempt_id": "20261106T141430Z-a88ec36f8e8b4c24b54345f61be87fc4",
+      "report_sha256": "aecae1656492acd81ffd39ec68b8902d64476e07db5dd07fa5926a8c2514891a",
+      "artifact_directory": "target/plan22-runs/20261106T141430Z-a88ec36f8e8b4c24b54345f61be87fc4",
+      "model": "qwen38-4k:latest",
+      "model_digest": "45fe387a57ba327d23477d8d2cfd095c767abb2d69195662f47863295b3cbf0e",
+      "profile": {
+        "context_limit": 4096,
+        "output_limit": 1024,
+        "parallelism": 1,
+        "schema_grounding": "FormatFieldOnly",
+        "temperature_milli": 0,
+        "thinking": false,
+        "top_p_milli": 1000
+      },
+      "case_id": "Q01",
+      "variant": "development",
+      "worker_binary_sha256": "b9f0eff7befd203b35213cc4ea18a1deb795f04b0ee40036f5d67475d4ec3e1f",
+      "harness_sources_sha256": {
+        "apps/desktop/src-tauri/src/agent_session_manager.rs": "99f443f77aae77599588c67f9cfc9d37b6c88977252e8af18e1bc8888485b52a",
+        "apps/desktop/src-tauri/src/plan22_baseline.rs": "dfb88fc56ae2ec12c3d6db0bc41b95b715818646e3eb9f6499ba3734bbf28715",
+        "fixtures/local-agent-eval-v1/baseline.json": "a06ad6cc81b622b8ec67d478e3be9cb3b010415f19e47731c25ac46594a2b000",
+        "fixtures/local-agent-eval-v1/cases.py": "33b94b9f42636a3662f92e4d603e6f0412636ffdf45138c31518666a1d56bfc8",
+        "fixtures/local-agent-eval-v1/oracle.py": "07cc8a6844aa14caa63929b7ee2e9b9f4bd1f397b1dfa09372f2dd68dc97122a",
+        "fixtures/local-agent-eval-v1/run_baseline.py": "17e64d69f14287bfa619613140fd693109853d088d278dd06907497d8f8537b9",
+        "fixtures/local-agent-eval-v1/test_runner.py": "e385ecda0a24516d2ba2b437f6b22ca0c0a96568ec0a94108ec6d6b50dbdc7c3"
+      },
+      "metadata_stable": true,
+      "recorded_status": "manual_review_pending",
+      "independent_status": "manual_review_pending",
+      "independently_correct": false,
+      "false_done": false,
+      "formal_completed": false,
+      "native_exit_code": 0,
+      "session_state": "AwaitingUser",
+      "run_state": null,
+      "failure_code": null,
+      "task_elapsed_millis": 150,
+      "probe_elapsed_millis": 14666,
+      "task_provider_metrics": {
+        "calls": 0,
+        "completed": 0,
+        "format_schema_utf8_bytes": 0,
+        "message_utf8_bytes": 0,
+        "missing_output_usage_calls": 0,
+        "missing_prompt_usage_calls": 0,
+        "output_bytes": 0,
+        "probe_requests": 1,
+        "provider_output_tokens": 0,
+        "provider_prompt_tokens": 0,
+        "record_overflow": 0,
+        "reported_output_tokens_sum": 0,
+        "reported_prompt_tokens_sum": 0,
+        "stream_errors": 0,
+        "thinking": false
+      },
+      "output_limit_completions": 0,
+      "ledger": null,
+      "product_verification": null,
+      "cleanup": {
+        "agent_stopped": true,
+        "conversation_stopped": true,
+        "scheduler_joined": true
+      },
+      "oracle_checks": [
+        {
+          "id": "protected:storage.py",
+          "passed": true
+        },
+        {
+          "id": "protected:plugins.py",
+          "passed": true
+        },
+        {
+          "id": "protected:manager.py",
+          "passed": true
+        },
+        {
+          "id": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "id": "operator_semantic_review_record",
+          "passed": false
+        }
+      ],
+      "assessment": {
+        "classification": "product_context_halt_before_generation",
+        "reason": "The session became AwaitingUser with an explicit context-capacity answer, after the capability probe and before any task generation. A safe halt does not solve Q01.",
+        "success_claim": false
+      }
+    },
+    {
+      "case_id": "A09",
+      "variant": "development",
+      "model": "ornith-1.5:9b",
+      "profile": {
+        "context_limit": 8192,
+        "output_limit": 2048,
+        "parallelism": 1,
+        "schema_grounding": "FormatFieldOnly",
+        "temperature_milli": 0,
+        "thinking": false,
+        "top_p_milli": 1000
+      },
+      "worker_binary_sha256": "f5344c7c9509c2377496266e77fb3294cf0c6bd37eb49ab2867f7f70454e7f5e",
+      "harness_sources_sha256": {
+        "apps/desktop/src-tauri/src/agent_session_manager.rs": "99f443f77aae77599588c67f9cfc9d37b6c88977252e8af18e1bc8888485b52a",
+        "apps/desktop/src-tauri/src/plan22_baseline.rs": "b0a283105c0542e453625e325200fa30f91e2a781f2e81ab1eb1b9f58ba28545",
+        "apps/desktop/src-tauri/src/plan22_interventions.rs": "7af21946422a7471488e06628c7291787a341abc57e02fbff0a668277aecb467",
+        "fixtures/local-agent-eval-v1/baseline.json": "a06ad6cc81b622b8ec67d478e3be9cb3b010415f19e47731c25ac46594a2b000",
+        "fixtures/local-agent-eval-v1/cases.py": "55ec2880c53e0f254a1e3b06ed260a3872c33f8a66b8a319f5497070becc9565",
+        "fixtures/local-agent-eval-v1/oracle.py": "a7748b7a837294a28e3e38534ac071f77ecf1a8d29929a59a8427349c4bf1696",
+        "fixtures/local-agent-eval-v1/run_baseline.py": "e9f91c9d1940bd47014e236af7c721f736dd6717cc0750da8430c9be08630606",
+        "fixtures/local-agent-eval-v1/supervisor.py": "440628e5ab9b3d0f2122ccaa2c19a8d8cf21483aed17eee0b81fb655d0c01679",
+        "fixtures/local-agent-eval-v1/test_runner.py": "e385ecda0a24516d2ba2b437f6b22ca0c0a96568ec0a94108ec6d6b50dbdc7c3",
+        "fixtures/local-agent-eval-v1/test_supervisor.py": "9681214c6434503f225784d08fc2d58f743cb2ee69eb485ca5136157e0eaf09a"
+      },
+      "metadata_stable": true,
+      "independently_correct": false,
+      "false_done": false,
+      "false_done_review_pending": false,
+      "false_done_environment_pending": null,
+      "attempt_id": "20261106T153057Z-898cd188eea84f37860b350ba670a227",
+      "artifact_directory": "target/plan22-runs/20261106T153057Z-898cd188eea84f37860b350ba670a227",
+      "report_sha256": "42e34f4a1d05074b8a73a0694f63701d36ce0ddb4dedef12e915eac28c1ceb3e",
+      "worker_report_sha256": "db42094f2d8147217364908d297b7f7a88e075f6bd06149e683e5b1368bab0d0",
+      "model_digest": "e5df7dcdd8a263994df62d610317e07be0d6af23f96fcbd8543273058fce575e",
+      "recorded_status": "native_error",
+      "independent_status": "incorrect",
+      "native_exit_code": 4294967295,
+      "formal_completed": false,
+      "session_state": "Failed",
+      "run_state": "Execute",
+      "failure_code": null,
+      "harness_status": null,
+      "product_stop_reason": null,
+      "executor_failure": null,
+      "task_elapsed_millis": null,
+      "probe_elapsed_millis": 11757,
+      "cleanup": null,
+      "task_provider_metrics": {
+        "calls": 7,
+        "completed": 7,
+        "counter": "ConservativeUtf8BytesV1",
+        "format_schema_utf8_bytes": 5379,
+        "message_utf8_bytes": 28134,
+        "missing_output_usage_calls": 0,
+        "missing_prompt_usage_calls": 0,
+        "output_bytes": 2543,
+        "probe_metric_kind": "capability_probe_invocations_excluding_catalog",
+        "probe_requests": 1,
+        "provider_output_tokens": 817,
+        "provider_prompt_tokens": 8676,
+        "record_overflow": 0,
+        "reported_output_tokens_sum": 817,
+        "reported_prompt_tokens_sum": 8676,
+        "schema_grounding": "FormatFieldOnly",
+        "stream_errors": 0,
+        "thinking": false
+      },
+      "trusted_observations": {},
+      "oracle_checks": [
+        {
+          "id": "protected:pyproject.toml",
+          "passed": true
+        },
+        {
+          "id": "protected:tests/__init__.py",
+          "passed": true
+        },
+        {
+          "id": "protected:tests/test_behavior.py",
+          "passed": true
+        },
+        {
+          "id": "controlled:user_edit_injected",
+          "passed": false
+        },
+        {
+          "id": "controlled:stale_patch_rejected",
+          "passed": false
+        },
+        {
+          "id": "controlled:user_edit_preserved",
+          "passed": false
+        },
+        {
+          "id": "subject.render.executed",
+          "passed": true
+        },
+        {
+          "id": "subject.render.independent_inputs",
+          "passed": false
+        },
+        {
+          "id": "actual_user_owned_prefix_preserved",
+          "passed": false
+        },
+        {
+          "id": "existing_tests_executed",
+          "passed": true
+        },
+        {
+          "id": "nonzero_expected_test_ids",
+          "passed": true
+        },
+        {
+          "id": "existing_tests_pass",
+          "passed": false
+        }
+      ],
+      "assessment": {
+        "classification": "measurement_interrupted",
+        "reason": "The operator stopped this owned worker before any intervention marker after detecting a protocol-field mismatch. The partial SessionFailed/RunExecute report also exposed a measurement stop-detection defect. It is not a valid model-quality sample.",
+        "success_claim": false
+      },
+      "operator_stop_sha256": "f665b19b8d47afa909d8424d0c264c11f59eb3b0fb2f3c13e1ff5ab0919485b7"
+    },
+    {
+      "case_id": "Q05",
+      "variant": "development",
+      "model": "ornith-1.5:9b",
+      "profile": {
+        "context_limit": 8192,
+        "output_limit": 2048,
+        "parallelism": 1,
+        "schema_grounding": "FormatFieldOnly",
+        "temperature_milli": 0,
+        "thinking": false,
+        "top_p_milli": 1000
+      },
+      "worker_binary_sha256": "6840604d48a4e31ea4740809788d816c3e92f869d4552854f0758d04d4e26133",
+      "harness_sources_sha256": {
+        "apps/desktop/src-tauri/src/agent_session_manager.rs": "99f443f77aae77599588c67f9cfc9d37b6c88977252e8af18e1bc8888485b52a",
+        "apps/desktop/src-tauri/src/plan22_baseline.rs": "0fba938d8cc9d4fdc0bc72bef8af6bc7d8eb8486e2b885c1b56cdb2b2703e623",
+        "apps/desktop/src-tauri/src/plan22_interventions.rs": "7af21946422a7471488e06628c7291787a341abc57e02fbff0a668277aecb467",
+        "fixtures/local-agent-eval-v1/baseline.json": "a06ad6cc81b622b8ec67d478e3be9cb3b010415f19e47731c25ac46594a2b000",
+        "fixtures/local-agent-eval-v1/cases.py": "87922aa597e3235633e3e6a3340317c2941c4b0f3d911898e61141f192ecdb15",
+        "fixtures/local-agent-eval-v1/oracle.py": "570f91b226edc4fe341a831dad167596555c4ee96e03c28684fc614bf6b23594",
+        "fixtures/local-agent-eval-v1/run_baseline.py": "c3c8bff99f4547daa74b936f0a4832ef0f22880d9c78c022ce17f8b8424fa9ef",
+        "fixtures/local-agent-eval-v1/supervisor.py": "d3ffd03af010332ac0dda5666a63d77aab80747ab352c5f254c63fc256c42e2a",
+        "fixtures/local-agent-eval-v1/test_runner.py": "e385ecda0a24516d2ba2b437f6b22ca0c0a96568ec0a94108ec6d6b50dbdc7c3",
+        "fixtures/local-agent-eval-v1/test_supervisor.py": "d6f2941f3e41e66cb3a315669dd5f8c9fec8a341345e55ef2715eefe39dab022"
+      },
+      "metadata_stable": true,
+      "independently_correct": false,
+      "false_done": false,
+      "false_done_review_pending": false,
+      "false_done_environment_pending": false,
+      "attempt_id": "20261106T163012Z-b2f1016d87ec439ea524b98b31aee8a9",
+      "artifact_directory": "target/plan22-runs/20261106T163012Z-b2f1016d87ec439ea524b98b31aee8a9",
+      "report_sha256": "5d7660aa5da9c572c0f936c4fa9329cf7719e508b00f81ae85b1a04762f81b14",
+      "worker_report_sha256": "307daf3f3ae0811bb4a90dd003ff0599731f451858097c30fa6b4dfc5e68caee",
+      "model_digest": "e5df7dcdd8a263994df62d610317e07be0d6af23f96fcbd8543273058fce575e",
+      "recorded_status": "product_halted",
+      "independent_status": "manual_review_pending",
+      "native_exit_code": 0,
+      "formal_completed": false,
+      "session_state": "AwaitingUser",
+      "run_state": null,
+      "failure_code": null,
+      "harness_status": "completed",
+      "product_stop_reason": null,
+      "executor_failure": null,
+      "task_elapsed_millis": 17571,
+      "probe_elapsed_millis": 6496,
+      "cleanup": {
+        "agent_stopped": true,
+        "conversation_stopped": true,
+        "scheduler_joined": true
+      },
+      "task_provider_metrics": {
+        "calls": 8,
+        "completed": 8,
+        "counter": "ConservativeUtf8BytesV1",
+        "format_schema_utf8_bytes": 12574,
+        "message_utf8_bytes": 18974,
+        "missing_output_usage_calls": 0,
+        "missing_prompt_usage_calls": 0,
+        "output_bytes": 3291,
+        "probe_metric_kind": "capability_probe_invocations_excluding_catalog",
+        "probe_requests": 1,
+        "provider_output_tokens": 962,
+        "provider_prompt_tokens": 4323,
+        "record_overflow": 0,
+        "reported_output_tokens_sum": 962,
+        "reported_prompt_tokens_sum": 4323,
+        "schema_grounding": "FormatFieldOnly",
+        "stream_errors": 0,
+        "thinking": false
+      },
+      "trusted_observations": {
+        "fresh_evidence_observed": true,
+        "initial_answer_observed": true,
+        "source_edit_injected": true
+      },
+      "oracle_checks": [
+        {
+          "id": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "id": "operator_semantic_review_record",
+          "passed": false
+        },
+        {
+          "id": "post_edit_config_bytes",
+          "passed": true
+        },
+        {
+          "id": "controlled:initial_answer_observed",
+          "passed": true
+        },
+        {
+          "id": "controlled:source_edit_injected",
+          "passed": true
+        },
+        {
+          "id": "controlled:fresh_evidence_observed",
+          "passed": true
+        }
+      ],
+      "assessment": {
+        "classification": "product_halted_after_actual_source_edit",
+        "reason": "Two Ask turns used the same session; the actual controlled source change and fresh revision binding were observed. The second research turn halted AwaitingUser after its bounded repair budget. This is neither a complete answer nor an operator-reviewed semantic pass.",
+        "success_claim": false
+      }
+    },
+    {
+      "case_id": "A09",
+      "variant": "development",
+      "model": "qwen38-27b-iq3s:latest",
+      "profile": {
+        "context_limit": 8192,
+        "output_limit": 2048,
+        "parallelism": 1,
+        "schema_grounding": "FormatFieldOnly",
+        "temperature_milli": 0,
+        "thinking": false,
+        "top_p_milli": 1000
+      },
+      "worker_binary_sha256": "b98057ed79167ed83059d413a4ccc15e14cbea24fdde0eee0ac44c1d2e031241",
+      "harness_sources_sha256": {
+        "apps/desktop/src-tauri/src/agent_session_manager.rs": "99f443f77aae77599588c67f9cfc9d37b6c88977252e8af18e1bc8888485b52a",
+        "apps/desktop/src-tauri/src/plan22_baseline.rs": "84da1d5ec5efb0ab05b72a5796a14838e83c40a3dfe6a29bd4a7b8dd223b2607",
+        "apps/desktop/src-tauri/src/plan22_interventions.rs": "862a9e9bd9fd017e97a1b422a13ad161a7655339f4faa323cb4cfe530764ee50",
+        "fixtures/local-agent-eval-v1/baseline.json": "a06ad6cc81b622b8ec67d478e3be9cb3b010415f19e47731c25ac46594a2b000",
+        "fixtures/local-agent-eval-v1/cases.py": "562aeb02e095ddb6e1e49b3c37233b0cd27e07944920ffa802b00e01a06b2ca6",
+        "fixtures/local-agent-eval-v1/oracle.py": "570f91b226edc4fe341a831dad167596555c4ee96e03c28684fc614bf6b23594",
+        "fixtures/local-agent-eval-v1/order_trace.py": "a58eb0b2c13c64f83518e9a5b8c73b14e743aec5fdaab55f135e150c1fffef9b",
+        "fixtures/local-agent-eval-v1/run_baseline.py": "3effe3688768f03c6bebb39718c96c8e67db1aa36457c1585ebcbf69dab01de2",
+        "fixtures/local-agent-eval-v1/supervisor.py": "05443c303545a4638cc4736803ba55159d6ccfb266bb6230ce81440ca597409a",
+        "fixtures/local-agent-eval-v1/test_order_trace.py": "3e53d5ccafc86f4a79a9ed75d472fc5d8d03104040740ced389f8c41eeadf346",
+        "fixtures/local-agent-eval-v1/test_runner.py": "e385ecda0a24516d2ba2b437f6b22ca0c0a96568ec0a94108ec6d6b50dbdc7c3",
+        "fixtures/local-agent-eval-v1/test_supervisor.py": "d6f2941f3e41e66cb3a315669dd5f8c9fec8a341345e55ef2715eefe39dab022"
+      },
+      "metadata_stable": true,
+      "independently_correct": false,
+      "false_done": false,
+      "false_done_review_pending": false,
+      "false_done_environment_pending": false,
+      "attempt_id": "20261106T164921Z-6ed9b9e0d9a746eba115885cfba06706",
+      "artifact_directory": "target/plan22-runs/20261106T164921Z-6ed9b9e0d9a746eba115885cfba06706",
+      "report_sha256": "89dc93d60b2b18ed27e405e9bf2f451f724cd0a802e878a150c06e7a9e0dc8fb",
+      "worker_report_sha256": "5d81f0d97caf3f6ec9166761cd385e8a0b5f69bc7a118002675cc92155ddc2b6",
+      "model_digest": "3b8e5b0c73869bffda41a1fb4cf096cfc9bf589cd38b1776b6724bda360bc7f8",
+      "recorded_status": "product_failed",
+      "independent_status": "incorrect",
+      "native_exit_code": 0,
+      "formal_completed": false,
+      "session_state": "Failed",
+      "run_state": "Execute",
+      "failure_code": null,
+      "harness_status": "completed",
+      "product_stop_reason": "settled_product_owner",
+      "executor_failure": "Unavailable",
+      "task_elapsed_millis": 21770,
+      "probe_elapsed_millis": 9642,
+      "cleanup": {
+        "agent_stopped": true,
+        "conversation_stopped": true,
+        "scheduler_joined": true
+      },
+      "exact_grants": 0,
+      "ledger": {
+        "replans": 0,
+        "revision": 1,
+        "steps": [
+          "InProgress",
+          "Pending"
+        ],
+        "verification": [
+          {
+            "acceptance_criteria_count": 0,
+            "evidence_count": 0,
+            "method": "DiffInvariant",
+            "passed": null
+          },
+          {
+            "acceptance_criteria_count": 1,
+            "evidence_count": 0,
+            "method": "DeferredCommand",
+            "passed": null
+          }
+        ]
+      },
+      "product_verification": null,
+      "task_provider_metrics": {
+        "calls": 3,
+        "completed": 3,
+        "counter": "ConservativeUtf8BytesV1",
+        "format_schema_utf8_bytes": 3591,
+        "message_utf8_bytes": 12195,
+        "missing_output_usage_calls": 0,
+        "missing_prompt_usage_calls": 0,
+        "output_bytes": 1591,
+        "probe_metric_kind": "capability_probe_invocations_excluding_catalog",
+        "probe_requests": 1,
+        "provider_output_tokens": 439,
+        "provider_prompt_tokens": 2854,
+        "record_overflow": 0,
+        "reported_output_tokens_sum": 439,
+        "reported_prompt_tokens_sum": 2854,
+        "schema_grounding": "FormatFieldOnly",
+        "stream_errors": 0,
+        "thinking": false
+      },
+      "trusted_observations": {},
+      "oracle_checks": [
+        {
+          "id": "protected:pyproject.toml",
+          "passed": true
+        },
+        {
+          "id": "protected:tests/__init__.py",
+          "passed": true
+        },
+        {
+          "id": "protected:tests/test_behavior.py",
+          "passed": true
+        },
+        {
+          "id": "controlled:user_edit_injected",
+          "passed": false
+        },
+        {
+          "id": "controlled:stale_patch_rejected",
+          "passed": false
+        },
+        {
+          "id": "controlled:user_edit_preserved",
+          "passed": false
+        },
+        {
+          "id": "subject.render.executed",
+          "passed": true
+        },
+        {
+          "id": "subject.render.independent_inputs",
+          "passed": false
+        },
+        {
+          "id": "actual_user_owned_prefix_preserved",
+          "passed": false
+        },
+        {
+          "id": "existing_tests_executed",
+          "passed": true
+        },
+        {
+          "id": "nonzero_expected_test_ids",
+          "passed": true
+        },
+        {
+          "id": "existing_tests_pass",
+          "passed": false
+        }
+      ],
+      "assessment": {
+        "classification": "product_failed_before_first_patch_approval",
+        "reason": "The real Qwen27 production entry materialized an Agent task after three task-model calls. The settled executor returned its typed Unavailable error with SessionFailed and RunExecute before the first patch grant. Measurement exited normally and all owned components stopped. No A09 user edit or successful recovery is claimed.",
+        "success_claim": false
+      }
+    }
+  ]
+}

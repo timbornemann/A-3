@@ -1,14 +1,15 @@
 use crate::{catalog::is_corruption, goal_contract_repository, task_ledger_repository};
 use a3_application::{
-    AgentActionStoreFailure, ContextToolResultStatus, RecordedAgentRead, RunEventPage,
-    RunEventPageLimit, RunJournalStoreFailure, TaskLedgerStoreFailure, TaskLedgerStoreVersion,
+    AgentActionStoreFailure, ContextToolResultStatus, EditNoChangeReceipt, RecordedAgentRead,
+    RunEventPage, RunEventPageLimit, RunJournalStoreFailure, TaskLedgerStoreFailure,
+    TaskLedgerStoreVersion,
 };
 use a3_domain::{
     AgentActionLimit, AgentControllerState, AgentRepairLimit, AgentRun, AgentRunBudget,
     AgentRunDurationLimit, AgentRunId, AgentRunIdentity, AgentRunMaterializedState,
     AgentRunTimestamp, AgentRunTiming, AgentRunUsage, AgentTokenLimit, AgentToolEvidenceLocation,
     AgentTurnActionClass, AgentTurnCharge, AgentTurnLimit, AgentTurnRepairUsage,
-    GoalContractRevision, ModelProfileId, ModelProfileReference, ModelProfileVersion,
+    GoalContractRevision, IndexRunId, ModelProfileId, ModelProfileReference, ModelProfileVersion,
     ModelTokenCount, RunEvent, RunEventCode, RunEventId, RunEventIdentity, RunEventKind,
     RunEventOccurrence, RunEventOutcome, RunEventPayload, RunEventRedaction,
     RunEventRedactionSource, RunEventSequence, RunEventSubject, RunPayloadDigest, SnapshotId,
@@ -83,7 +84,8 @@ pub(crate) async fn create(
             )
             .await
             .map_err(classify_unexpected_constraint)?;
-        write_event(&transaction, start_event).await
+        write_event(&transaction, start_event).await?;
+        goal_contract_repository::phase_reservations::link_run(&transaction, worktree_id, run).await
     }
     .await;
     close_write_transaction(transaction, result).await
@@ -117,6 +119,7 @@ pub(crate) async fn append_agent_read(
     expected_last_sequence: RunEventSequence,
     run: &AgentRun,
     read: &RecordedAgentRead,
+    schema_version: u32,
 ) -> Result<(), RunJournalRepositoryError> {
     validate_recorded_read(run, read)?;
     let transaction = connection
@@ -145,12 +148,37 @@ pub(crate) async fn append_agent_read(
                     .await.map_err(classify_unexpected_constraint)?;
             }
         }
-        complete_agent_tool_attempt(&transaction, read).await
+        let attempt = complete_agent_tool_attempt(&transaction, read).await?;
+        if schema_version >= crate::source_read_repository::SCHEMA_VERSION {
+            crate::source_read_repository::record_original(
+                &transaction, worktree_id, expected_last_sequence, attempt, read,
+            ).await?;
+        }
+        if schema_version >= crate::source_read_repository::CALLER_SCHEMA_VERSION {
+            crate::source_read_repository::record_caller_relocalization(
+                &transaction, worktree_id, expected_last_sequence, run, attempt, read,
+            ).await?;
+        } else if read.caller_relocalization().is_some() {
+            return Err(RunJournalRepositoryError::InvalidInput);
+        }
+        Ok(())
     }
     .await;
     close_write_transaction(transaction, result).await
 }
 
+/// Closed mutually exclusive proof purpose for this one existing CAS transaction.
+#[derive(Clone, Copy)]
+pub(crate) enum LedgerActionProof<'a> {
+    Ordinary,
+    EditNoChange(&'a EditNoChangeReceipt),
+    HttpNoChangeWindow {
+        project: &'a a3_domain::ProjectIdentity,
+        proof: &'a a3_application::HttpNoChangeWindowMaterialProof,
+    },
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn append_ledger_action(
     connection: &Connection,
     worktree_id: WorktreeId,
@@ -159,6 +187,9 @@ pub(crate) async fn append_ledger_action(
     ledger: &a3_domain::TaskLedger,
     run: &AgentRun,
     event: &RunEvent,
+    require_current_snapshot: bool,
+    expected_index_run: Option<IndexRunId>,
+    proof: LedgerActionProof<'_>,
 ) -> Result<TaskLedgerStoreVersion, RunJournalRepositoryError> {
     if ledger.goal_contract() != run.goal_contract() {
         return Err(RunJournalRepositoryError::InvalidInput);
@@ -168,6 +199,108 @@ pub(crate) async fn append_ledger_action(
         .await
         .map_err(RunJournalRepositoryError::Begin)?;
     let result = async {
+        if require_current_snapshot || expected_index_run.is_some() {
+            let mut rows = transaction
+                .query(
+                    "SELECT 1 WHERE ?2 = (
+                        SELECT snapshot_id FROM index_runs
+                        WHERE worktree_id = ?1 AND status = 'published'
+                        ORDER BY run_sequence DESC LIMIT 1
+                     )",
+                    params![id_bytes(worktree_id), id_bytes(event.snapshot_id())],
+                )
+                .await
+                .map_err(RunJournalRepositoryError::Read)?;
+            if rows
+                .next()
+                .await
+                .map_err(RunJournalRepositoryError::Read)?
+                .is_none()
+            {
+                return Err(RunJournalRepositoryError::SnapshotConflict);
+            }
+        }
+        // Stronger candidate Apply contract. This is the same Immediate write transaction:
+        // no competing publication can win between this exact-index check and either CAS.
+        if let Some(expected) = expected_index_run {
+            let mut rows = transaction
+                .query(
+                    "SELECT 1 WHERE ?2 = (
+                    SELECT index_run_id FROM index_runs
+                    WHERE worktree_id = ?1 AND status = 'published'
+                    ORDER BY run_sequence DESC LIMIT 1
+                 )",
+                    params![id_bytes(worktree_id), id_bytes(expected)],
+                )
+                .await
+                .map_err(RunJournalRepositoryError::Read)?;
+            if rows
+                .next()
+                .await
+                .map_err(RunJournalRepositoryError::Read)?
+                .is_none()
+            {
+                return Err(RunJournalRepositoryError::SnapshotConflict);
+            }
+        }
+        if let LedgerActionProof::EditNoChange(receipt) = proof {
+            if expected_index_run != Some(receipt.index()) {
+                return Err(RunJournalRepositoryError::InvalidInput);
+            }
+            // Preserve the ordinary conflict classifications before the narrower fact guard.
+            let old = task_ledger_repository::load_from_transaction(
+                &transaction,
+                worktree_id,
+                ledger.task_id(),
+            )
+            .await
+            .map_err(RunJournalRepositoryError::TaskLedger)?
+            .ok_or(RunJournalRepositoryError::RunNotFound)?;
+            if old.version() != expected_ledger_version {
+                return Err(RunJournalRepositoryError::TaskLedger(
+                    task_ledger_repository::TaskLedgerRepositoryError::VersionConflict,
+                ));
+            }
+            let previous = load_run_from_transaction(&transaction, worktree_id, run.id())
+                .await?
+                .ok_or(RunJournalRepositoryError::RunNotFound)?;
+            if previous.last_event_sequence() != expected_last_sequence {
+                return Err(RunJournalRepositoryError::SequenceConflict);
+            }
+            crate::edit_no_change_repository::guard_and_abandon(
+                &transaction,
+                worktree_id,
+                expected_ledger_version,
+                expected_last_sequence,
+                ledger,
+                run,
+                event,
+                receipt,
+            )
+            .await
+            .map_err(RunJournalRepositoryError::NoChangeGuard)?;
+        }
+        if let LedgerActionProof::HttpNoChangeWindow { project, proof } = proof {
+            let owner=proof.closed_origin().fact().owner();
+            if project.worktree().id()!=worktree_id || expected_index_run!=Some(owner.index) {
+                return Err(RunJournalRepositoryError::InvalidInput);
+            }
+            crate::http_correction_plan_repository::no_change_window_commit::guard(&transaction,
+                crate::http_correction_plan_repository::no_change_window_commit::MaterialCommitFrame {
+                    project,version:expected_ledger_version,sequence:expected_last_sequence,
+                    ledger,run,event,proof,
+                }).await.map_err(RunJournalRepositoryError::NoChangeWindowGuard)?;
+        }
+        validate_planning_transition_in_transaction(
+            &transaction,
+            worktree_id,
+            expected_ledger_version,
+            expected_last_sequence,
+            ledger,
+            run,
+            event,
+        )
+        .await?;
         let next_version = task_ledger_repository::replace_in_transaction(
             &transaction,
             worktree_id,
@@ -243,6 +376,7 @@ pub(crate) async fn append_in_transaction(
     if changed != 1 {
         return Err(RunJournalRepositoryError::SequenceConflict);
     }
+    validate_planning_pair_in_transaction(transaction, worktree_id, run).await?;
     Ok(())
 }
 
@@ -358,7 +492,7 @@ async fn write_agent_read(
 async fn complete_agent_tool_attempt(
     transaction: &Transaction,
     read: &RecordedAgentRead,
-) -> Result<(), RunJournalRepositoryError> {
+) -> Result<i64, RunJournalRepositoryError> {
     let event = read.event();
     let result = read.context_result();
     let mut rows = transaction
@@ -411,7 +545,7 @@ async fn complete_agent_tool_attempt(
     if changed != 1 {
         return Err(RunJournalRepositoryError::InvalidInput);
     }
-    Ok(())
+    Ok(attempt_sequence)
 }
 
 const fn tool_result_status_text(status: ContextToolResultStatus) -> &'static str {
@@ -432,7 +566,14 @@ pub(crate) async fn load_run(
         .transaction_with_behavior(TransactionBehavior::Deferred)
         .await
         .map_err(RunJournalRepositoryError::Begin)?;
-    let result = load_run_from_transaction(&transaction, worktree_id, run_id).await;
+    let result = async {
+        let run = load_run_from_transaction(&transaction, worktree_id, run_id).await?;
+        if let Some(run) = &run {
+            validate_planning_pair_in_transaction(&transaction, worktree_id, run).await?;
+        }
+        Ok(run)
+    }
+    .await;
     close_read_transaction(transaction, result).await
 }
 
@@ -490,7 +631,7 @@ pub(crate) async fn load_events(
     close_read_transaction(transaction, result).await
 }
 
-async fn load_run_from_transaction(
+pub(crate) async fn load_run_from_transaction(
     transaction: &Transaction,
     worktree_id: WorktreeId,
     run_id: AgentRunId,
@@ -593,6 +734,80 @@ async fn read_run_header(
     Ok(header)
 }
 
+/// Called only after the actual old pair has been loaded and before either projection changes.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn validate_planning_transition_in_transaction(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    expected_ledger_version: TaskLedgerStoreVersion,
+    expected_last_sequence: RunEventSequence,
+    ledger: &a3_domain::TaskLedger,
+    run: &AgentRun,
+    event: &RunEvent,
+) -> Result<(), RunJournalRepositoryError> {
+    if !task_ledger_repository::planning_action_required(transaction, ledger)
+        .await
+        .map_err(RunJournalRepositoryError::TaskLedger)?
+    {
+        return Ok(());
+    }
+    let old =
+        task_ledger_repository::load_from_transaction(transaction, worktree_id, ledger.task_id())
+            .await
+            .map_err(RunJournalRepositoryError::TaskLedger)?
+            .ok_or(RunJournalRepositoryError::RunNotFound)?;
+    if old.version() != expected_ledger_version {
+        return Err(RunJournalRepositoryError::TaskLedger(
+            task_ledger_repository::TaskLedgerRepositoryError::VersionConflict,
+        ));
+    }
+    let old_run = load_run_from_transaction(transaction, worktree_id, run.id())
+        .await?
+        .ok_or(RunJournalRepositoryError::RunNotFound)?;
+    if old_run.last_event_sequence() != expected_last_sequence {
+        return Err(RunJournalRepositoryError::SequenceConflict);
+    }
+    a3_application::validate_pending_planning_transition(old.ledger(), &old_run, ledger, run, event)
+        .map_err(|_| RunJournalRepositoryError::InvalidInput)
+}
+
+/// Intrinsic Ledger reads intentionally do not call this: the Ledger-first write
+/// temporarily precedes its request event. Audit/postwrite reads may inspect inert pairs.
+async fn validate_planning_pair_in_transaction(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    run: &AgentRun,
+) -> Result<(), RunJournalRepositoryError> {
+    if !task_ledger_repository::has_planning_projection(transaction, run.goal_contract().task_id())
+        .await
+        .map_err(RunJournalRepositoryError::TaskLedger)?
+    {
+        return Ok(());
+    }
+    let stored = task_ledger_repository::load_from_transaction(
+        transaction,
+        worktree_id,
+        run.goal_contract().task_id(),
+    )
+    .await
+    .map_err(RunJournalRepositoryError::TaskLedger)?
+    .ok_or(RunJournalRepositoryError::RunNotFound)?;
+    let pending = stored
+        .ledger()
+        .pending_planning()
+        .ok_or(RunJournalRepositoryError::InvalidStoredData)?;
+    // The current marker does not invalidate reads of older retained runs for this task.
+    if pending.run_id() != run.id() {
+        return Ok(());
+    }
+    let request = read_event(transaction, run.id(), pending.requested_sequence())
+        .await?
+        .ok_or(RunJournalRepositoryError::InvalidStoredData)?;
+    a3_application::validate_pending_planning_pair(stored.ledger(), run, &request)
+        .map(|_| ())
+        .map_err(|_| RunJournalRepositoryError::InvalidStoredData)
+}
+
 async fn validate_run_anchors(
     transaction: &Transaction,
     worktree_id: WorktreeId,
@@ -608,6 +823,13 @@ async fn validate_run_anchors(
     .map_err(RunJournalRepositoryError::TaskLedger)?
     .ok_or(RunJournalRepositoryError::RunNotFound)?;
     let ledger = stored_ledger.ledger();
+    if require_current_ledger_revision
+        && ledger
+            .pending_planning()
+            .is_some_and(|pending| pending.run_id() != run.id())
+    {
+        return Err(RunJournalRepositoryError::InvalidInput);
+    }
     if ledger.goal_contract() != run.goal_contract()
         || run.task_ledger_revision().get() > ledger.revision().get()
         || require_current_ledger_revision && run.task_ledger_revision() != ledger.revision()
@@ -775,7 +997,7 @@ async fn write_event(
     Ok(())
 }
 
-async fn read_event(
+pub(crate) async fn read_event(
     transaction: &Transaction,
     run_id: AgentRunId,
     sequence: RunEventSequence,
@@ -1137,6 +1359,7 @@ macro_rules! stable_id_bytes {
 
 stable_id_bytes!(
     AgentRunId,
+    IndexRunId,
     RunEventId,
     SnapshotId,
     TaskEvidenceId,
@@ -1396,12 +1619,15 @@ pub(crate) enum RunJournalRepositoryError {
     GoalContract(goal_contract_repository::GoalContractRepositoryError),
     TaskLedger(task_ledger_repository::TaskLedgerRepositoryError),
     InvalidPage(a3_application::RunEventPageError),
+    NoChangeGuard(a3_application::EditPhaseReservationFailure),
+    NoChangeWindowGuard(a3_application::EditPhaseReservationFailure),
     InvalidInput,
     InvalidStoredData,
     ResourceLimit,
     RunAlreadyExists,
     RunNotFound,
     SequenceConflict,
+    SnapshotConflict,
 }
 
 impl RunJournalRepositoryError {
@@ -1410,7 +1636,17 @@ impl RunJournalRepositoryError {
             Self::InvalidInput
             | Self::InvalidStoredData
             | Self::ResourceLimit
+            | Self::SnapshotConflict
             | Self::InvalidPage(_) => RunJournalStoreFailure::InvalidStoredData,
+            Self::NoChangeGuard(error) | Self::NoChangeWindowGuard(error) => match error {
+                a3_application::EditPhaseReservationFailure::Unavailable => {
+                    RunJournalStoreFailure::Unavailable
+                }
+                a3_application::EditPhaseReservationFailure::UnsupportedSchema => {
+                    RunJournalStoreFailure::UnsupportedSchema
+                }
+                _ => RunJournalStoreFailure::InvalidStoredData,
+            },
             Self::RunAlreadyExists => RunJournalStoreFailure::RunAlreadyExists,
             Self::RunNotFound => RunJournalStoreFailure::RunNotFound,
             Self::SequenceConflict => RunJournalStoreFailure::SequenceConflict,
@@ -1432,6 +1668,7 @@ impl RunJournalRepositoryError {
 
     pub(crate) fn classify_agent_action(&self) -> AgentActionStoreFailure {
         match self {
+            Self::SnapshotConflict => AgentActionStoreFailure::SnapshotConflict,
             Self::TaskLedger(error) => match error.classify() {
                 TaskLedgerStoreFailure::Unavailable => AgentActionStoreFailure::Unavailable,
                 TaskLedgerStoreFailure::Corrupt => AgentActionStoreFailure::Corrupt,
@@ -1478,6 +1715,11 @@ fn classify_goal_contract_failure(
             RunJournalStoreFailure::UnsupportedSchema
         }
         a3_application::GoalContractStoreFailure::InvalidStoredData
+        | a3_application::GoalContractStoreFailure::IntakeVersionConflict
+        | a3_application::GoalContractStoreFailure::IntakeNotPending
+        | a3_application::GoalContractStoreFailure::InvalidIntakePromotion
+        | a3_application::GoalContractStoreFailure::IntakeReviewVersionConflict
+        | a3_application::GoalContractStoreFailure::InvalidIntakeReview
         | a3_application::GoalContractStoreFailure::TaskAlreadyExists
         | a3_application::GoalContractStoreFailure::TaskNotFound
         | a3_application::GoalContractStoreFailure::RevisionConflict => {
@@ -1515,12 +1757,17 @@ impl fmt::Display for RunJournalRepositoryError {
             Self::GoalContract(_) => "run-journal Goal Contract could not be reconstructed",
             Self::TaskLedger(_) => "run-journal Task Ledger could not be reconstructed",
             Self::InvalidPage(_) => "run-journal event page was invalid",
+            Self::NoChangeGuard(_) => "run-journal NoChange fact guard rejected the closure",
+            Self::NoChangeWindowGuard(_) => {
+                "run-journal NoChange window material guard rejected the revision"
+            }
             Self::InvalidInput => "run-journal successor was invalid",
             Self::InvalidStoredData => "run-journal data was invalid",
             Self::ResourceLimit => "run-journal data exceeded a resource limit",
             Self::RunAlreadyExists => "agent run already exists",
             Self::RunNotFound => "agent run was not found",
             Self::SequenceConflict => "run-event sequence conflicted",
+            Self::SnapshotConflict => "required publication changed before the agent action",
         })
     }
 }
@@ -1536,12 +1783,14 @@ impl Error for RunJournalRepositoryError {
             Self::GoalContract(error) => Some(error),
             Self::TaskLedger(error) => Some(error),
             Self::InvalidPage(error) => Some(error),
+            Self::NoChangeGuard(error) | Self::NoChangeWindowGuard(error) => Some(error),
             Self::InvalidInput
             | Self::InvalidStoredData
             | Self::ResourceLimit
             | Self::RunAlreadyExists
             | Self::RunNotFound
-            | Self::SequenceConflict => None,
+            | Self::SequenceConflict
+            | Self::SnapshotConflict => None,
         }
     }
 }
@@ -1694,6 +1943,7 @@ mod tests {
                 start_event.sequence(),
                 &run,
                 &read,
+                crate::KnowledgeSchemaVersion::CURRENT.get(),
             )
             .await?;
             let mut tool_rows = connection

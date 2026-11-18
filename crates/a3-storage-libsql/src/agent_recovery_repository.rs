@@ -1,25 +1,32 @@
-use crate::{catalog::is_corruption, run_journal_repository, task_ledger_repository};
+use crate::{
+    catalog::is_corruption, loopback_http_codec, run_journal_repository, task_ledger_repository,
+    verification_evidence_repository as verification,
+};
 use a3_application::{
-    AgentMutationResultRecord, AgentRecoveryChoice, AgentRecoveryStoreFailure,
-    TaskLedgerStoreFailure, TaskLedgerStoreVersion,
+    AgentControllerControl, AgentMutationResultRecord, AgentRecoveryChoice,
+    AgentRecoveryStoreFailure, ContextToolResultDigest, TaskLedgerStoreFailure,
+    TaskLedgerStoreVersion, VerificationEvidenceStoreFailure,
 };
 use a3_domain::{
     AgentMutationAttempt, AgentMutationDisposition, AgentMutationKind, AgentRun, AgentRunId,
     AgentRunTimestamp, AgentToolAttempt, AgentToolAttemptNumber, AgentToolAttemptStatus,
-    AgentToolEvidence, ContentHash, EvidenceRef, FileRevision, MutationActionFingerprint,
-    MutationReconciliation, RepositoryPath, RunEvent, RunEventCode, RunEventKind, RunEventOutcome,
-    RunEventSequence, RunEventSubject, SnapshotId, SourcePosition, SourceRange, TaskEvidenceId,
-    TaskLedger, ToolRunId, WorktreeId,
+    AgentToolEvidence, ContentHash, EvidenceRef, FileRevision, LoopbackHttpEvidence,
+    MutationActionFingerprint, MutationReconciliation, RepositoryPath, RunEvent, RunEventCode,
+    RunEventKind, RunEventOutcome, RunEventSequence, RunEventSubject, SnapshotId, SourcePosition,
+    SourceRange, TaskEvidenceId, TaskLedger, ToolRunId, VerificationEvidence, WorktreeId,
 };
 use libsql::{Connection, Transaction, TransactionBehavior, Value, params, params_from_iter};
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
+use std::time::Duration;
 
 const SQLITE_CONSTRAINT: i32 = 19;
 const EVIDENCE_QUERY_BATCH: usize = 512;
 const MAX_RECOVERY_EVIDENCE: usize = 16_384;
 const MAX_MUTATION_ATTEMPTS: usize = 4_096;
+#[path = "loopback_mismatch_repository.rs"]
+pub(crate) mod mismatch;
 
 pub(crate) async fn begin_tool_attempt(
     connection: &Connection,
@@ -33,38 +40,55 @@ pub(crate) async fn begin_tool_attempt(
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .await
         .map_err(AgentRecoveryRepositoryError::Begin)?;
-    let result = async {
-        validate_active_run_snapshot(&transaction, worktree_id, run_id, snapshot_id).await?;
-        let next_attempt = next_attempt_number(&transaction, tool_run_id).await?;
-        transaction
-            .execute(
-                "INSERT INTO tool_run_attempts (
-                 tool_run_id, attempt_sequence, run_id, snapshot_id, status,
-                 started_at_unix_millis, updated_at_unix_millis
-                 ) VALUES (?1, ?2, ?3, ?4, 'in_flight', ?5, ?5)",
-                params![
-                    id_bytes(tool_run_id),
-                    i64::from(next_attempt.get()),
-                    id_bytes(run_id),
-                    id_bytes(snapshot_id),
-                    timestamp_to_i64(started_at)
-                ],
-            )
-            .await
-            .map_err(classify_attempt_constraint)?;
-        AgentToolAttempt::new(
-            tool_run_id,
-            next_attempt,
-            run_id,
-            snapshot_id,
-            AgentToolAttemptStatus::InFlight,
-            started_at,
-            started_at,
-        )
-        .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)
-    }
+    let result = begin_tool_attempt_in_transaction(
+        &transaction,
+        worktree_id,
+        run_id,
+        snapshot_id,
+        tool_run_id,
+        started_at,
+    )
     .await;
     close_write_transaction(transaction, result).await
+}
+
+pub(crate) async fn begin_tool_attempt_in_transaction(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    run_id: AgentRunId,
+    snapshot_id: SnapshotId,
+    tool_run_id: ToolRunId,
+    started_at: AgentRunTimestamp,
+) -> Result<AgentToolAttempt, AgentRecoveryRepositoryError> {
+    validate_active_run_snapshot(transaction, worktree_id, run_id, snapshot_id).await?;
+    require_linked_tool_capacity(transaction, worktree_id, run_id, snapshot_id, started_at).await?;
+    let next_attempt = next_attempt_number(transaction, tool_run_id).await?;
+    transaction
+        .execute(
+            "INSERT INTO tool_run_attempts (
+             tool_run_id, attempt_sequence, run_id, snapshot_id, status,
+             started_at_unix_millis, updated_at_unix_millis
+             ) VALUES (?1, ?2, ?3, ?4, 'in_flight', ?5, ?5)",
+            params![
+                id_bytes(tool_run_id),
+                i64::from(next_attempt.get()),
+                id_bytes(run_id),
+                id_bytes(snapshot_id),
+                timestamp_to_i64(started_at)
+            ],
+        )
+        .await
+        .map_err(classify_attempt_constraint)?;
+    AgentToolAttempt::new(
+        tool_run_id,
+        next_attempt,
+        run_id,
+        snapshot_id,
+        AgentToolAttemptStatus::InFlight,
+        started_at,
+        started_at,
+    )
+    .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -99,6 +123,7 @@ pub(crate) async fn begin_mutation_attempt(
         if has_unreconciled_mutation(&transaction, worktree_id).await? {
             return Err(AgentRecoveryRepositoryError::MutationReconciliationRequired);
         }
+        require_linked_tool_capacity(&transaction, worktree_id, run_id, snapshot_id, started_at).await?;
         let next_attempt = next_attempt_number(&transaction, tool_run_id).await?;
         transaction
             .execute(
@@ -508,6 +533,117 @@ pub(crate) async fn complete_mutation_attempt(
     attempt: AgentToolAttemptNumber,
     result: AgentMutationResultRecord,
 ) -> Result<AgentMutationAttempt, AgentRecoveryRepositoryError> {
+    validate_completion_event(run, event, tool_run_id)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(AgentRecoveryRepositoryError::Begin)?;
+    let result = complete_mutation_in_transaction(
+        &transaction,
+        worktree_id,
+        expected_last_sequence,
+        run,
+        event,
+        tool_run_id,
+        attempt,
+        result,
+    )
+    .await;
+    close_write_transaction(transaction, result).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn complete_loopback_mutation(
+    connection: &Connection,
+    schema: u32,
+    worktree_id: WorktreeId,
+    expected_last_sequence: RunEventSequence,
+    run: &AgentRun,
+    event: &RunEvent,
+    attempt: AgentToolAttemptNumber,
+    receipt: &LoopbackHttpEvidence,
+    timeout: Duration,
+    control: &dyn AgentControllerControl,
+) -> Result<AgentMutationAttempt, AgentRecoveryRepositoryError> {
+    use AgentRecoveryRepositoryError as Error;
+    let context = receipt.context();
+    if schema < loopback_http_codec::SCHEMA_VERSION
+        || (receipt.startup().is_some()
+            && schema < loopback_http_codec::STARTUP_EVIDENCE_SCHEMA_VERSION)
+        || context.run_id != run.id()
+        || context.snapshot_id != run.current_snapshot_id()
+        || context.snapshot_id != event.snapshot_id()
+    {
+        return Err(Error::InvalidInput);
+    }
+    validate_completion_event(run, event, context.tool_run_id)?;
+    let guard = verification::OperationGuard::new(timeout, control).map_err(Error::Verification)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(Error::Begin)?;
+    let result = async {
+        guard.checkpoint().map_err(Error::Verification)?;
+        let scope = load_machine_scope(&transaction, worktree_id, context.tool_run_id, attempt)
+            .await?
+            .ok_or(Error::InvalidStoredData)?;
+        let expected_resource = verification::expected_loopback_effect_resource(
+            &transaction,
+            worktree_id,
+            run.goal_contract().task_id(),
+            receipt,
+        )
+        .await
+        .map_err(Error::Verification)?;
+        if scope.kind() != AgentMutationKind::MachineProcess
+            || scope.step() != context.step_id
+            || scope.resource() != expected_resource
+            || scope.target() != "python"
+            || scope.expected() != Some(receipt.script().content_hash())
+            || scope.proposed().is_some()
+        {
+            return Err(Error::InvalidStoredData);
+        }
+        let default_observation = receipt
+            .startup()
+            .map(|startup| startup.default_observation());
+        let observed_bytes = receipt
+            .observations()
+            .iter()
+            .chain(default_observation.iter())
+            .map(|observation| u64::from(observation.body_bytes()))
+            .sum();
+        let record = AgentMutationResultRecord::new(
+            ContextToolResultDigest::from_bytes(*receipt.id().as_bytes()),
+            false,
+            observed_bytes,
+        );
+        let settled = complete_mutation_in_transaction(
+            &transaction,
+            worktree_id,
+            expected_last_sequence,
+            run,
+            event,
+            context.tool_run_id,
+            attempt,
+            record,
+        )
+        .await?;
+        let evidence = VerificationEvidence::LoopbackHttp(receipt.clone());
+        verification::append_in_transaction(&transaction, worktree_id, &evidence, schema, &guard)
+            .await
+            .map_err(Error::Verification)?;
+        Ok(settled)
+    }
+    .await;
+    close_write_transaction(transaction, result).await
+}
+
+fn validate_completion_event(
+    run: &AgentRun,
+    event: &RunEvent,
+    tool_run_id: ToolRunId,
+) -> Result<(), AgentRecoveryRepositoryError> {
     if event.kind() != RunEventKind::ToolAction
         || event.subject() != Some(RunEventSubject::Tool(tool_run_id))
         || event.payload().outcome() != Some(RunEventOutcome::Succeeded)
@@ -515,95 +651,101 @@ pub(crate) async fn complete_mutation_attempt(
     {
         return Err(AgentRecoveryRepositoryError::InvalidInput);
     }
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .await
-        .map_err(AgentRecoveryRepositoryError::Begin)?;
-    let result = async {
-        let existing = read_mutation_attempt(&transaction, worktree_id, tool_run_id, attempt)
-            .await?
-            .ok_or(AgentRecoveryRepositoryError::ToolAttemptConflict)?;
-        let tool_attempt = existing.tool_attempt();
-        if tool_attempt.status() != AgentToolAttemptStatus::InFlight
-            || tool_attempt.run_id() != run.id()
-            || event.occurred_at() < tool_attempt.started_at()
-            || existing.disposition()
-                != AgentMutationDisposition::Unknown(MutationReconciliation::Required)
-        {
-            return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
-        }
-        run_journal_repository::append_in_transaction(
-            &transaction,
-            worktree_id,
-            expected_last_sequence,
-            run,
-            event,
-        )
-        .await
-        .map_err(AgentRecoveryRepositoryError::RunJournal)?;
-        transaction
-            .execute(
-                "INSERT INTO tool_runs (
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn complete_mutation_in_transaction(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    expected_last_sequence: RunEventSequence,
+    run: &AgentRun,
+    event: &RunEvent,
+    tool_run_id: ToolRunId,
+    attempt: AgentToolAttemptNumber,
+    result: AgentMutationResultRecord,
+) -> Result<AgentMutationAttempt, AgentRecoveryRepositoryError> {
+    let existing = read_mutation_attempt(transaction, worktree_id, tool_run_id, attempt)
+        .await?
+        .ok_or(AgentRecoveryRepositoryError::ToolAttemptConflict)?;
+    let tool_attempt = existing.tool_attempt();
+    if tool_attempt.status() != AgentToolAttemptStatus::InFlight
+        || tool_attempt.run_id() != run.id()
+        || event.occurred_at() < tool_attempt.started_at()
+        || existing.disposition()
+            != AgentMutationDisposition::Unknown(MutationReconciliation::Required)
+    {
+        return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
+    }
+    run_journal_repository::append_in_transaction(
+        transaction,
+        worktree_id,
+        expected_last_sequence,
+        run,
+        event,
+    )
+    .await
+    .map_err(AgentRecoveryRepositoryError::RunJournal)?;
+    transaction
+        .execute(
+            "INSERT INTO tool_runs (
                  tool_run_id, run_id, event_sequence, status, result_digest, result_truncated,
                  snapshot_before_id, snapshot_after_id, observed_output_bytes
                  ) VALUES (?1, ?2, ?3, 'succeeded', ?4, ?5, ?6, ?6, ?7)",
-                params![
-                    id_bytes(tool_run_id),
-                    id_bytes(run.id()),
-                    i64::try_from(event.sequence().get())
-                        .map_err(|_| AgentRecoveryRepositoryError::ResourceLimit)?,
-                    result.digest().as_bytes().to_vec(),
-                    i64::from(result.truncated()),
-                    id_bytes(event.snapshot_id()),
-                    i64::try_from(result.observed_output_bytes())
-                        .map_err(|_| AgentRecoveryRepositoryError::ResourceLimit)?
-                ],
-            )
-            .await
-            .map_err(classify_attempt_constraint)?;
-        let changed = transaction
-            .execute(
-                "UPDATE tool_run_attempts SET status = 'succeeded', updated_at_unix_millis = ?1
+            params![
+                id_bytes(tool_run_id),
+                id_bytes(run.id()),
+                i64::try_from(event.sequence().get())
+                    .map_err(|_| AgentRecoveryRepositoryError::ResourceLimit)?,
+                result.digest().as_bytes().to_vec(),
+                i64::from(result.truncated()),
+                id_bytes(event.snapshot_id()),
+                i64::try_from(result.observed_output_bytes())
+                    .map_err(|_| AgentRecoveryRepositoryError::ResourceLimit)?
+            ],
+        )
+        .await
+        .map_err(classify_attempt_constraint)?;
+    let changed = transaction
+        .execute(
+            "UPDATE tool_run_attempts SET status = 'succeeded', updated_at_unix_millis = ?1
                  WHERE tool_run_id = ?2 AND attempt_sequence = ?3 AND status = 'in_flight'",
-                params![
-                    timestamp_to_i64(event.occurred_at()),
-                    id_bytes(tool_run_id),
-                    i64::from(attempt.get())
-                ],
-            )
-            .await
-            .map_err(AgentRecoveryRepositoryError::Write)?;
-        if changed != 1 {
-            return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
-        }
-        let changed = transaction
-            .execute(
-                "UPDATE mutation_attempts
+            params![
+                timestamp_to_i64(event.occurred_at()),
+                id_bytes(tool_run_id),
+                i64::from(attempt.get())
+            ],
+        )
+        .await
+        .map_err(AgentRecoveryRepositoryError::Write)?;
+    if changed != 1 {
+        return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
+    }
+    let changed = transaction
+        .execute(
+            "UPDATE mutation_attempts
                  SET application_state = 'applied', reconciliation_state = 'not_required'
                  WHERE tool_run_id = ?1 AND attempt_sequence = ?2
                    AND application_state = 'unknown' AND reconciliation_state = 'required'",
-                params![id_bytes(tool_run_id), i64::from(attempt.get())],
-            )
-            .await
-            .map_err(AgentRecoveryRepositoryError::Write)?;
-        if changed != 1 {
-            return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
-        }
-        mutation_attempt(
-            tool_run_id,
-            attempt,
-            tool_attempt.run_id(),
-            tool_attempt.snapshot_id(),
-            AgentToolAttemptStatus::Succeeded,
-            tool_attempt.started_at(),
-            event.occurred_at(),
-            existing.fingerprint(),
-            existing.kind(),
-            AgentMutationDisposition::Applied,
+            params![id_bytes(tool_run_id), i64::from(attempt.get())],
         )
+        .await
+        .map_err(AgentRecoveryRepositoryError::Write)?;
+    if changed != 1 {
+        return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
     }
-    .await;
-    close_write_transaction(transaction, result).await
+    mutation_attempt(
+        tool_run_id,
+        attempt,
+        tool_attempt.run_id(),
+        tool_attempt.snapshot_id(),
+        AgentToolAttemptStatus::Succeeded,
+        tool_attempt.started_at(),
+        event.occurred_at(),
+        existing.fingerprint(),
+        existing.kind(),
+        AgentMutationDisposition::Applied,
+    )
 }
 
 pub(crate) async fn interrupt_tool_attempts(
@@ -684,6 +826,115 @@ pub(crate) async fn load_mutation_attempts(
     }
     .await;
     close_read_transaction(transaction, result).await
+}
+
+pub(crate) async fn load_settled_loopback_evidence_id(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    run_id: AgentRunId,
+    tool_run_id: ToolRunId,
+    attempt: AgentToolAttemptNumber,
+) -> Result<Option<TaskEvidenceId>, AgentRecoveryRepositoryError> {
+    use AgentRecoveryRepositoryError as Error;
+    let mut rows = connection
+        .query(
+            "SELECT v.evidence_id FROM tool_runs t
+             JOIN agent_runs r ON r.run_id = t.run_id
+             JOIN tasks k ON k.task_id = r.task_id
+             JOIN task_ledgers l ON l.task_id = r.task_id AND l.goal_revision = r.goal_revision
+                 AND l.plan_revision = r.task_ledger_revision
+             JOIN run_events e ON e.run_id = r.run_id AND e.event_sequence = t.event_sequence
+             JOIN tool_run_attempts a ON a.tool_run_id = t.tool_run_id AND a.run_id = r.run_id
+             JOIN mutation_attempts m ON m.tool_run_id = a.tool_run_id
+                 AND m.attempt_sequence = a.attempt_sequence
+             JOIN machine_effect_scopes s ON s.tool_run_id = a.tool_run_id
+                 AND s.attempt_sequence = a.attempt_sequence
+             JOIN task_steps p ON p.task_id = r.task_id AND p.step_id = s.step_id
+             JOIN task_step_attempts active ON active.task_id = p.task_id AND active.step_id = p.step_id
+                 AND active.attempt_number = (
+                     SELECT MAX(attempt_number) FROM task_step_attempts
+                     WHERE task_id = p.task_id AND step_id = p.step_id
+                 )
+             JOIN verification_specs_v1 spec ON spec.task_id = p.task_id
+                 AND spec.verification_spec_id = p.verification_spec_id
+             JOIN verification_evidence v ON v.evidence_id = t.result_digest AND v.run_id = r.run_id
+                 AND v.task_id = r.task_id AND v.worktree_id = k.worktree_id
+                 AND v.verification_spec_id = spec.verification_spec_id
+             WHERE k.worktree_id = ?1 AND r.run_id = ?2 AND t.tool_run_id = ?3
+               AND a.attempt_sequence = ?4 AND r.controller_state = 'execute'
+               AND t.event_sequence = r.last_event_sequence
+               AND NOT EXISTS (
+                   SELECT 1 FROM run_events later
+                   WHERE later.run_id = r.run_id AND later.event_sequence > r.last_event_sequence
+               )
+               AND e.event_kind = 'tool_action' AND e.subject_kind = 'tool'
+               AND e.subject_id = t.tool_run_id AND e.payload_outcome = 'succeeded'
+               AND e.occurred_at_unix_millis = r.updated_at_unix_millis
+               AND e.occurred_at_unix_millis = a.updated_at_unix_millis
+               AND e.snapshot_id = r.current_snapshot_id AND a.snapshot_id = e.snapshot_id
+               AND t.snapshot_before_id = e.snapshot_id AND t.snapshot_after_id = e.snapshot_id
+               AND v.snapshot_id = e.snapshot_id
+               AND t.status = 'succeeded' AND t.result_truncated = 0 AND a.status = 'succeeded'
+               AND m.action_kind = 'machine_process' AND m.application_state = 'applied'
+               AND m.reconciliation_state = 'not_required' AND s.resource_kind = 'process'
+               AND s.target = 'python' AND s.expected_hash IS NOT NULL AND s.proposed_hash IS NULL
+               AND p.status = 'in_progress' AND p.retired_plan_revision IS NULL
+               AND active.run_id = r.run_id AND active.outcome = 'active'
+               AND active.started_at_unix_millis <= a.started_at_unix_millis
+               AND spec.loopback_http_recipe IS NOT NULL
+               AND v.evidence_kind = 'command' AND v.loopback_http_evidence IS NOT NULL",
+            params![
+                id_bytes(worktree_id),
+                id_bytes(run_id),
+                id_bytes(tool_run_id),
+                i64::from(attempt.get()),
+            ],
+        )
+        .await
+        .map_err(Error::Read)?;
+    rows.next()
+        .await
+        .map_err(Error::Read)?
+        .map(|row| read_id(&row, 0).map(TaskEvidenceId::from_bytes))
+        .transpose()
+}
+
+pub(crate) async fn has_pending_loopback_resume(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    run_id: AgentRunId,
+) -> Result<bool, AgentRecoveryRepositoryError> {
+    use AgentRecoveryRepositoryError as Error;
+    let mut rows = connection
+        .query(
+            "SELECT 1 FROM tool_run_attempts a
+             JOIN agent_runs r ON r.run_id = a.run_id
+             JOIN tasks k ON k.task_id = r.task_id
+             JOIN task_ledgers l ON l.task_id = r.task_id AND l.goal_revision = r.goal_revision
+                 AND l.plan_revision = r.task_ledger_revision
+             JOIN mutation_attempts m USING (tool_run_id, attempt_sequence)
+             JOIN machine_effect_scopes s USING (tool_run_id, attempt_sequence)
+             JOIN task_steps p ON p.task_id = r.task_id AND p.step_id = s.step_id
+             JOIN task_step_attempts active ON active.task_id = p.task_id AND active.step_id = p.step_id
+                 AND active.attempt_number = (
+                     SELECT MAX(attempt_number) FROM task_step_attempts
+                     WHERE task_id = p.task_id AND step_id = p.step_id
+                 )
+             JOIN verification_specs_v1 spec ON spec.task_id = p.task_id
+                 AND spec.verification_spec_id = p.verification_spec_id
+             WHERE k.worktree_id = ?1 AND r.run_id = ?2 AND r.controller_state = 'execute'
+               AND m.action_kind = 'machine_process' AND m.application_state = 'applied'
+               AND m.reconciliation_state = 'not_required' AND s.resource_kind = 'process'
+               AND s.target = 'python' AND s.expected_hash IS NOT NULL AND s.proposed_hash IS NULL
+               AND p.status = 'in_progress' AND p.retired_plan_revision IS NULL
+               AND active.run_id = r.run_id AND active.outcome = 'active'
+               AND active.started_at_unix_millis <= a.started_at_unix_millis
+               AND spec.loopback_http_recipe IS NOT NULL LIMIT 1",
+            params![id_bytes(worktree_id), id_bytes(run_id)],
+        )
+        .await
+        .map_err(Error::Read)?;
+    Ok(rows.next().await.map_err(Error::Read)?.is_some())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -840,6 +1091,7 @@ pub(crate) async fn load_tool_evidence(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn commit_recovery(
     connection: &Connection,
+    schema: u32,
     worktree_id: WorktreeId,
     choice: AgentRecoveryChoice,
     expected_published_snapshot: SnapshotId,
@@ -874,6 +1126,15 @@ pub(crate) async fn commit_recovery(
             | AgentRecoveryChoice::Replan
             | AgentRecoveryChoice::Cancel => {}
         }
+        if choice == AgentRecoveryChoice::Resume
+            && schema >= loopback_http_codec::SCHEMA_VERSION
+            && has_pending_loopback_resume(&transaction, worktree_id, run.id()).await?
+        {
+            return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
+        }
+        run_journal_repository::validate_planning_transition_in_transaction(&transaction,
+            worktree_id,expected_ledger_version,expected_last_sequence,ledger,run,event)
+            .await.map_err(AgentRecoveryRepositoryError::RunJournal)?;
         let next_version = task_ledger_repository::replace_in_transaction(
             &transaction,
             worktree_id,
@@ -909,6 +1170,67 @@ pub(crate) async fn commit_recovery(
     }
     .await;
     close_write_transaction(transaction, result).await
+}
+
+async fn require_linked_tool_capacity(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    run_id: AgentRunId,
+    snapshot_id: SnapshotId,
+    started_at: AgentRunTimestamp,
+) -> Result<(), AgentRecoveryRepositoryError> {
+    use AgentRecoveryRepositoryError as Failure;
+    if crate::migration::read_user_version(transaction)
+        .await
+        .map_err(Failure::Read)?
+        < crate::goal_contract_repository::phase_reservations::SCHEMA_VERSION
+    {
+        return Ok(());
+    }
+    let mut rows = transaction
+        .query(
+            "SELECT action_limit, deadline FROM intake_phase_budget_scopes
+         WHERE linked_run_id=?1 AND worktree_id=?2",
+            params![id_bytes(run_id), id_bytes(worktree_id)],
+        )
+        .await
+        .map_err(Failure::Read)?;
+    let Some(row) = rows.next().await.map_err(Failure::Read)? else {
+        return Ok(());
+    };
+    let limit: i64 = row.get(0).map_err(|_| Failure::InvalidStoredData)?;
+    let limit = u32::try_from(limit)
+        .ok()
+        .and_then(|value| a3_domain::AgentActionLimit::new(value).ok())
+        .ok_or(Failure::InvalidStoredData)?;
+    let deadline: i64 = row.get(1).map_err(|_| Failure::InvalidStoredData)?;
+    if timestamp_to_i64(started_at) >= deadline {
+        return Err(Failure::ResourceLimit);
+    }
+    if latest_published_snapshot(transaction, worktree_id).await? != Some(snapshot_id) {
+        return Err(Failure::PublishedSnapshotConflict);
+    }
+    // The existing attempt is the charge. A failure, cancellation or interruption does not
+    // refund it, and a terminal result never adds another charge.
+    let mut rows = transaction
+        .query(
+            "SELECT COUNT(*) FROM (
+             SELECT 1 FROM tool_run_attempts WHERE run_id=?1 LIMIT ?2
+         )",
+            params![id_bytes(run_id), i64::from(limit.get())],
+        )
+        .await
+        .map_err(Failure::Read)?;
+    let row = rows
+        .next()
+        .await
+        .map_err(Failure::Read)?
+        .ok_or(Failure::InvalidStoredData)?;
+    let attempts: i64 = row.get(0).map_err(|_| Failure::InvalidStoredData)?;
+    if attempts >= i64::from(limit.get()) {
+        return Err(Failure::ResourceLimit);
+    }
+    Ok(())
 }
 
 async fn validate_active_run_snapshot(
@@ -1205,7 +1527,7 @@ async fn mutation_attempt_exists(
     Ok(exists == 1)
 }
 
-async fn has_unreconciled_mutation(
+pub(crate) async fn has_unreconciled_mutation(
     transaction: &Transaction,
     worktree_id: WorktreeId,
 ) -> Result<bool, AgentRecoveryRepositoryError> {
@@ -1277,7 +1599,7 @@ async fn mutation_recovery_gate(
     }
 }
 
-async fn latest_published_snapshot(
+pub(crate) async fn latest_published_snapshot(
     transaction: &Transaction,
     worktree_id: WorktreeId,
 ) -> Result<Option<SnapshotId>, AgentRecoveryRepositoryError> {
@@ -1573,6 +1895,7 @@ pub(crate) enum AgentRecoveryRepositoryError {
     Rollback(libsql::Error),
     TaskLedger(task_ledger_repository::TaskLedgerRepositoryError),
     RunJournal(run_journal_repository::RunJournalRepositoryError),
+    Verification(verification::VerificationEvidenceRepositoryError),
     InvalidInput,
     InvalidStoredData,
     RunNotFound,
@@ -1595,6 +1918,26 @@ impl AgentRecoveryRepositoryError {
             }
             Self::PublishedSnapshotConflict => AgentRecoveryStoreFailure::PublishedSnapshotConflict,
             Self::ResourceLimit => AgentRecoveryStoreFailure::ResourceLimit,
+            Self::Verification(error) => match error.classify() {
+                VerificationEvidenceStoreFailure::Unavailable
+                | VerificationEvidenceStoreFailure::Cancelled
+                | VerificationEvidenceStoreFailure::TimedOut => {
+                    AgentRecoveryStoreFailure::Unavailable
+                }
+                VerificationEvidenceStoreFailure::Corrupt => AgentRecoveryStoreFailure::Corrupt,
+                VerificationEvidenceStoreFailure::UnsupportedSchema => {
+                    AgentRecoveryStoreFailure::UnsupportedSchema
+                }
+                VerificationEvidenceStoreFailure::InvalidStoredData => {
+                    AgentRecoveryStoreFailure::InvalidStoredData
+                }
+                VerificationEvidenceStoreFailure::EvidenceConflict => {
+                    AgentRecoveryStoreFailure::ToolAttemptConflict
+                }
+                VerificationEvidenceStoreFailure::SnapshotMismatch => {
+                    AgentRecoveryStoreFailure::PublishedSnapshotConflict
+                }
+            },
             Self::TaskLedger(error) => match error.classify() {
                 TaskLedgerStoreFailure::Unavailable => AgentRecoveryStoreFailure::Unavailable,
                 TaskLedgerStoreFailure::Corrupt => AgentRecoveryStoreFailure::Corrupt,
@@ -1656,6 +1999,7 @@ impl fmt::Display for AgentRecoveryRepositoryError {
             Self::Rollback(_) => "agent-recovery transaction could not roll back",
             Self::TaskLedger(_) => "agent-recovery Task Ledger could not be persisted",
             Self::RunJournal(_) => "agent-recovery run journal could not be persisted",
+            Self::Verification(_) => "agent-recovery verification evidence could not be persisted",
             Self::InvalidInput => "agent-recovery input was invalid",
             Self::InvalidStoredData => "agent-recovery data was invalid",
             Self::RunNotFound => "agent-recovery run was not found",
@@ -1679,6 +2023,7 @@ impl Error for AgentRecoveryRepositoryError {
             | Self::Rollback(error) => Some(error),
             Self::TaskLedger(error) => Some(error),
             Self::RunJournal(error) => Some(error),
+            Self::Verification(error) => Some(error),
             Self::InvalidInput
             | Self::InvalidStoredData
             | Self::RunNotFound

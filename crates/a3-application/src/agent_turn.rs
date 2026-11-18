@@ -811,6 +811,9 @@ fn validate_turn_input(
     {
         return Err(ExecuteAgentTurnFailure::InputMismatch);
     }
+    crate::AdmitAgentGoalExecution
+        .execute_task(input.goal_contract(), input.task_ledger())
+        .map_err(|_| ExecuteAgentTurnFailure::InputMismatch)?;
     Ok(())
 }
 
@@ -2915,5 +2918,6 @@ mod tests {
         Ok(AgentRunTimestamp::from_unix_millis(value)?)
     }
 
+    mod source_admission;
     mod staged;
 }

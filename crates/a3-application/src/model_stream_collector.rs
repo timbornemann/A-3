@@ -1,6 +1,7 @@
 use crate::{
     ModelOperationControl, ModelProvider, ModelProviderCompletion, ModelProviderFailure,
-    ModelProviderRequest, ModelRequestTimeout, ProviderEvent,
+    ModelProviderRequest, ModelRequestTimeout, ModelWireProjection, ProviderEvent,
+    ProviderEventStream,
 };
 use futures::future::{Either, select};
 use futures::{FutureExt, StreamExt, pin_mut};
@@ -127,10 +128,32 @@ async fn collect_model_stream_once(
     control: &dyn ModelOperationControl,
     max_output_bytes: usize,
 ) -> Result<CollectedModelOutput, ModelStreamCollectionFailure> {
-    let mut stream = provider
+    let stream = provider
         .stream(request, timeout, control)
         .await
         .map_err(ModelStreamCollectionFailure::Provider)?;
+    collect_model_events(stream, max_output_bytes).await
+}
+
+pub(crate) async fn collect_projected_model_events(
+    provider: &dyn ModelProvider,
+    request: &ModelProviderRequest,
+    projection: ModelWireProjection,
+    timeout: ModelRequestTimeout,
+    control: &dyn ModelOperationControl,
+    max_output_bytes: usize,
+) -> Result<CollectedModelOutput, ModelStreamCollectionFailure> {
+    let stream = provider
+        .stream_projected(request, projection, timeout, control)
+        .await
+        .map_err(ModelStreamCollectionFailure::Provider)?;
+    collect_model_events(stream, max_output_bytes).await
+}
+
+async fn collect_model_events(
+    mut stream: ProviderEventStream<'_>,
+    max_output_bytes: usize,
+) -> Result<CollectedModelOutput, ModelStreamCollectionFailure> {
     let mut output = String::new();
     let mut completion = None;
     while let Some(event) = stream.next().await {

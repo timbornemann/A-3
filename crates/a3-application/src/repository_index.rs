@@ -8,7 +8,7 @@ use a3_domain::{
     DiscoveryResult, FileDelta, IndexLanguage, IndexPublication, IndexRunId, IndexRunStart,
     IndexRunTerminalOutcome, IndexTraceDiagnosticCode, IndexTraceFileChange, IndexTraceHashOutcome,
     IndexTraceParseOutcome, Progress, ProjectIdentity, PublishedIndex, RankingPolicyVersion,
-    RepositoryFileState, RepositoryPath, Snapshot, SnapshotDelta,
+    RepositoryFileState, RepositoryPath, Snapshot, SnapshotDelta, SnapshotId,
 };
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -343,6 +343,18 @@ impl RefreshRepositoryIndex {
             store,
             run_ids,
         }
+    }
+
+    pub(crate) async fn has_current_published_snapshot(
+        &self,
+        project: &ProjectIdentity,
+        snapshot: SnapshotId,
+    ) -> Result<bool, KnowledgeIndexFailure> {
+        Ok(self
+            .store
+            .latest_published_index_run(project)
+            .await?
+            .is_some_and(|run| run.snapshot_id() == snapshot))
     }
 
     /// Confirms, compiles, and if necessary atomically publishes one repository observation.

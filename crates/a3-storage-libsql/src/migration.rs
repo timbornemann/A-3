@@ -3463,6 +3463,199 @@ pub(crate) async fn verify_knowledge_migration_history(
     .await
 }
 
+#[cfg(test)]
+pub(crate) const PLAN22_CANDIDATE_KNOWLEDGE_VERSION: u32 = 70;
+
+#[cfg(test)]
+fn plan22_candidate_migrations() -> Vec<Migration> {
+    let mut migrations = KNOWLEDGE_MIGRATIONS.to_vec();
+    migrations.push(Migration {
+        version: 43,
+        name: "plan22_goal_original_contract",
+        sql: include_str!("migrations/plan22_candidate_v43.sql"),
+    });
+    migrations.push(Migration {
+        version: 44,
+        name: "plan22_goal_annotations",
+        sql: include_str!("migrations/plan22_candidate_v44.sql"),
+    });
+    migrations.push(Migration {
+        version: 45,
+        name: "plan22_pending_goal_intake",
+        sql: include_str!("migrations/plan22_candidate_v45.sql"),
+    });
+    migrations.push(Migration {
+        version: 46,
+        name: "plan22_task_step_addresses",
+        sql: include_str!("migrations/plan22_candidate_v46.sql"),
+    });
+    migrations.push(Migration {
+        version: 47,
+        name: "plan22_pending_horizon_planning",
+        sql: include_str!("migrations/plan22_candidate_v47.sql"),
+    });
+    migrations.push(Migration {
+        version: 48,
+        name: "plan22_goal_intake_reviews",
+        sql: include_str!("migrations/plan22_candidate_v48.sql"),
+    });
+    migrations.push(Migration {
+        version: 49,
+        name: "plan22_edit_phase_reservations",
+        sql: include_str!("migrations/plan22_candidate_v49.sql"),
+    });
+    migrations.push(Migration {
+        version: 50,
+        name: "plan22_intake_phase_reservations",
+        sql: include_str!("migrations/plan22_candidate_v50.sql"),
+    });
+    migrations.push(Migration {
+        version: 51,
+        name: "plan22_intake_structural_repair",
+        sql: include_str!("migrations/plan22_candidate_v51.sql"),
+    });
+    migrations.push(Migration {
+        version: 52,
+        name: "plan22_initial_plan_reservations",
+        sql: include_str!("migrations/plan22_candidate_v52.sql"),
+    });
+    migrations.push(Migration {
+        version: 53,
+        name: "plan22_source_read_acquisitions",
+        sql: include_str!("migrations/plan22_candidate_v53.sql"),
+    });
+    migrations.push(Migration {
+        version: 54,
+        name: "plan22_caller_relocalizations",
+        sql: include_str!("migrations/plan22_candidate_v54.sql"),
+    });
+    migrations.push(Migration {
+        version: 55,
+        name: "plan22_guarded_python_integer_tests",
+        sql: include_str!("migrations/plan22_candidate_v55.sql"),
+    });
+    migrations.push(Migration {
+        version: 56,
+        name: "plan22_loopback_http_verification",
+        sql: include_str!("migrations/plan22_candidate_v56.sql"),
+    });
+    migrations.push(Migration {
+        version: 57,
+        name: "plan22_loopback_http_startup_recipe",
+        // V2 reuses the existing recipe blob size and columns. Record its version boundary.
+        sql: "SELECT 1;",
+    });
+    migrations.push(Migration {
+        version: 58,
+        name: "plan22_loopback_http_startup_evidence",
+        // The complete receipt reuses the bounded evidence column with its own V2 codec.
+        sql: "SELECT 1;",
+    });
+    migrations.push(Migration {
+        version: 59,
+        name: "plan22_model_selected_file_additions",
+        sql: include_str!("migrations/plan22_candidate_v59.sql"),
+    });
+    migrations.push(Migration {
+        version: 60,
+        name: "plan22_loopback_mismatch_diagnostics",
+        sql: include_str!("migrations/plan22_candidate_v60.sql"),
+    });
+    migrations.push(Migration {
+        version: 61,
+        name: "plan22_current_run_http_correction_plan",
+        sql: include_str!("migrations/plan22_candidate_v61.sql"),
+    });
+    migrations.push(Migration {
+        version: 62,
+        name: "plan22_http_correction_focus_v2",
+        sql: include_str!("migrations/plan22_candidate_v62.sql"),
+    });
+    migrations.push(Migration {
+        version: 63,
+        name: "plan22_http_correction_public_basis_v3",
+        sql: include_str!("migrations/plan22_candidate_v63.sql"),
+    });
+    migrations.push(Migration {
+        version: 64,
+        name: "plan22_edit_semantic_output_v2",
+        // Edit stores anchors/wires/outcomes, not model reply documents. The exact fresh-only
+        // candidate open contract and V2 job domain bind this protocol without a second row mode.
+        // Existing V63 databases are rejected read-only before this initialization can run.
+        sql: "SELECT 1;",
+    });
+    migrations.push(Migration {
+        version: 65,
+        name: "plan22_http_correction_intent_v4",
+        sql: include_str!("migrations/plan22_candidate_v65.sql"),
+    });
+    migrations.push(Migration {
+        version: 66,
+        name: "plan22_http_context_intent_v1",
+        sql: include_str!("migrations/plan22_candidate_v66.sql"),
+    });
+    migrations.push(Migration {
+        version: 67,
+        name: "plan22_edit_no_change_receipts",
+        sql: include_str!("migrations/plan22_candidate_v67.sql"),
+    });
+    migrations.push(Migration {
+        version: 68,
+        name: "plan22_http_no_change_replan_v5",
+        sql: include_str!("migrations/plan22_candidate_v68.sql"),
+    });
+    migrations.push(Migration {
+        version: 69,
+        name: "plan22_http_no_change_core_window_v6",
+        sql: include_str!("migrations/plan22_candidate_v69.sql"),
+    });
+    migrations.push(Migration {
+        version: PLAN22_CANDIDATE_KNOWLEDGE_VERSION,
+        name: "plan22_edit_request_dispositions_v3",
+        sql: include_str!("migrations/plan22_candidate_v70.sql"),
+    });
+    migrations
+}
+
+#[cfg(test)]
+pub(crate) async fn migrate_plan22_candidate(
+    connection: &Connection,
+    repository_id: &[u8; 32],
+    worktree_id: &[u8; 32],
+) -> Result<KnowledgeSchemaVersion, MigrationError> {
+    let current = read_user_version(connection)
+        .await
+        .map_err(MigrationError::ReadVersion)?;
+    // The sole caller is the private KnowledgeOpenContract composition, which has
+    // already admitted only an empty V0 schema or this exact candidate version.
+    // Reuse the older SQL steps for fresh initialization, never old-data adoption.
+    if current == 0 {
+        migrate_knowledge(connection, repository_id, worktree_id).await?;
+    }
+    migrate(
+        connection,
+        &plan22_candidate_migrations(),
+        PLAN22_CANDIDATE_KNOWLEDGE_VERSION,
+        KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+    )
+    .await
+    .map(KnowledgeSchemaVersion::new)
+}
+
+#[cfg(test)]
+pub(crate) async fn verify_plan22_candidate_migration_history(
+    connection: &Connection,
+    current: u32,
+) -> Result<(), MigrationError> {
+    verify_history(
+        connection,
+        &plan22_candidate_migrations(),
+        current,
+        KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+    )
+    .await
+}
+
 async fn apply_knowledge_bootstrap(
     connection: &Connection,
     repository_id: &[u8; 32],

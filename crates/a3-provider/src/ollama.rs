@@ -7,8 +7,8 @@ use a3_application::{
     ModelCatalogFuture, ModelCatalogProvider, ModelFinishReason, ModelMessageRole,
     ModelOperationControl, ModelOutputChunk, ModelProvider, ModelProviderCompletion,
     ModelProviderFailure, ModelProviderFuture, ModelProviderRequest, ModelProviderUsage,
-    ModelRequestTimeout, ProviderEvent, ProviderEventStream, ProviderModelCatalog,
-    RawEmbeddingBatch, ReportedModelContextLimit,
+    ModelRequestTimeout, ModelWireProjection, ModelWireThinking, ProviderEvent,
+    ProviderEventStream, ProviderModelCatalog, RawEmbeddingBatch, ReportedModelContextLimit,
 };
 use a3_domain::{
     EmbeddingDimension, EmbeddingProviderId, ModelCapabilities, ModelId, ModelProviderId,
@@ -48,6 +48,12 @@ const OLLAMA_PROBE_PROMPT: &str =
     "Return exactly this JSON object and nothing else: {\"a3_probe\":\"ok\"}.";
 const OLLAMA_EMBED_PROBE_INPUT: &str = "A3 embedding capability probe";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OllamaWireMode {
+    Ordinary,
+    Projected,
+}
+
 /// Ollama-compatible implementation of the general streaming model-provider port.
 pub struct OllamaModelProvider {
     provider_id: ModelProviderId,
@@ -55,6 +61,7 @@ pub struct OllamaModelProvider {
     endpoint: OllamaEndpoint,
     endpoint_policy: Arc<dyn OllamaEndpointPolicy>,
     client: reqwest::Client,
+    wire_mode: OllamaWireMode,
 }
 
 impl OllamaModelProvider {
@@ -63,13 +70,33 @@ impl OllamaModelProvider {
         endpoint: OllamaEndpoint,
         endpoint_policy: Arc<dyn OllamaEndpointPolicy>,
     ) -> Result<Self, OllamaProviderCreateError> {
+        Self::with_wire_mode(endpoint, endpoint_policy, OllamaWireMode::Ordinary)
+    }
+
+    /// Creates the isolated phase client whose generation path requires a checked wire projection.
+    pub fn for_projected_wire(
+        endpoint: OllamaEndpoint,
+        endpoint_policy: Arc<dyn OllamaEndpointPolicy>,
+    ) -> Result<Self, OllamaProviderCreateError> {
+        Self::with_wire_mode(endpoint, endpoint_policy, OllamaWireMode::Projected)
+    }
+
+    fn with_wire_mode(
+        endpoint: OllamaEndpoint,
+        endpoint_policy: Arc<dyn OllamaEndpointPolicy>,
+        wire_mode: OllamaWireMode,
+    ) -> Result<Self, OllamaProviderCreateError> {
         let provider_id = ModelProviderId::try_from_string(OLLAMA_PROVIDER_ID.to_owned())
             .map_err(|_| OllamaProviderCreateError::InvalidProviderIdentity)?;
         let embedding_provider_id = EmbeddingProviderId::new(OLLAMA_PROVIDER_ID.to_owned())
             .map_err(|_| OllamaProviderCreateError::InvalidProviderIdentity)?;
-        let client = reqwest::Client::builder()
+        let mut client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
-            .no_proxy()
+            .no_proxy();
+        if wire_mode == OllamaWireMode::Projected {
+            client = client.retry(reqwest::retry::never());
+        }
+        let client = client
             .build()
             .map_err(|_| OllamaProviderCreateError::HttpClient)?;
         Ok(Self {
@@ -78,6 +105,7 @@ impl OllamaModelProvider {
             endpoint,
             endpoint_policy,
             client,
+            wire_mode,
         })
     }
 }
@@ -90,6 +118,7 @@ impl fmt::Debug for OllamaModelProvider {
             .field("embedding_provider_id", &self.embedding_provider_id)
             .field("endpoint", &self.endpoint)
             .field("endpoint_policy", &self.endpoint_policy)
+            .field("wire_mode", &self.wire_mode)
             .finish_non_exhaustive()
     }
 }
@@ -196,6 +225,9 @@ impl ModelProvider for OllamaModelProvider {
         control: &'a dyn ModelOperationControl,
     ) -> ModelProviderFuture<'a> {
         Box::pin(async move {
+            if self.wire_mode != OllamaWireMode::Ordinary {
+                return Err(ModelProviderFailure::Rejected);
+            }
             self.endpoint_policy
                 .authorize(&self.endpoint)
                 .map_err(|_| ModelProviderFailure::EndpointDenied)?;
@@ -206,29 +238,94 @@ impl ModelProvider for OllamaModelProvider {
                 return Err(ModelProviderFailure::Rejected);
             }
             let wire_request = OllamaChatRequest::from_request(request);
-            let send = self
+            let post = self
                 .client
                 .post(self.endpoint.chat_url())
                 .timeout(timeout.duration())
-                .json(&wire_request)
-                .send()
-                .fuse();
-            let cancelled = control.cancelled().fuse();
-            pin_mut!(send, cancelled);
-            let response = match select(cancelled, send).await {
-                Either::Left(((), _)) => return Err(ModelProviderFailure::Cancelled),
-                Either::Right((result, _)) => result.map_err(classify_reqwest_error)?,
-            };
-            validate_response_head(&response)?;
-            let body = response
-                .bytes_stream()
-                .map(|item| item.map(|bytes| bytes.to_vec()))
-                .boxed();
-            let state = OllamaStreamState::new(body, request.model_id().clone(), control);
-            let stream = futures::stream::try_unfold(state, next_provider_event);
-            Ok(Box::pin(stream) as ProviderEventStream<'a>)
+                .json(&wire_request);
+            stream_chat(post, request.model_id().clone(), control, false).await
         })
     }
+
+    fn project_wire_request(
+        &self,
+        request: &ModelProviderRequest,
+    ) -> Result<ModelWireProjection, ModelProviderFailure> {
+        let (_, projection) = self.encode_projected_request(request)?;
+        Ok(projection)
+    }
+
+    fn stream_projected<'a>(
+        &'a self,
+        request: &'a ModelProviderRequest,
+        projection: ModelWireProjection,
+        timeout: ModelRequestTimeout,
+        control: &'a dyn ModelOperationControl,
+    ) -> ModelProviderFuture<'a> {
+        Box::pin(async move {
+            if control.is_cancelled() {
+                return Err(ModelProviderFailure::Cancelled);
+            }
+            let (body, encoded_projection) = self.encode_projected_request(request)?;
+            if encoded_projection != projection {
+                return Err(ModelProviderFailure::Rejected);
+            }
+            let post = self
+                .client
+                .post(self.endpoint.chat_url())
+                .timeout(timeout.duration())
+                .header(reqwest::header::CONTENT_TYPE, OLLAMA_JSON_CONTENT_TYPE)
+                .body(body);
+            stream_chat(
+                post,
+                request.model_id().clone(),
+                control,
+                projection.thinking() == ModelWireThinking::Disabled,
+            )
+            .await
+        })
+    }
+}
+
+impl OllamaModelProvider {
+    fn encode_projected_request(
+        &self,
+        request: &ModelProviderRequest,
+    ) -> Result<(Vec<u8>, ModelWireProjection), ModelProviderFailure> {
+        if self.wire_mode != OllamaWireMode::Projected
+            || request.profile().provider_id() != &self.provider_id
+        {
+            return Err(ModelProviderFailure::Rejected);
+        }
+        self.endpoint_policy
+            .authorize(&self.endpoint)
+            .map_err(|_| ModelProviderFailure::EndpointDenied)?;
+        OllamaChatRequest::from_request(request).encode_projected()
+    }
+}
+
+async fn stream_chat<'a>(
+    post: reqwest::RequestBuilder,
+    expected_model: ModelId,
+    control: &'a dyn ModelOperationControl,
+    expect_no_thinking: bool,
+) -> Result<ProviderEventStream<'a>, ModelProviderFailure> {
+    let send = post.send().fuse();
+    let cancelled = control.cancelled().fuse();
+    pin_mut!(send, cancelled);
+    let response = match select(cancelled, send).await {
+        Either::Left(((), _)) => return Err(ModelProviderFailure::Cancelled),
+        Either::Right((result, _)) => result.map_err(classify_reqwest_error)?,
+    };
+    validate_response_head(&response)?;
+    let body = response
+        .bytes_stream()
+        .map(|item| item.map(|bytes| bytes.to_vec()))
+        .boxed();
+    let mut state = OllamaStreamState::new(body, expected_model, control);
+    state.expect_no_thinking = expect_no_thinking;
+    let stream = futures::stream::try_unfold(state, next_provider_event);
+    Ok(Box::pin(stream))
 }
 
 impl ModelCatalogProvider for OllamaModelProvider {
@@ -752,6 +849,34 @@ impl<'a> OllamaChatRequest<'a> {
             options: OllamaChatOptions::from_request(request),
         }
     }
+
+    fn encode_projected(&self) -> Result<(Vec<u8>, ModelWireProjection), ModelProviderFailure> {
+        let body = serde_json::to_vec(self).map_err(|_| ModelProviderFailure::Rejected)?;
+        let message_bytes = self
+            .messages
+            .iter()
+            .map(|message| message.content.len())
+            .sum();
+        let format_bytes = match self.format {
+            Some(schema) => serde_json::to_vec(schema)
+                .map_err(|_| ModelProviderFailure::Rejected)?
+                .len(),
+            None => 0,
+        };
+        let thinking = match self.think {
+            OllamaThinking::Disabled => ModelWireThinking::Disabled,
+            OllamaThinking::Low => ModelWireThinking::Enabled,
+        };
+        let projection = ModelWireProjection::from_serialized(
+            &body,
+            message_bytes,
+            format_bytes,
+            self.options.num_ctx,
+            self.options.num_predict,
+            thinking,
+        )?;
+        Ok((body, projection))
+    }
 }
 
 /// Adapter-only wire compatibility, not capability evidence (ADR-0067).
@@ -881,6 +1006,7 @@ struct OllamaStreamState<'a> {
     queued: VecDeque<ProviderEvent>,
     completion: Option<ModelProviderCompletion>,
     output_bytes: usize,
+    expect_no_thinking: bool,
     done_seen: bool,
     body_ended: bool,
 }
@@ -899,6 +1025,7 @@ impl<'a> OllamaStreamState<'a> {
             queued: VecDeque::new(),
             completion: None,
             output_bytes: 0,
+            expect_no_thinking: false,
             done_seen: false,
             body_ended: false,
         }
@@ -996,6 +1123,17 @@ fn parse_ollama_line(
     if line.is_empty() || state.done_seen {
         return Err(ModelProviderFailure::InvalidResponse);
     }
+    if state.expect_no_thinking {
+        let observed: OllamaThinkingObservation =
+            serde_json::from_slice(line).map_err(|_| ModelProviderFailure::InvalidResponse)?;
+        if observed
+            .message
+            .thinking
+            .is_some_and(|text| !text.is_empty())
+        {
+            return Err(ModelProviderFailure::InvalidResponse);
+        }
+    }
     let chunk = serde_json::from_slice::<OllamaChatChunk>(line)
         .map_err(|_| ModelProviderFailure::InvalidResponse)?;
     if chunk.model != state.expected_model.as_str()
@@ -1036,6 +1174,16 @@ fn finish_reason(reason: Option<&str>) -> ModelFinishReason {
         Some("length") => ModelFinishReason::OutputLimit,
         Some(_) | None => ModelFinishReason::Other,
     }
+}
+
+#[derive(Deserialize)]
+struct OllamaThinkingObservation {
+    message: OllamaThinkingMessage,
+}
+
+#[derive(Deserialize)]
+struct OllamaThinkingMessage {
+    thinking: Option<String>,
 }
 
 #[derive(Deserialize)]

@@ -1,0 +1,135 @@
+{
+  "schema": "a3.plan22.p0-freeze.v1",
+  "frozen_at_utc": "2026-11-06T16:52:53.572553+00:00",
+  "baseline_commit": "38a07ce97f4f1d84c68101e531fdb027be5fa529",
+  "baseline_tree": "927b30dba9544307c179b67d6d58a2d421830739",
+  "engine": "current_production_source_guided",
+  "entrypoint": "AgentSessionManager::submit_for_target_mode",
+  "production_behavior_modified": false,
+  "fixture_cases": 18,
+  "variants_per_case": 2,
+  "profile_freeze": "fixtures/local-agent-eval-v1/baseline.json",
+  "profile_freeze_sha256": "a06ad6cc81b622b8ec67d478e3be9cb3b010415f19e47731c25ac46594a2b000",
+  "profiles_changed_after_pilots": false,
+  "automatic_attempt_retries": 0,
+  "final_worker": "target/plan22-frozen/b98057ed79167ed83059d413a4ccc15e14cbea24fdde0eee0ac44c1d2e031241/worker.exe",
+  "final_worker_sha256": "b98057ed79167ed83059d413a4ccc15e14cbea24fdde0eee0ac44c1d2e031241",
+  "input_snapshot": "target/plan22-frozen-inputs/7ba991a39bf2437b4fdbf353b9d879df9de2e8564cef7efbc08bf3598da66f52",
+  "input_set_sha256": "7ba991a39bf2437b4fdbf353b9d879df9de2e8564cef7efbc08bf3598da66f52",
+  "inputs_sha256": {
+    "Cargo.toml": "0cdbfb0b1295772e79bcff27e991ea39a527decd7d37f3f15aacc066ebc5f574",
+    "Cargo.lock": "db1d9f0ec49cb4c89955b96ba09ad92f962c6e890c23b92ff4535d151b4aea98",
+    "rust-toolchain.toml": "e1633ee4dccddc1fd314c184e83109e96a8366e1fbc8f8e51e505f8aa879a929",
+    "apps/desktop/src-tauri/Cargo.toml": "cd13c8791fa6e76b65f91165471619bed69f7e6feb628f938e3a022be2d57e0a",
+    "apps/desktop/src-tauri/src/agent_session_manager.rs": "99f443f77aae77599588c67f9cfc9d37b6c88977252e8af18e1bc8888485b52a",
+    "apps/desktop/src-tauri/src/plan22_baseline.rs": "84da1d5ec5efb0ab05b72a5796a14838e83c40a3dfe6a29bd4a7b8dd223b2607",
+    "apps/desktop/src-tauri/src/plan22_interventions.rs": "862a9e9bd9fd017e97a1b422a13ad161a7655339f4faa323cb4cfe530764ee50",
+    "fixtures/local-agent-eval-v1/cases.py": "562aeb02e095ddb6e1e49b3c37233b0cd27e07944920ffa802b00e01a06b2ca6",
+    "fixtures/local-agent-eval-v1/oracle.py": "570f91b226edc4fe341a831dad167596555c4ee96e03c28684fc614bf6b23594",
+    "fixtures/local-agent-eval-v1/order_trace.py": "a58eb0b2c13c64f83518e9a5b8c73b14e743aec5fdaab55f135e150c1fffef9b",
+    "fixtures/local-agent-eval-v1/run_baseline.py": "3effe3688768f03c6bebb39718c96c8e67db1aa36457c1585ebcbf69dab01de2",
+    "fixtures/local-agent-eval-v1/supervisor.py": "05443c303545a4638cc4736803ba55159d6ccfb266bb6230ce81440ca597409a",
+    "fixtures/local-agent-eval-v1/test_oracles.py": "42874dd74ffa5d0c696f4dd5caea3757d404b4a15a23b8a32a62927eadd2d4d3",
+    "fixtures/local-agent-eval-v1/test_order_trace.py": "3e53d5ccafc86f4a79a9ed75d472fc5d8d03104040740ced389f8c41eeadf346",
+    "fixtures/local-agent-eval-v1/test_runner.py": "e385ecda0a24516d2ba2b437f6b22ca0c0a96568ec0a94108ec6d6b50dbdc7c3",
+    "fixtures/local-agent-eval-v1/test_supervisor.py": "d6f2941f3e41e66cb3a315669dd5f8c9fec8a341345e55ef2715eefe39dab022",
+    "fixtures/local-agent-eval-v1/suite.json": "692744baa0dc4f3457c1838c39a2d06eaddc79eaa4e28a11367e0cd495c4ce21",
+    "fixtures/local-agent-eval-v1/baseline.json": "a06ad6cc81b622b8ec67d478e3be9cb3b010415f19e47731c25ac46594a2b000",
+    "fixtures/local-agent-eval-v1/README.md": "cb4fa9707d352d9cd9aef6e29a6456b234d86b48ad20d4f5de7dbb6b0a033767",
+    "fixtures/local-agent-eval-v1/pilot-results-2026-11-06.json": "60cc6f298b0d396d3ec106eb78df3a6d2a3e6f568894d1439669d61566175a95"
+  },
+  "pilot_reports": [
+    {
+      "attempt_id": "20261106T140910Z-d716d966d7c243f5aac8d22436075a50",
+      "report": "target/plan22-runs/20261106T140910Z-d716d966d7c243f5aac8d22436075a50/report.json",
+      "report_sha256": "b1091a045d2b8b6569b6011863ee56e3eeaccd97a1e2ba3610630fb5b605d843",
+      "worker_report_sha256": "2d5bf31e21a135ab132036f37b8cde51871f0b9ec8c2b91fa473a2fcfca4cd5a",
+      "worker_binary_sha256": "b9f0eff7befd203b35213cc4ea18a1deb795f04b0ee40036f5d67475d4ec3e1f",
+      "classification": "product_failed_after_correct_edit"
+    },
+    {
+      "attempt_id": "20261106T141227Z-c54158375ace4ef6810ca73cf9123e63",
+      "report": "target/plan22-runs/20261106T141227Z-c54158375ace4ef6810ca73cf9123e63/report.json",
+      "report_sha256": "90c60635e4feb6fa06261e8dd8315e410c4d2d844785a1b1ab8e181d339aa02b",
+      "worker_report_sha256": "3506f49a1755c696202b9fa5601caeff314bb65bc0f0fa46be010fce7e3fbf2e",
+      "worker_binary_sha256": "b9f0eff7befd203b35213cc4ea18a1deb795f04b0ee40036f5d67475d4ec3e1f",
+      "classification": "measurement_scope_admission_failure"
+    },
+    {
+      "attempt_id": "20261106T141430Z-a88ec36f8e8b4c24b54345f61be87fc4",
+      "report": "target/plan22-runs/20261106T141430Z-a88ec36f8e8b4c24b54345f61be87fc4/report.json",
+      "report_sha256": "aecae1656492acd81ffd39ec68b8902d64476e07db5dd07fa5926a8c2514891a",
+      "worker_report_sha256": "b124e9e08f82e71a9452b283f074ac690ce7a5d58b3224f1a47e0062d4980fae",
+      "worker_binary_sha256": "b9f0eff7befd203b35213cc4ea18a1deb795f04b0ee40036f5d67475d4ec3e1f",
+      "classification": "product_context_halt_before_generation"
+    },
+    {
+      "attempt_id": "20261106T153057Z-898cd188eea84f37860b350ba670a227",
+      "report": "target/plan22-runs/20261106T153057Z-898cd188eea84f37860b350ba670a227/report.json",
+      "report_sha256": "42e34f4a1d05074b8a73a0694f63701d36ce0ddb4dedef12e915eac28c1ceb3e",
+      "worker_report_sha256": "db42094f2d8147217364908d297b7f7a88e075f6bd06149e683e5b1368bab0d0",
+      "worker_binary_sha256": "f5344c7c9509c2377496266e77fb3294cf0c6bd37eb49ab2867f7f70454e7f5e",
+      "classification": "measurement_interrupted"
+    },
+    {
+      "attempt_id": "20261106T163012Z-b2f1016d87ec439ea524b98b31aee8a9",
+      "report": "target/plan22-runs/20261106T163012Z-b2f1016d87ec439ea524b98b31aee8a9/report.json",
+      "report_sha256": "5d7660aa5da9c572c0f936c4fa9329cf7719e508b00f81ae85b1a04762f81b14",
+      "worker_report_sha256": "307daf3f3ae0811bb4a90dd003ff0599731f451858097c30fa6b4dfc5e68caee",
+      "worker_binary_sha256": "6840604d48a4e31ea4740809788d816c3e92f869d4552854f0758d04d4e26133",
+      "classification": "product_halted_after_actual_source_edit"
+    },
+    {
+      "attempt_id": "20261106T164921Z-6ed9b9e0d9a746eba115885cfba06706",
+      "report": "target/plan22-runs/20261106T164921Z-6ed9b9e0d9a746eba115885cfba06706/report.json",
+      "report_sha256": "89dc93d60b2b18ed27e405e9bf2f451f724cd0a802e878a150c06e7a9e0dc8fb",
+      "worker_report_sha256": "5d81f0d97caf3f6ec9166761cd385e8a0b5f69bc7a118002675cc92155ddc2b6",
+      "worker_binary_sha256": "b98057ed79167ed83059d413a4ccc15e14cbea24fdde0eee0ac44c1d2e031241",
+      "classification": "product_failed_before_first_patch_approval"
+    }
+  ],
+  "quality_checks": [
+    {
+      "name": "native_targeted",
+      "command": "cargo test -p a3-desktop --lib plan22_baseline --offline",
+      "result": "23 passed; 1 deliberately ignored live-model worker",
+      "log": "target/plan22-p0-native-targeted.log",
+      "sha256": "b4a0e08fa63dee566a087cc64f3a3782ee007943f793400efdde77155cf87096",
+      "note": "Resolved the existing serde workspace dev-dependency; lock diff is one desktop dependency entry. Subsequent workspace/Clippy checks use --locked."
+    },
+    {
+      "name": "python_controls",
+      "command": "python -B -m unittest discover -s fixtures/local-agent-eval-v1 -p test_*.py",
+      "result": "90 passed",
+      "log": "target/plan22-p0-python-controls.log",
+      "sha256": "6cf54c61cb09deef032615bf90543c9ce7bae9f30ef6536dd23323ff0cb840d2"
+    },
+    {
+      "name": "workspace",
+      "command": "cargo test --workspace --all-features --offline --locked",
+      "result": "passed",
+      "log": "target/plan22-p0-workspace.log",
+      "sha256": "38f459755d2d531be5cadf259bc7c0a73e358b2c95ec9fc2ed127eb31c982319"
+    },
+    {
+      "name": "clippy",
+      "command": "cargo clippy --workspace --all-targets --all-features --offline --locked -- -D warnings",
+      "result": "passed",
+      "log": "target/plan22-p0-clippy.log",
+      "sha256": "125dcb4aa5a88368076220fef231e980bd136fdd93307395486fa0128822c1f9"
+    },
+    {
+      "name": "format",
+      "command": "cargo fmt --all -- --check",
+      "result": "passed"
+    },
+    {
+      "name": "links",
+      "command": "node scripts/check-markdown-links.mjs",
+      "result": "185 Markdown files; 892 local links; passed"
+    }
+  ],
+  "model_quality_accepted": false,
+  "main_comparison_matrix_complete": false,
+  "pending": "P1-P11 and the P10 paired main matrix; P0 freezes measurement capability, not product success."
+}

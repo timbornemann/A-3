@@ -78,3 +78,10 @@ panic = "deny"
 todo = "deny"
 unimplemented = "deny"
 unwrap_used = "deny"
+
+# Native parsing must fit the unchanged interactive V1 budget in dev and inherited test builds.
+[profile.dev.package.tree-sitter]
+opt-level = 2
+
+[profile.dev.package.tree-sitter-python]
+opt-level = 2

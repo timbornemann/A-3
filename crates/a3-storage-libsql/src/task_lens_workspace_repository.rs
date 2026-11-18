@@ -226,6 +226,11 @@ const fn map_goal_failure(failure: GoalContractStoreFailure) -> TaskLensWorkspac
         GoalContractStoreFailure::Corrupt => TaskLensWorkspaceFailure::Corrupt,
         GoalContractStoreFailure::UnsupportedSchema => TaskLensWorkspaceFailure::UnsupportedSchema,
         GoalContractStoreFailure::InvalidStoredData
+        | GoalContractStoreFailure::IntakeVersionConflict
+        | GoalContractStoreFailure::IntakeNotPending
+        | GoalContractStoreFailure::InvalidIntakePromotion
+        | GoalContractStoreFailure::IntakeReviewVersionConflict
+        | GoalContractStoreFailure::InvalidIntakeReview
         | GoalContractStoreFailure::TaskAlreadyExists
         | GoalContractStoreFailure::TaskNotFound
         | GoalContractStoreFailure::RevisionConflict => TaskLensWorkspaceFailure::InvalidStoredData,

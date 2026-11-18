@@ -26,6 +26,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::io::Read;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const INDEX_TIMEOUT: Duration = Duration::from_secs(30);
@@ -35,9 +36,9 @@ const RUN_ID_DOMAIN: &[u8] = b"a3.index-run.v1\0";
 /// Stateful built-in Rust, TypeScript/JavaScript, and Python incremental compiler.
 #[derive(Debug)]
 pub struct BuiltinIncrementalIndexCompiler {
-    rust: RustLanguageAdapter,
-    typescript_javascript: TypeScriptJavaScriptLanguageAdapter,
-    python: PythonLanguageAdapter,
+    rust: Arc<RustLanguageAdapter>,
+    typescript_javascript: Arc<TypeScriptJavaScriptLanguageAdapter>,
+    python: Arc<PythonLanguageAdapter>,
     cached_snapshot: Option<a3_domain::SnapshotId>,
     parses: BTreeMap<RepositoryPath, LanguageParseResult>,
 }
@@ -46,19 +47,48 @@ impl BuiltinIncrementalIndexCompiler {
     /// Creates all pinned parser pools with the same bounded per-grammar capacity.
     pub fn new(size: ParserPoolSize) -> Result<Self, BuiltinIncrementalIndexCompilerCreateError> {
         Ok(Self {
-            rust: RustLanguageAdapter::new(size)
-                .map_err(BuiltinIncrementalIndexCompilerCreateError::Rust)?,
-            typescript_javascript: TypeScriptJavaScriptLanguageAdapter::new(size)
-                .map_err(BuiltinIncrementalIndexCompilerCreateError::TypeScriptJavaScript)?,
-            python: PythonLanguageAdapter::new(size)
-                .map_err(BuiltinIncrementalIndexCompilerCreateError::Python)?,
+            rust: Arc::new(
+                RustLanguageAdapter::new(size)
+                    .map_err(BuiltinIncrementalIndexCompilerCreateError::Rust)?,
+            ),
+            typescript_javascript: Arc::new(
+                TypeScriptJavaScriptLanguageAdapter::new(size)
+                    .map_err(BuiltinIncrementalIndexCompilerCreateError::TypeScriptJavaScript)?,
+            ),
+            python: Arc::new(
+                PythonLanguageAdapter::new(size)
+                    .map_err(BuiltinIncrementalIndexCompilerCreateError::Python)?,
+            ),
             cached_snapshot: None,
             parses: BTreeMap::new(),
         })
     }
 
+    /// Shares the same already owned parser port across one bounded Core edit lifetime.
+    /// No extra parser pool, registry, publication or execution capability is created.
+    pub fn shared_language_adapter_for(
+        &self,
+        path: &RepositoryPath,
+    ) -> Result<Option<Arc<dyn LanguageAdapter>>, RepositoryIndexCompilerFailure> {
+        let adapters: [Arc<dyn LanguageAdapter>; 3] = [
+            self.rust.clone(),
+            self.typescript_javascript.clone(),
+            self.python.clone(),
+        ];
+        let mut matching = adapters.into_iter().filter(|a| a.supports_path(path));
+        let first = matching.next();
+        if matching.next().is_some() {
+            return Err(RepositoryIndexCompilerFailure::InvalidResult);
+        }
+        Ok(first)
+    }
+
     fn adapters(&self) -> [&dyn LanguageAdapter; 3] {
-        [&self.rust, &self.typescript_javascript, &self.python]
+        [
+            self.rust.as_ref(),
+            self.typescript_javascript.as_ref(),
+            self.python.as_ref(),
+        ]
     }
 
     fn adapter_for(

@@ -3581,6 +3581,9 @@ impl CompositionRoot {
                                 Some(runtime),
                             )
                         }
+                        AgentApprovalControlOutcome::LoopbackContinueReady { .. } => {
+                            return Err(agent_approval_unavailable());
+                        }
                     };
                 AgentApprovalControlResultV1::Applied {
                     outcome,
@@ -11136,6 +11139,7 @@ fn map_agent_recovery_error_to_v1(error: AgentRecoveryError) -> CommandErrorV1 {
         | AgentRecoveryError::AnchorMismatch
         | AgentRecoveryError::PublishedIndexUnavailable
         | AgentRecoveryError::ResumeRequiresReplan
+        | AgentRecoveryError::LoopbackResumePending
         | AgentRecoveryError::MutationReconciliationRequired
         | AgentRecoveryError::InvalidTimestamp
         | AgentRecoveryError::InvalidRecoveryReason
@@ -11179,10 +11183,17 @@ fn map_agent_goal_store_error_to_v1(
         GoalContractStoreFailure::Unavailable => ErrorCodeV1::LocalStorageUnavailable,
         GoalContractStoreFailure::Corrupt => ErrorCodeV1::LocalStorageCorrupt,
         GoalContractStoreFailure::UnsupportedSchema => ErrorCodeV1::LocalStorageUpgradeRequired,
-        GoalContractStoreFailure::InvalidStoredData => ErrorCodeV1::LocalStorageInvalidData,
+        GoalContractStoreFailure::InvalidStoredData
+        | GoalContractStoreFailure::InvalidIntakePromotion
+        | GoalContractStoreFailure::InvalidIntakeReview => ErrorCodeV1::LocalStorageInvalidData,
         GoalContractStoreFailure::TaskNotFound => ErrorCodeV1::AgentGoalTaskNotFound,
-        GoalContractStoreFailure::RevisionConflict => ErrorCodeV1::AgentGoalRevisionConflict,
-        GoalContractStoreFailure::TaskAlreadyExists => ErrorCodeV1::AgentGoalUnavailable,
+        GoalContractStoreFailure::RevisionConflict
+        | GoalContractStoreFailure::IntakeVersionConflict
+        | GoalContractStoreFailure::IntakeReviewVersionConflict => {
+            ErrorCodeV1::AgentGoalRevisionConflict
+        }
+        GoalContractStoreFailure::TaskAlreadyExists
+        | GoalContractStoreFailure::IntakeNotPending => ErrorCodeV1::AgentGoalUnavailable,
     };
     CommandErrorV1::project_open(code)
 }
@@ -11194,6 +11205,9 @@ fn map_create_agent_goal_error_to_v1(error: CreateAgentGoalFailure) -> CommandEr
             invalid_agent_goal()
         }
         CreateAgentGoalFailure::Metadata(_) => agent_goal_unavailable(),
+        CreateAgentGoalFailure::Create(CreateGoalContractFailure::InvalidOriginalBinding(_)) => {
+            invalid_agent_goal()
+        }
         CreateAgentGoalFailure::Create(CreateGoalContractFailure::InvalidInitialRevision) => {
             CommandErrorV1::project_open(ErrorCodeV1::LocalStorageInvalidData)
         }
@@ -11214,7 +11228,9 @@ fn map_revise_agent_goal_error_to_v1(error: ReviseAgentGoalFailure) -> CommandEr
         ReviseAgentGoalFailure::Metadata(_) => agent_goal_unavailable(),
         ReviseAgentGoalFailure::Draft(_)
         | ReviseAgentGoalFailure::InvalidRevision(
-            a3_domain::GoalContractRevisionFailure::NoMaterialChange,
+            a3_domain::GoalContractRevisionFailure::NoMaterialChange
+            | a3_domain::GoalContractRevisionFailure::OriginalRequired
+            | a3_domain::GoalContractRevisionFailure::InvalidOriginalBinding(_),
         ) => invalid_agent_goal(),
         ReviseAgentGoalFailure::InvalidRevision(
             a3_domain::GoalContractRevisionFailure::RevisionExhausted
@@ -11769,6 +11785,63 @@ mod tests {
             Ok(50)
         );
         assert!(decode_deep_map_step_cursor(worktree, run, module, &impact).is_err());
+    }
+
+    #[test]
+    fn goal_intake_store_failures_keep_existing_closed_ui_codes() {
+        use a3_protocol::{CommandErrorV1, ErrorCodeV1};
+
+        for (failure, code) in [
+            (
+                a3_application::GoalContractStoreFailure::IntakeVersionConflict,
+                ErrorCodeV1::AgentGoalRevisionConflict,
+            ),
+            (
+                a3_application::GoalContractStoreFailure::IntakeNotPending,
+                ErrorCodeV1::AgentGoalUnavailable,
+            ),
+            (
+                a3_application::GoalContractStoreFailure::InvalidIntakePromotion,
+                ErrorCodeV1::LocalStorageInvalidData,
+            ),
+            (
+                a3_application::GoalContractStoreFailure::IntakeReviewVersionConflict,
+                ErrorCodeV1::AgentGoalRevisionConflict,
+            ),
+            (
+                a3_application::GoalContractStoreFailure::InvalidIntakeReview,
+                ErrorCodeV1::LocalStorageInvalidData,
+            ),
+        ] {
+            assert_eq!(
+                super::map_agent_goal_store_error_to_v1(failure),
+                CommandErrorV1::project_open(code)
+            );
+        }
+    }
+
+    #[test]
+    fn original_goal_binding_failures_keep_the_existing_closed_ui_error() {
+        let expected = super::invalid_agent_goal();
+        let create = a3_application::CreateAgentGoalFailure::Create(
+            a3_application::CreateGoalContractFailure::InvalidOriginalBinding(
+                a3_domain::GoalOriginalBindingError::MissingOriginal,
+            ),
+        );
+        assert_eq!(super::map_create_agent_goal_error_to_v1(create), expected);
+        for failure in [
+            a3_domain::GoalContractRevisionFailure::OriginalRequired,
+            a3_domain::GoalContractRevisionFailure::InvalidOriginalBinding(
+                a3_domain::GoalOriginalBindingError::OriginalGoalMismatch,
+            ),
+        ] {
+            assert_eq!(
+                super::map_revise_agent_goal_error_to_v1(
+                    a3_application::ReviseAgentGoalFailure::InvalidRevision(failure),
+                ),
+                expected,
+            );
+        }
     }
 
     #[test]

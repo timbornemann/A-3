@@ -32,16 +32,22 @@ fn catalog_is_unlimited_searchable_and_cursor_paged_without_deleting_private_dat
     run_project_catalog_test(async {
         let temporary = TempDirectory::new()?;
         let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
+        // Catalog search includes ancestor paths. Keep a numeric ancestor so the
+        // short-query contract cannot accidentally depend on the process ID.
+        let project_parent = create_directory(temporary.path().join("catalog-parent-17"))?;
         let mut projects = Vec::new();
         for index in 1_u8..=30 {
-            let common =
-                create_directory(temporary.path().join(format!("repository-{index:02}-git")))?;
+            let common = create_directory(
+                project_parent
+                    .as_path()
+                    .join(format!("repository-{index:02}-git")),
+            )?;
             let name = if index == 7 {
                 "client-dashboard".to_owned()
             } else {
                 format!("worktree-{index:02}")
             };
-            let root = create_directory(temporary.path().join(name))?;
+            let root = create_directory(project_parent.as_path().join(name))?;
             projects.push(project_fixture(
                 [index; 32],
                 [index.saturating_add(100); 32],
@@ -110,18 +116,54 @@ fn catalog_is_unlimited_searchable_and_cursor_paged_without_deleting_private_dat
             projects[6].worktree().id()
         );
 
-        let short_search = catalog
-            .list_project_catalog(&ProjectCatalogQuery::new(
-                Some("17".to_owned()),
-                None,
-                ProjectCatalogDirection::Initial,
-            )?)
-            .await?;
-        assert_eq!(short_search.projects().len(), 1);
-        assert_eq!(
-            short_search.projects()[0].worktree_id(),
-            projects[16].worktree().id()
-        );
+        for short_query in ["17", "29"] {
+            let expected = projects
+                .iter()
+                .rev()
+                .filter(|project| {
+                    project
+                        .worktree()
+                        .root()
+                        .as_path()
+                        .to_string_lossy()
+                        .contains(short_query)
+                })
+                .map(|project| project.worktree().id())
+                .collect::<Vec<_>>();
+            let short_search = catalog
+                .list_project_catalog(&ProjectCatalogQuery::new(
+                    Some(short_query.to_owned()),
+                    None,
+                    ProjectCatalogDirection::Initial,
+                )?)
+                .await?;
+            assert_eq!(
+                short_search
+                    .projects()
+                    .iter()
+                    .map(|project| project.worktree_id())
+                    .collect::<Vec<_>>(),
+                expected.iter().copied().take(25).collect::<Vec<_>>()
+            );
+            assert_eq!(short_search.next_cursor().is_some(), expected.len() > 25);
+            if let Some(cursor) = short_search.next_cursor() {
+                let rest = catalog
+                    .list_project_catalog(&ProjectCatalogQuery::new(
+                        Some(short_query.to_owned()),
+                        Some(cursor),
+                        ProjectCatalogDirection::Next,
+                    )?)
+                    .await?;
+                assert_eq!(
+                    rest.projects()
+                        .iter()
+                        .map(|project| project.worktree_id())
+                        .collect::<Vec<_>>(),
+                    expected.iter().copied().skip(25).collect::<Vec<_>>()
+                );
+                assert!(rest.next_cursor().is_none());
+            }
+        }
 
         let stored = catalog
             .resolve_last_project_catalog_entry()

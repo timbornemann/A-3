@@ -1,4 +1,7 @@
-use super::{AcceptanceCriterionId, TaskId};
+use super::{
+    AcceptanceCriterionId, CriterionOrigin, GoalOriginalBindingError, GoalOriginalRange,
+    GoalOriginalRequest, TaskId,
+};
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
@@ -148,19 +151,65 @@ goal_text_type!(
     GoalContractTextField::AcceptanceCriterion,
     MAX_ITEM_BYTES
 );
-goal_text_type!(
+macro_rules! original_goal_text_type {
+    ($(#[$metadata:meta])* $name:ident, $field:expr, $maximum:expr) => {
+        $(#[$metadata])*
+        #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        pub struct $name {
+            text: String,
+            origin: Option<GoalOriginalRange>,
+        }
+
+        impl $name {
+            /// Normalizes and validates legacy text without fabricating an original range.
+            pub fn try_from_string(value: String) -> Result<Self, GoalContractTextError> {
+                normalize_text(value, $field, $maximum).map(|text| Self { text, origin: None })
+            }
+
+            /// Returns the normalized text, independently of its optional original range.
+            #[must_use]
+            pub fn as_str(&self) -> &str {
+                &self.text
+            }
+
+            /// Attaches provenance; the Goal aggregate separately validates its exact owner.
+            #[must_use]
+            pub fn with_origin(mut self, origin: GoalOriginalRange) -> Self {
+                self.origin = Some(origin);
+                self
+            }
+
+            /// Returns the exact optional original range without conferring semantic truth.
+            #[must_use]
+            pub const fn origin(&self) -> Option<GoalOriginalRange> {
+                self.origin
+            }
+        }
+
+        impl fmt::Debug for $name {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.debug_struct(stringify!($name))
+                    .field("bytes", &self.text.len())
+                    .field("has_origin", &self.origin.is_some())
+                    .finish_non_exhaustive()
+            }
+        }
+    };
+}
+
+original_goal_text_type!(
     /// Mandatory execution or product boundary for one task.
     GoalConstraint,
     GoalContractTextField::Constraint,
     MAX_ITEM_BYTES
 );
-goal_text_type!(
+original_goal_text_type!(
     /// Outcome explicitly excluded from one task revision.
     NonGoal,
     GoalContractTextField::NonGoal,
     MAX_ITEM_BYTES
 );
-goal_text_type!(
+original_goal_text_type!(
     /// Explicit task choice confirmed by the user.
     UserDecision,
     GoalContractTextField::UserDecision,
@@ -222,6 +271,7 @@ pub struct AcceptanceCriterion {
     id: AcceptanceCriterionId,
     statement: AcceptanceCriterionStatement,
     requirement: AcceptanceCriterionRequirement,
+    origin: Option<CriterionOrigin>,
 }
 
 impl AcceptanceCriterion {
@@ -232,6 +282,7 @@ impl AcceptanceCriterion {
             id,
             statement,
             requirement: AcceptanceCriterionRequirement::Must,
+            origin: None,
         }
     }
 
@@ -246,7 +297,23 @@ impl AcceptanceCriterion {
             id,
             statement,
             requirement,
+            origin: None,
         }
+    }
+
+    /// Binds this criterion to an exact original range and immutable proof obligation.
+    ///
+    /// Legacy constructors intentionally leave this absent; candidate consumers must require it.
+    #[must_use]
+    pub fn with_origin(mut self, origin: CriterionOrigin) -> Self {
+        self.origin = Some(origin);
+        self
+    }
+
+    /// Returns original grounding, or None for an explicitly legacy criterion.
+    #[must_use]
+    pub const fn origin(&self) -> Option<&CriterionOrigin> {
+        self.origin.as_ref()
     }
 
     /// Returns the stable criterion identity.
@@ -374,9 +441,21 @@ impl GoalContractDraft {
                 GoalContractCollection::AcceptanceCriteria,
             ));
         }
-        validate_unique(&constraints, GoalContractCollection::Constraints)?;
-        validate_unique(&non_goals, GoalContractCollection::NonGoals)?;
-        validate_unique(&user_decisions, GoalContractCollection::UserDecisions)?;
+        validate_unique_text(
+            constraints.iter().map(GoalConstraint::as_str),
+            constraints.len(),
+            GoalContractCollection::Constraints,
+        )?;
+        validate_unique_text(
+            non_goals.iter().map(NonGoal::as_str),
+            non_goals.len(),
+            GoalContractCollection::NonGoals,
+        )?;
+        validate_unique_text(
+            user_decisions.iter().map(UserDecision::as_str),
+            user_decisions.len(),
+            GoalContractCollection::UserDecisions,
+        )?;
         Ok(Self {
             objective,
             acceptance_criteria,
@@ -436,11 +515,12 @@ fn validate_count(
     }
 }
 
-fn validate_unique<T: Ord>(
-    values: &[T],
+fn validate_unique_text<'a>(
+    values: impl Iterator<Item = &'a str>,
+    count: usize,
     collection: GoalContractCollection,
 ) -> Result<(), GoalContractDraftError> {
-    if values.iter().collect::<BTreeSet<_>>().len() == values.len() {
+    if values.collect::<BTreeSet<_>>().len() == count {
         Ok(())
     } else {
         Err(GoalContractDraftError::DuplicateItem(collection))
@@ -546,6 +626,7 @@ pub struct GoalContract {
     revision_reason: Option<GoalRevisionReason>,
     draft: GoalContractDraft,
     created_at: GoalContractTimestamp,
+    original: Option<GoalOriginalRequest>,
 }
 
 impl GoalContract {
@@ -563,6 +644,7 @@ impl GoalContract {
             revision_reason: None,
             draft,
             created_at,
+            original: None,
         }
     }
 
@@ -592,6 +674,7 @@ impl GoalContract {
             revision_reason,
             draft,
             created_at,
+            original: None,
         })
     }
 
@@ -602,9 +685,47 @@ impl GoalContract {
         reason: GoalRevisionReason,
         created_at: GoalContractTimestamp,
     ) -> Result<Self, GoalContractRevisionFailure> {
+        self.validate_original_binding()
+            .map_err(GoalContractRevisionFailure::InvalidOriginalBinding)?;
+        if self.original.is_some() {
+            return Err(GoalContractRevisionFailure::OriginalRequired);
+        }
         if draft == self.draft {
             return Err(GoalContractRevisionFailure::NoMaterialChange);
         }
+        let revised = self.revise_unbound(draft, reason, created_at)?;
+        revised
+            .validate_original_binding()
+            .map_err(GoalContractRevisionFailure::InvalidOriginalBinding)?;
+        Ok(revised)
+    }
+
+    /// Derives the next immutable revision with its explicitly supplied exact original.
+    pub fn revise_with_original(
+        &self,
+        draft: GoalContractDraft,
+        reason: GoalRevisionReason,
+        created_at: GoalContractTimestamp,
+        original: GoalOriginalRequest,
+    ) -> Result<Self, GoalContractRevisionFailure> {
+        self.validate_original_binding()
+            .map_err(GoalContractRevisionFailure::InvalidOriginalBinding)?;
+        let revised = self
+            .revise_unbound(draft, reason, created_at)?
+            .with_original(original)
+            .map_err(GoalContractRevisionFailure::InvalidOriginalBinding)?;
+        if super::goal_original_binding::same_original_revision_content(self, &revised) {
+            return Err(GoalContractRevisionFailure::NoMaterialChange);
+        }
+        Ok(revised)
+    }
+
+    fn revise_unbound(
+        &self,
+        draft: GoalContractDraft,
+        reason: GoalRevisionReason,
+        created_at: GoalContractTimestamp,
+    ) -> Result<Self, GoalContractRevisionFailure> {
         if created_at < self.created_at {
             return Err(GoalContractRevisionFailure::TimestampRegressed);
         }
@@ -619,7 +740,76 @@ impl GoalContract {
             revision_reason: Some(reason),
             draft,
             created_at,
+            original: None,
         })
+    }
+
+    /// Returns the exact retained original, absent only for an explicitly legacy goal.
+    #[must_use]
+    pub const fn original(&self) -> Option<&GoalOriginalRequest> {
+        self.original.as_ref()
+    }
+
+    /// Attaches an original only if this goal and every criterion resolve against it.
+    pub fn with_original(
+        mut self,
+        original: GoalOriginalRequest,
+    ) -> Result<Self, GoalOriginalBindingError> {
+        self.original = Some(original);
+        self.validate_original_binding()?;
+        Ok(self)
+    }
+
+    /// Validates legacy/source distinction and all criterion original bindings.
+    pub fn validate_original_binding(&self) -> Result<(), GoalOriginalBindingError> {
+        super::goal_original_binding::validate_original_binding(self)
+    }
+
+    /// Derives an expected next binding for Core intake, not a persisted or run-safe goal.
+    ///
+    /// Store admission and run start still require the complete next validated Goal Contract.
+    pub fn next_reference(&self) -> Result<GoalContractReference, GoalContractRevisionFailure> {
+        Ok(GoalContractReference {
+            task_id: self.task_id,
+            revision: self
+                .revision
+                .next()
+                .map_err(|_| GoalContractRevisionFailure::RevisionExhausted)?,
+        })
+    }
+
+    /// Validates one immediate immutable successor without requiring the full goal history.
+    pub fn validate_successor_of(&self, previous: &Self) -> Result<(), GoalContractHistoryError> {
+        previous
+            .validate_original_binding()
+            .map_err(GoalContractHistoryError::InvalidOriginalBinding)?;
+        self.validate_original_binding()
+            .map_err(GoalContractHistoryError::InvalidOriginalBinding)?;
+        if self.task_id != previous.task_id {
+            return Err(GoalContractHistoryError::MixedTask);
+        }
+        let expected = previous
+            .revision
+            .next()
+            .map_err(|_| GoalContractHistoryError::NonContiguous)?;
+        if self.revision != expected
+            || self.previous_revision != Some(previous.revision)
+            || self.revision_reason.is_none()
+        {
+            return Err(GoalContractHistoryError::NonContiguous);
+        }
+        if self.created_at < previous.created_at {
+            return Err(GoalContractHistoryError::TimestampRegressed);
+        }
+        if previous.original.is_some() && self.original.is_none() {
+            return Err(GoalContractHistoryError::OriginalRequired);
+        }
+        if self.draft == previous.draft
+            || super::goal_original_binding::same_original_revision_content(previous, self)
+        {
+            return Err(GoalContractHistoryError::NoMaterialChange);
+        }
+        Ok(())
     }
 
     /// Returns the durable task identity.
@@ -695,6 +885,10 @@ impl Error for GoalContractRestoreError {}
 /// A requested Goal Contract revision did not represent a valid next revision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GoalContractRevisionFailure {
+    /// An original-backed goal cannot use the source-less legacy revision method.
+    OriginalRequired,
+    /// The current or proposed goal does not retain its exact original bindings.
+    InvalidOriginalBinding(GoalOriginalBindingError),
     /// All durable goal content was identical to the current revision.
     NoMaterialChange,
     /// Revision numbering exhausted the portable integer range.
@@ -706,6 +900,8 @@ pub enum GoalContractRevisionFailure {
 impl fmt::Display for GoalContractRevisionFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::OriginalRequired => "Goal Contract revision requires an explicit original",
+            Self::InvalidOriginalBinding(_) => "Goal Contract original binding is invalid",
             Self::NoMaterialChange => "Goal Contract revision has no material change",
             Self::RevisionExhausted => "Goal Contract revision space is exhausted",
             Self::TimestampRegressed => "Goal Contract revision timestamp regressed",
@@ -723,6 +919,15 @@ pub struct GoalContractReference {
 }
 
 impl GoalContractReference {
+    /// Names a future initial Goal without asserting persistence or run admission.
+    #[must_use]
+    pub const fn initial(task_id: TaskId) -> Self {
+        Self {
+            task_id,
+            revision: GoalContractRevision::INITIAL,
+        }
+    }
+
     /// Returns the durable task identity.
     #[must_use]
     pub const fn task_id(self) -> TaskId {
@@ -754,53 +959,18 @@ impl GoalContractHistory {
         {
             return Err(GoalContractHistoryError::MissingInitialRevision);
         }
+        initial
+            .validate_original_binding()
+            .map_err(GoalContractHistoryError::InvalidOriginalBinding)?;
         for pair in revisions.windows(2) {
-            let previous = &pair[0];
-            let current = &pair[1];
-            if current.task_id != initial.task_id {
-                return Err(GoalContractHistoryError::MixedTask);
-            }
-            let expected_revision = previous
-                .revision
-                .next()
-                .map_err(|_| GoalContractHistoryError::NonContiguous)?;
-            if current.revision != expected_revision
-                || current.previous_revision != Some(previous.revision)
-            {
-                return Err(GoalContractHistoryError::NonContiguous);
-            }
-            if current.created_at < previous.created_at {
-                return Err(GoalContractHistoryError::TimestampRegressed);
-            }
-            if current.draft == previous.draft {
-                return Err(GoalContractHistoryError::NoMaterialChange);
-            }
+            pair[1].validate_successor_of(&pair[0])?;
         }
         Ok(Self { revisions })
     }
 
     /// Appends an already validated immediate revision while preserving all prior entries.
     pub fn append(&mut self, revision: GoalContract) -> Result<(), GoalContractHistoryError> {
-        let current = self.current();
-        if revision.task_id != current.task_id {
-            return Err(GoalContractHistoryError::MixedTask);
-        }
-        let expected = current
-            .revision
-            .next()
-            .map_err(|_| GoalContractHistoryError::NonContiguous)?;
-        if revision.revision != expected
-            || revision.previous_revision != Some(current.revision)
-            || revision.revision_reason.is_none()
-        {
-            return Err(GoalContractHistoryError::NonContiguous);
-        }
-        if revision.created_at < current.created_at {
-            return Err(GoalContractHistoryError::TimestampRegressed);
-        }
-        if revision.draft == current.draft {
-            return Err(GoalContractHistoryError::NoMaterialChange);
-        }
+        revision.validate_successor_of(self.current())?;
         self.revisions.push(revision);
         Ok(())
     }
@@ -838,6 +1008,10 @@ impl fmt::Debug for GoalContractHistory {
 /// Invalid chronological Goal Contract history reconstructed from storage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GoalContractHistoryError {
+    /// An original-backed revision cannot silently become a source-less legacy goal.
+    OriginalRequired,
+    /// A restored revision contains missing, foreign or stale original bindings.
+    InvalidOriginalBinding(GoalOriginalBindingError),
     /// A task cannot exist without a Goal Contract revision.
     Empty,
     /// The chain did not start at revision one.
@@ -855,6 +1029,10 @@ pub enum GoalContractHistoryError {
 impl fmt::Display for GoalContractHistoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::OriginalRequired => "Goal Contract history drops its original",
+            Self::InvalidOriginalBinding(_) => {
+                "Goal Contract history contains an invalid original binding"
+            }
             Self::Empty => "Goal Contract history is empty",
             Self::MissingInitialRevision => "Goal Contract history does not start at revision one",
             Self::MixedTask => "Goal Contract history mixes task identities",

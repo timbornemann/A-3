@@ -1,22 +1,29 @@
-use crate::{catalog::is_corruption, goal_contract_repository};
+use crate::python_translation_codec as guard;
+use crate::{catalog::is_corruption, goal_contract_repository, loopback_http_codec as http};
 use a3_application::{StoredTaskLedger, TaskLedgerStoreFailure, TaskLedgerStoreVersion};
 use a3_domain::{
     AcceptanceCriterionId, AgentRunId, DeferredCommandVerification, DiagnosticPolicy,
     DiffInvariantMode, DiffInvariantVerification, DiscoveredCommandId, DiscoveredCommandKind,
-    ExpectedTaskEvidence, GoalContractReference, GoalContractRevision, MinimumTestCaseCount,
-    PolicyResourceId, RepositoryPath, StepDependency, StepVerification, StepVerificationId,
-    StepVerificationOutcome, TaskEvidenceId, TaskId, TaskLedger, TaskLedgerReplan,
-    TaskLedgerRevision, TaskLedgerTimestamp, TaskReplanReason, TaskStep, TaskStepAttempt,
-    TaskStepAttemptDetails, TaskStepAttemptNumber, TaskStepAttemptOutcome, TaskStepAttemptTiming,
-    TaskStepBlockingReason, TaskStepCancellationReason, TaskStepDefinition, TaskStepFailureReason,
-    TaskStepId, TaskStepMaterializedState, TaskStepOutcome, TaskStepRationale,
-    TaskStepResultSummary, TaskStepStaleCause, TaskStepStatus, TestCaseSelector,
-    TestCaseSelectorName, VerificationFailureSummary, VerificationMethod, VerificationRequirement,
-    VerificationScope, VerificationSpec, VerificationSpecId, VerificationTarget, WorktreeId,
+    ExpectedTaskEvidence, GoalContractReference, GoalContractRevision, LoopbackHttpRecipe,
+    MinimumTestCaseCount, PolicyResourceId, RepositoryPath, StepDependency, StepVerification,
+    StepVerificationId, StepVerificationOutcome, TaskEvidenceId, TaskId, TaskLedger,
+    TaskLedgerReplan, TaskLedgerReplanCause, TaskLedgerRevision, TaskLedgerTimestamp,
+    TaskReplanReason, TaskStep, TaskStepAttempt, TaskStepAttemptDetails, TaskStepAttemptNumber,
+    TaskStepAttemptOutcome, TaskStepAttemptTiming, TaskStepBlockingReason,
+    TaskStepCancellationReason, TaskStepDefinition, TaskStepFailureReason, TaskStepId,
+    TaskStepMaterializedState, TaskStepOutcome, TaskStepRationale, TaskStepResultSummary,
+    TaskStepStaleCause, TaskStepStatus, TestCaseSelector, TestCaseSelectorName,
+    VerificationFailureSummary, VerificationMethod, VerificationRequirement, VerificationScope,
+    VerificationSpec, VerificationSpecId, VerificationTarget, WorktreeId,
 };
-use libsql::{Connection, Transaction, TransactionBehavior, params};
+use libsql::{Connection, Transaction, TransactionBehavior, Value, params, params_from_iter};
 use std::error::Error;
 use std::fmt;
+
+#[path = "task_ledger_planned_addition.rs"]
+mod planned_addition;
+#[path = "task_ledger_planning.rs"]
+mod planning;
 
 const SQLITE_CONSTRAINT: i32 = 19;
 
@@ -30,36 +37,53 @@ pub(crate) async fn create(
         .await
         .map_err(TaskLedgerRepositoryError::Begin)?;
     let result = async {
-        ensure_goal_exists(&transaction, worktree_id, ledger.goal_contract()).await?;
-        if read_header(&transaction, worktree_id, ledger.task_id())
-            .await?
-            .is_some()
-        {
-            return Err(TaskLedgerRepositoryError::LedgerAlreadyExists);
-        }
-        let version = TaskLedgerStoreVersion::INITIAL;
-        transaction
-            .execute(
-                "INSERT INTO task_ledgers (
-                 task_id, goal_revision, plan_revision, store_version,
-                 created_at_unix_millis, updated_at_unix_millis
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![
-                    id_bytes(ledger.task_id()),
-                    i64::from(ledger.goal_contract().revision().get()),
-                    i64::from(ledger.revision().get()),
-                    version_to_i64(version)?,
-                    timestamp_to_i64(ledger.created_at()),
-                    timestamp_to_i64(ledger.updated_at())
-                ],
-            )
-            .await
-            .map_err(classify_unexpected_constraint)?;
-        write_projection(&transaction, ledger).await?;
-        Ok(version)
+        goal_contract_repository::phase_reservations::initial_plan::reject_direct_create(
+            &transaction,
+            ledger.task_id(),
+        )
+        .await?;
+        create_in_transaction(&transaction, worktree_id, ledger).await
     }
     .await;
     close_write_transaction(transaction, result).await
+}
+
+pub(crate) async fn create_in_transaction(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    ledger: &TaskLedger,
+) -> Result<TaskLedgerStoreVersion, TaskLedgerRepositoryError> {
+    require_role_schema(transaction, ledger).await?;
+    planned_addition::require_schema(transaction, ledger).await?;
+    planning::require_schema(transaction, ledger).await?;
+    planning::validate_create(ledger)?;
+    ensure_goal_exists(transaction, worktree_id, ledger.goal_contract()).await?;
+    if read_header(transaction, worktree_id, ledger.task_id())
+        .await?
+        .is_some()
+    {
+        return Err(TaskLedgerRepositoryError::LedgerAlreadyExists);
+    }
+    let version = TaskLedgerStoreVersion::INITIAL;
+    transaction
+        .execute(
+            "INSERT INTO task_ledgers (
+                 task_id, goal_revision, plan_revision, store_version,
+                 created_at_unix_millis, updated_at_unix_millis
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                id_bytes(ledger.task_id()),
+                i64::from(ledger.goal_contract().revision().get()),
+                i64::from(ledger.revision().get()),
+                version_to_i64(version)?,
+                timestamp_to_i64(ledger.created_at()),
+                timestamp_to_i64(ledger.updated_at())
+            ],
+        )
+        .await
+        .map_err(classify_unexpected_constraint)?;
+    write_projection(transaction, ledger).await?;
+    Ok(version)
 }
 
 pub(crate) async fn replace(
@@ -72,7 +96,13 @@ pub(crate) async fn replace(
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .await
         .map_err(TaskLedgerRepositoryError::Begin)?;
-    let result = replace_in_transaction(&transaction, worktree_id, expected_version, ledger).await;
+    let result = async {
+        let existing =
+            prepare_replacement(&transaction, worktree_id, expected_version, ledger).await?;
+        planning::validate_standalone(existing.ledger(), ledger)?;
+        write_replacement(&transaction, expected_version, ledger).await
+    }
+    .await;
     close_write_transaction(transaction, result).await
 }
 
@@ -82,6 +112,19 @@ pub(crate) async fn replace_in_transaction(
     expected_version: TaskLedgerStoreVersion,
     ledger: &TaskLedger,
 ) -> Result<TaskLedgerStoreVersion, TaskLedgerRepositoryError> {
+    prepare_replacement(transaction, worktree_id, expected_version, ledger).await?;
+    write_replacement(transaction, expected_version, ledger).await
+}
+
+async fn prepare_replacement(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    expected_version: TaskLedgerStoreVersion,
+    ledger: &TaskLedger,
+) -> Result<StoredTaskLedger, TaskLedgerRepositoryError> {
+    require_role_schema(transaction, ledger).await?;
+    planned_addition::require_schema(transaction, ledger).await?;
+    planning::require_schema(transaction, ledger).await?;
     let existing = load_from_transaction(transaction, worktree_id, ledger.task_id())
         .await?
         .ok_or(TaskLedgerRepositoryError::TaskNotFound)?;
@@ -90,6 +133,15 @@ pub(crate) async fn replace_in_transaction(
     }
     validate_successor(existing.ledger(), ledger)?;
     ensure_goal_exists(transaction, worktree_id, ledger.goal_contract()).await?;
+    Ok(existing)
+}
+
+async fn write_replacement(
+    transaction: &Transaction,
+    expected_version: TaskLedgerStoreVersion,
+    ledger: &TaskLedger,
+) -> Result<TaskLedgerStoreVersion, TaskLedgerRepositoryError> {
+    planning::clear(transaction, ledger.task_id()).await?;
     let next_version = next_store_version(expected_version)?;
     let changed = transaction
         .execute(
@@ -162,6 +214,65 @@ pub(crate) async fn load(
     close_read_transaction(transaction, result).await
 }
 
+pub(crate) async fn has_planning_projection(
+    transaction: &Transaction,
+    task: TaskId,
+) -> Result<bool, TaskLedgerRepositoryError> {
+    if !planning::supported(transaction).await? {
+        return Ok(false);
+    }
+    let mut rows = transaction
+        .query(
+            "SELECT EXISTS(SELECT 1 FROM task_ledger_pending_planning WHERE task_id=?1)",
+            params![id_bytes(task)],
+        )
+        .await
+        .map_err(TaskLedgerRepositoryError::Read)?;
+    let row = rows
+        .next()
+        .await
+        .map_err(TaskLedgerRepositoryError::Read)?
+        .ok_or(TaskLedgerRepositoryError::InvalidStoredData)?;
+    let found = read_i64(&row, 0)? == 1;
+    if rows
+        .next()
+        .await
+        .map_err(TaskLedgerRepositoryError::Read)?
+        .is_some()
+    {
+        return Err(TaskLedgerRepositoryError::InvalidStoredData);
+    }
+    Ok(found)
+}
+
+pub(crate) async fn planning_action_required(
+    transaction: &Transaction,
+    ledger: &TaskLedger,
+) -> Result<bool, TaskLedgerRepositoryError> {
+    planning::action_changes_planning(transaction, ledger).await
+}
+
+async fn supports_addresses(transaction: &Transaction) -> Result<bool, TaskLedgerRepositoryError> {
+    crate::migration::read_user_version(transaction)
+        .await
+        .map(|version| version >= 46)
+        .map_err(TaskLedgerRepositoryError::Read)
+}
+
+async fn require_role_schema(
+    transaction: &Transaction,
+    ledger: &TaskLedger,
+) -> Result<(), TaskLedgerRepositoryError> {
+    if ledger
+        .steps()
+        .any(|step| !step.definition().addressed_criteria().is_empty())
+        && !supports_addresses(transaction).await?
+    {
+        return Err(TaskLedgerRepositoryError::CriterionRoleSchemaUnsupported);
+    }
+    Ok(())
+}
+
 async fn write_projection(
     transaction: &Transaction,
     ledger: &TaskLedger,
@@ -178,7 +289,7 @@ async fn write_projection(
     for replan in ledger.replans() {
         write_replan(transaction, ledger.task_id(), replan).await?;
     }
-    Ok(())
+    planning::write(transaction, ledger).await
 }
 
 async fn write_step(
@@ -225,6 +336,7 @@ async fn write_step(
         .map_err(classify_unexpected_constraint)?;
 
     write_operational_spec(transaction, task_id, definition.verification_spec()).await?;
+    planned_addition::write(transaction, task_id, definition).await?;
     for criterion_id in definition.acceptance_criteria() {
         transaction
             .execute(
@@ -240,6 +352,15 @@ async fn write_step(
             )
             .await
             .map_err(classify_unexpected_constraint)?;
+    }
+
+    for criterion_id in definition.addressed_criteria() {
+        transaction.execute(
+            "INSERT INTO task_step_addressed_criteria (task_id,step_id,goal_revision,criterion_id)
+             VALUES (?1,?2,?3,?4)",
+            params![id_bytes(task_id),id_bytes(definition.id()),
+                i64::from(goal_revision.get()),id_bytes(*criterion_id)],
+        ).await.map_err(classify_unexpected_constraint)?;
     }
 
     for (index, dependency) in definition.dependencies().iter().enumerate() {
@@ -324,21 +445,36 @@ async fn write_operational_spec(
                 TestCaseSelector::All => ("all", None),
                 TestCaseSelector::Exact(name) => ("exact", Some(name.as_str())),
             };
+            let mut values = Vec::from(params![
+                id_bytes(task_id),
+                id_bytes(spec.id()),
+                id_bytes(*command_id),
+                verification_scope_text(*scope),
+                selector_kind,
+                selector_value,
+                i64::from(minimum_cases.get()),
+            ]);
+            let (column, parameter) = if let Some(translation) = spec.python_integer_translation() {
+                if !guard::supported(transaction)
+                    .await
+                    .map_err(TaskLedgerRepositoryError::Read)?
+                {
+                    return Err(TaskLedgerRepositoryError::InvalidInput);
+                }
+                values.push(Ok(Value::Blob(guard::write_requirement(translation))));
+                (", python_integer_translation", ", ?8")
+            } else {
+                ("", "")
+            };
             transaction
                 .execute(
-                    "INSERT INTO verification_specs_v1 (
+                    &format!(
+                        "INSERT INTO verification_specs_v1 (
                      task_id, verification_spec_id, target_kind, command_id, verification_scope,
-                     test_selector_kind, test_selector, minimum_test_cases
-                     ) VALUES (?1, ?2, 'test', ?3, ?4, ?5, ?6, ?7)",
-                    params![
-                        id_bytes(task_id),
-                        id_bytes(spec.id()),
-                        id_bytes(*command_id),
-                        verification_scope_text(*scope),
-                        selector_kind,
-                        selector_value,
-                        i64::from(minimum_cases.get())
-                    ],
+                     test_selector_kind, test_selector, minimum_test_cases{column}
+                     ) VALUES (?1, ?2, 'test', ?3, ?4, ?5, ?6, ?7{parameter})"
+                    ),
+                    params_from_iter(values),
                 )
                 .await
                 .map_err(classify_unexpected_constraint)?;
@@ -437,6 +573,25 @@ async fn write_operational_spec(
                     .await
                     .map_err(classify_unexpected_constraint)?;
             }
+        }
+        VerificationTarget::LoopbackHttp(recipe) => {
+            if !http::supported(transaction)
+                .await
+                .map_err(TaskLedgerRepositoryError::Read)?
+            {
+                return Err(TaskLedgerRepositoryError::InvalidStoredData);
+            }
+            // The V40 target CHECK still uses the original discriminator set. Without
+            // the extension this row cannot decode as deferred (it has no kinds).
+            transaction
+                .execute(
+                    "INSERT INTO verification_specs_v1 (
+                     task_id, verification_spec_id, target_kind, verification_scope, loopback_http_recipe
+                     ) VALUES (?1, ?2, 'deferred_command', 'targeted', ?3)",
+                    params![id_bytes(task_id), id_bytes(spec.id()), http::encode_recipe(recipe)],
+                )
+                .await
+                .map_err(classify_unexpected_constraint)?;
         }
     }
     Ok(())
@@ -587,6 +742,16 @@ async fn write_replan(
         )
         .await
         .map_err(classify_unexpected_constraint)?;
+    if replan.cause() == TaskLedgerReplanCause::HorizonExtension {
+        transaction
+            .execute(
+                "UPDATE task_ledger_replans SET revision_cause='horizon_extension'
+            WHERE task_id=?1 AND plan_revision=?2",
+                params![id_bytes(task_id), i64::from(replan.revision().get())],
+            )
+            .await
+            .map_err(classify_unexpected_constraint)?;
+    }
     write_replan_step_ids(
         transaction,
         "task_ledger_replan_retirements",
@@ -658,7 +823,7 @@ pub(crate) async fn load_from_transaction(
     .map_err(TaskLedgerRepositoryError::GoalContract)?
     .ok_or(TaskLedgerRepositoryError::InvalidStoredData)?
     .reference();
-    let ledger = TaskLedger::reconstruct(
+    let mut ledger = TaskLedger::reconstruct(
         goal_contract,
         header.plan_revision,
         steps,
@@ -667,6 +832,11 @@ pub(crate) async fn load_from_transaction(
         header.updated_at,
     )
     .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?;
+    if let Some(pending) = planning::load(transaction, goal_contract).await? {
+        ledger = ledger
+            .with_pending_planning(pending)
+            .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?;
+    }
     Ok(Some(StoredTaskLedger::new(ledger, header.store_version)))
 }
 
@@ -714,13 +884,23 @@ async fn read_steps(
     transaction: &Transaction,
     task_id: TaskId,
 ) -> Result<Vec<TaskStep>, TaskLedgerRepositoryError> {
+    let schema = crate::migration::read_user_version(transaction)
+        .await
+        .map_err(TaskLedgerRepositoryError::Read)?;
+    let addition_column = if schema >= planned_addition::SCHEMA_VERSION {
+        "has_planned_file_addition"
+    } else {
+        "0"
+    };
     let mut rows = transaction
         .query(
-            "SELECT step_id, parent_step_id, intended_outcome, rationale,
+            &format!(
+                "SELECT step_id, parent_step_id, intended_outcome, rationale,
              verification_spec_id, verification_method, verification_requirement,
              introduced_plan_revision, retired_plan_revision, status, blocking_reason,
-             stale_kind, stale_dependency_step_id
-             FROM task_steps WHERE task_id = ?1 ORDER BY step_id",
+             stale_kind, stale_dependency_step_id,{addition_column}
+             FROM task_steps WHERE task_id = ?1 ORDER BY step_id"
+            ),
             params![id_bytes(task_id)],
         )
         .await
@@ -741,11 +921,16 @@ async fn read_steps(
             blocking_reason: read_optional_text(&row, 10)?,
             stale_kind: read_optional_text(&row, 11)?,
             stale_dependency: read_optional_id(&row, 12)?.map(TaskStepId::from_bytes),
+            planned_addition: match read_i64(&row, 13)? {
+                0 => false,
+                1 => true,
+                _ => return Err(TaskLedgerRepositoryError::InvalidStoredData),
+            },
         });
     }
     let mut steps = Vec::with_capacity(records.len());
     for record in records {
-        steps.push(read_step(transaction, task_id, record).await?);
+        steps.push(read_step(transaction, task_id, record, schema).await?);
     }
     Ok(steps)
 }
@@ -764,13 +949,16 @@ struct StepRecord {
     blocking_reason: Option<String>,
     stale_kind: Option<String>,
     stale_dependency: Option<TaskStepId>,
+    planned_addition: bool,
 }
 
 async fn read_step(
     transaction: &Transaction,
     task_id: TaskId,
     record: StepRecord,
+    schema: u32,
 ) -> Result<TaskStep, TaskLedgerRepositoryError> {
+    let addresses_supported = schema >= 46;
     let dependencies = read_dependencies(transaction, task_id, record.step_id).await?;
     let expected_evidence = read_expected_evidence(transaction, task_id, record.step_id).await?;
     let attempts = read_attempts(transaction, task_id, record.step_id).await?;
@@ -782,6 +970,7 @@ async fn read_step(
         task_id,
         record.verification_spec_id,
         requirement.clone(),
+        schema,
     )
     .await?
     .unwrap_or_else(|| {
@@ -790,7 +979,7 @@ async fn read_step(
     if verification_spec.method() != legacy_method
         && !matches!(
             verification_spec.target(),
-            VerificationTarget::DeferredCommand(_)
+            VerificationTarget::DeferredCommand(_) | VerificationTarget::LoopbackHttp(_)
                 if legacy_method == VerificationMethod::Test
         )
     {
@@ -798,6 +987,17 @@ async fn read_step(
     }
     let acceptance_criteria =
         read_acceptance_criteria(transaction, task_id, record.step_id).await?;
+    let addressed_criteria = if addresses_supported {
+        read_role_criteria(
+            transaction,
+            "task_step_addressed_criteria",
+            task_id,
+            record.step_id,
+        )
+        .await?
+    } else {
+        Vec::new()
+    };
     let mut definition = TaskStepDefinition::new(
         record.step_id,
         record.parent_step_id,
@@ -810,9 +1010,22 @@ async fn read_step(
         verification_spec,
     )
     .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?;
-    if !acceptance_criteria.is_empty() {
+    if !acceptance_criteria.is_empty() || !addressed_criteria.is_empty() {
         definition = definition
-            .with_acceptance_criteria(acceptance_criteria)
+            .with_criterion_coverage(addressed_criteria, acceptance_criteria)
+            .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?;
+    }
+    if let Some(addition) = planned_addition::read(
+        transaction,
+        task_id,
+        record.step_id,
+        schema,
+        record.planned_addition,
+    )
+    .await?
+    {
+        definition = definition
+            .with_planned_file_addition(addition)
             .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?;
     }
     let status = parse_step_status(&record.status)?;
@@ -848,14 +1061,25 @@ async fn read_operational_spec(
     task_id: TaskId,
     spec_id: VerificationSpecId,
     requirement: VerificationRequirement,
+    schema: u32,
 ) -> Result<Option<VerificationSpec>, TaskLedgerRepositoryError> {
+    let guarded = schema >= guard::SCHEMA_VERSION;
+    let loopback = schema >= http::SCHEMA_VERSION;
+    let guard_column = if guarded {
+        guard::REQUIREMENT_SELECT
+    } else {
+        ""
+    };
+    let http_column = if loopback { http::RECIPE_SELECT } else { "" };
     let mut rows = transaction
         .query(
-            "SELECT target_kind, command_id, verification_scope, test_selector_kind,
+            &format!(
+                "SELECT target_kind, command_id, verification_scope, test_selector_kind,
              test_selector, minimum_test_cases, diff_mode, diagnostic_policy,
-             confirmation_scope_id
+              confirmation_scope_id{guard_column}{http_column}
              FROM verification_specs_v1
-             WHERE task_id = ?1 AND verification_spec_id = ?2",
+             WHERE task_id = ?1 AND verification_spec_id = ?2"
+            ),
             params![id_bytes(task_id), id_bytes(spec_id)],
         )
         .await
@@ -864,6 +1088,36 @@ async fn read_operational_spec(
         return Ok(None);
     };
     let target = read_text(&row, 0)?;
+    let translation = if guarded {
+        guard::read_requirement(&row, 9)
+            .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?
+    } else {
+        None
+    };
+    if target != "test" && translation.is_some() {
+        return Err(TaskLedgerRepositoryError::InvalidStoredData);
+    }
+    if loopback
+        && let Some(recipe) = http::read_recipe(&row, 9 + i32::from(guarded))
+            .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?
+    {
+        if target != "deferred_command"
+            || read_text(&row, 2)? != "targeted"
+            || rows
+                .next()
+                .await
+                .map_err(TaskLedgerRepositoryError::Read)?
+                .is_some()
+        {
+            return Err(TaskLedgerRepositoryError::InvalidStoredData);
+        }
+        require_inert_loopback_projection(transaction, task_id, spec_id).await?;
+        return Ok(Some(VerificationSpec::loopback_http(
+            spec_id,
+            requirement,
+            recipe,
+        )));
+    }
     let spec = match target.as_str() {
         "command" => VerificationSpec::command(
             spec_id,
@@ -880,15 +1134,24 @@ async fn read_operational_spec(
                 ),
                 _ => return Err(TaskLedgerRepositoryError::InvalidStoredData),
             };
-            VerificationSpec::test(
-                spec_id,
-                requirement,
-                DiscoveredCommandId::from_bytes(read_id(&row, 1)?),
-                selector,
-                MinimumTestCaseCount::new(read_u32(&row, 5)?)
-                    .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?,
-                parse_verification_scope(&read_text(&row, 2)?)?,
-            )
+            let command = DiscoveredCommandId::from_bytes(read_id(&row, 1)?);
+            let minimum = MinimumTestCaseCount::new(read_u32(&row, 5)?)
+                .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?;
+            let scope = parse_verification_scope(&read_text(&row, 2)?)?;
+            match translation {
+                Some(translation) => VerificationSpec::test_with_python_integer_translation(
+                    spec_id,
+                    requirement,
+                    command,
+                    selector,
+                    minimum,
+                    scope,
+                    translation,
+                ),
+                None => {
+                    VerificationSpec::test(spec_id, requirement, command, selector, minimum, scope)
+                }
+            }
         }
         "diff_invariant" => VerificationSpec::diff_invariant(
             spec_id,
@@ -931,6 +1194,75 @@ async fn read_operational_spec(
         return Err(TaskLedgerRepositoryError::InvalidStoredData);
     }
     Ok(Some(spec))
+}
+
+pub(crate) async fn read_bound_loopback_recipe(
+    tx: &Transaction,
+    task: TaskId,
+    step: TaskStepId,
+    spec: VerificationSpecId,
+) -> Result<LoopbackHttpRecipe, TaskLedgerRepositoryError> {
+    let projection = http::RECIPE_SELECT;
+    let mut rows = tx
+        .query(
+            &format!(
+                "SELECT v.target_kind, v.verification_scope, s.verification_method{projection}
+             FROM verification_specs_v1 v JOIN task_steps s USING(task_id, verification_spec_id)
+             WHERE v.task_id=?1 AND s.step_id=?2 AND v.verification_spec_id=?3"
+            ),
+            params![id_bytes(task), id_bytes(step), id_bytes(spec)],
+        )
+        .await
+        .map_err(TaskLedgerRepositoryError::Read)?;
+    let row = rows
+        .next()
+        .await
+        .map_err(TaskLedgerRepositoryError::Read)?
+        .ok_or(TaskLedgerRepositoryError::InvalidStoredData)?;
+    if read_text(&row, 0)? != "deferred_command"
+        || read_text(&row, 1)? != "targeted"
+        || read_text(&row, 2)? != "test"
+    {
+        return Err(TaskLedgerRepositoryError::InvalidStoredData);
+    }
+    let recipe = http::read_recipe(&row, 3)
+        .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?
+        .ok_or(TaskLedgerRepositoryError::InvalidStoredData)?;
+    if rows
+        .next()
+        .await
+        .map_err(TaskLedgerRepositoryError::Read)?
+        .is_some()
+    {
+        return Err(TaskLedgerRepositoryError::InvalidStoredData);
+    }
+    require_inert_loopback_projection(tx, task, spec).await?;
+    Ok(recipe)
+}
+
+async fn require_inert_loopback_projection(
+    tx: &Transaction,
+    task: TaskId,
+    spec: VerificationSpecId,
+) -> Result<(), TaskLedgerRepositoryError> {
+    let mut rows = tx
+        .query(
+            "SELECT 1 FROM verification_spec_deferred_kinds WHERE task_id=?1 AND verification_spec_id=?2
+             UNION ALL SELECT 1 FROM verification_spec_paths WHERE task_id=?1 AND verification_spec_id=?2
+             LIMIT 1",
+            params![id_bytes(task), id_bytes(spec)],
+        )
+        .await
+        .map_err(TaskLedgerRepositoryError::Read)?;
+    if rows
+        .next()
+        .await
+        .map_err(TaskLedgerRepositoryError::Read)?
+        .is_some()
+    {
+        return Err(TaskLedgerRepositoryError::InvalidStoredData);
+    }
+    Ok(())
 }
 
 async fn read_deferred_command_kinds(
@@ -984,16 +1316,43 @@ async fn read_acceptance_criteria(
     task_id: TaskId,
     step_id: TaskStepId,
 ) -> Result<Vec<AcceptanceCriterionId>, TaskLedgerRepositoryError> {
+    read_role_criteria(
+        transaction,
+        "task_step_acceptance_criteria",
+        task_id,
+        step_id,
+    )
+    .await
+}
+
+async fn read_role_criteria(
+    transaction: &Transaction,
+    table: &str,
+    task_id: TaskId,
+    step_id: TaskStepId,
+) -> Result<Vec<AcceptanceCriterionId>, TaskLedgerRepositoryError> {
+    // Both table names are fixed adapter constants; no model or repository text enters SQL.
+    let sql = format!(
+        "SELECT CASE WHEN length(c.criterion_id)=32 THEN c.criterion_id END,
+        length(c.criterion_id), CASE WHEN c.goal_revision=l.goal_revision AND EXISTS(
+            SELECT 1 FROM acceptance_criteria a WHERE a.task_id=c.task_id
+            AND a.goal_revision=c.goal_revision AND a.criterion_id=c.criterion_id)
+        THEN 1 ELSE 0 END
+        FROM {table} c JOIN task_ledgers l ON l.task_id=c.task_id
+        WHERE c.task_id=?1 AND c.step_id=?2 ORDER BY c.criterion_id"
+    );
     let mut rows = transaction
-        .query(
-            "SELECT criterion_id FROM task_step_acceptance_criteria
-             WHERE task_id = ?1 AND step_id = ?2 ORDER BY criterion_id",
-            params![id_bytes(task_id), id_bytes(step_id)],
-        )
+        .query(&sql, params![id_bytes(task_id), id_bytes(step_id)])
         .await
         .map_err(TaskLedgerRepositoryError::Read)?;
     let mut criteria = Vec::new();
     while let Some(row) = rows.next().await.map_err(TaskLedgerRepositoryError::Read)? {
+        if criteria.len() >= 64 {
+            return Err(TaskLedgerRepositoryError::ResourceLimit);
+        }
+        if read_i64(&row, 1)? != 32 || read_i64(&row, 2)? != 1 {
+            return Err(TaskLedgerRepositoryError::InvalidStoredData);
+        }
         criteria.push(AcceptanceCriterionId::from_bytes(read_id(&row, 0)?));
     }
     Ok(criteria)
@@ -1267,26 +1626,41 @@ async fn read_replans(
     transaction: &Transaction,
     task_id: TaskId,
 ) -> Result<Vec<TaskLedgerReplan>, TaskLedgerRepositoryError> {
+    let sql = if planning::supported(transaction).await? {
+        "SELECT plan_revision,previous_plan_revision,reason,created_at_unix_millis,
+            CASE WHEN length(CAST(revision_cause AS BLOB))<=32 THEN revision_cause END,
+            length(CAST(revision_cause AS BLOB))
+         FROM task_ledger_replans WHERE task_id=?1 ORDER BY plan_revision"
+    } else {
+        "SELECT plan_revision,previous_plan_revision,reason,created_at_unix_millis,
+            'error_correction',16
+         FROM task_ledger_replans WHERE task_id=?1 ORDER BY plan_revision"
+    };
     let mut rows = transaction
-        .query(
-            "SELECT plan_revision, previous_plan_revision, reason, created_at_unix_millis
-             FROM task_ledger_replans WHERE task_id = ?1 ORDER BY plan_revision",
-            params![id_bytes(task_id)],
-        )
+        .query(sql, params![id_bytes(task_id)])
         .await
         .map_err(TaskLedgerRepositoryError::Read)?;
     let mut records = Vec::new();
     while let Some(row) = rows.next().await.map_err(TaskLedgerRepositoryError::Read)? {
+        if read_i64(&row, 5)? > 32 {
+            return Err(TaskLedgerRepositoryError::InvalidStoredData);
+        }
+        let cause = match read_text(&row, 4)?.as_str() {
+            "error_correction" => TaskLedgerReplanCause::ErrorCorrection,
+            "horizon_extension" => TaskLedgerReplanCause::HorizonExtension,
+            _ => return Err(TaskLedgerRepositoryError::InvalidStoredData),
+        };
         records.push((
             read_ledger_revision(&row, 0)?,
             read_ledger_revision(&row, 1)?,
             TaskReplanReason::try_from_string(read_text(&row, 2)?)
                 .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?,
             read_timestamp(&row, 3)?,
+            cause,
         ));
     }
     let mut replans = Vec::with_capacity(records.len());
-    for (revision, previous, reason, created_at) in records {
+    for (revision, previous, reason, created_at, cause) in records {
         let retired = read_replan_step_ids(
             transaction,
             "task_ledger_replan_retirements",
@@ -1303,6 +1677,7 @@ async fn read_replans(
         .await?;
         replans.push(
             TaskLedgerReplan::reconstruct(revision, previous, reason, retired, added, created_at)
+                .and_then(|record| record.with_cause(cause))
                 .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?,
         );
     }
@@ -1428,7 +1803,7 @@ fn verification_method_text(method: VerificationMethod) -> &'static str {
         VerificationMethod::UserConfirm => "user_confirm",
         // The V12 compatibility projection is constrained to the original closed method set.
         // The authoritative V40 target and ordered kind rows retain the deferred semantics.
-        VerificationMethod::DeferredCommand => "test",
+        VerificationMethod::DeferredCommand | VerificationMethod::LoopbackHttp => "test",
     }
 }
 
@@ -1833,6 +2208,9 @@ pub(crate) enum TaskLedgerRepositoryError {
     InvalidInput,
     InvalidStoredData,
     ResourceLimit,
+    CriterionRoleSchemaUnsupported,
+    PlanningSchemaUnsupported,
+    PlannedAdditionSchemaUnsupported,
     LedgerAlreadyExists,
     TaskNotFound,
     VersionConflict,
@@ -1844,6 +2222,9 @@ impl TaskLedgerRepositoryError {
             Self::InvalidInput | Self::InvalidStoredData | Self::ResourceLimit => {
                 TaskLedgerStoreFailure::InvalidStoredData
             }
+            Self::CriterionRoleSchemaUnsupported
+            | Self::PlanningSchemaUnsupported
+            | Self::PlannedAdditionSchemaUnsupported => TaskLedgerStoreFailure::UnsupportedSchema,
             Self::LedgerAlreadyExists => TaskLedgerStoreFailure::LedgerAlreadyExists,
             Self::TaskNotFound => TaskLedgerStoreFailure::TaskNotFound,
             Self::VersionConflict => TaskLedgerStoreFailure::VersionConflict,
@@ -1858,6 +2239,11 @@ impl TaskLedgerRepositoryError {
                     TaskLedgerStoreFailure::UnsupportedSchema
                 }
                 a3_application::GoalContractStoreFailure::InvalidStoredData
+                | a3_application::GoalContractStoreFailure::IntakeVersionConflict
+                | a3_application::GoalContractStoreFailure::IntakeNotPending
+                | a3_application::GoalContractStoreFailure::InvalidIntakePromotion
+                | a3_application::GoalContractStoreFailure::IntakeReviewVersionConflict
+                | a3_application::GoalContractStoreFailure::InvalidIntakeReview
                 | a3_application::GoalContractStoreFailure::TaskAlreadyExists
                 | a3_application::GoalContractStoreFailure::TaskNotFound
                 | a3_application::GoalContractStoreFailure::RevisionConflict => {
@@ -1891,6 +2277,13 @@ impl fmt::Display for TaskLedgerRepositoryError {
             Self::InvalidInput => "Task Ledger successor was invalid",
             Self::InvalidStoredData => "Task Ledger data was invalid",
             Self::ResourceLimit => "Task Ledger data exceeded a resource limit",
+            Self::CriterionRoleSchemaUnsupported => {
+                "Task Ledger criterion roles require the candidate schema"
+            }
+            Self::PlanningSchemaUnsupported => "Task Ledger planning requires the candidate schema",
+            Self::PlannedAdditionSchemaUnsupported => {
+                "Task Ledger planned Add requires the candidate schema"
+            }
             Self::LedgerAlreadyExists => "Task Ledger already exists",
             Self::TaskNotFound => "Task Ledger task was not found",
             Self::VersionConflict => "Task Ledger store version conflicted",
@@ -1910,6 +2303,9 @@ impl Error for TaskLedgerRepositoryError {
             Self::InvalidInput
             | Self::InvalidStoredData
             | Self::ResourceLimit
+            | Self::CriterionRoleSchemaUnsupported
+            | Self::PlanningSchemaUnsupported
+            | Self::PlannedAdditionSchemaUnsupported
             | Self::LedgerAlreadyExists
             | Self::TaskNotFound
             | Self::VersionConflict => None,

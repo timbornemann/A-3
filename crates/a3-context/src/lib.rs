@@ -584,9 +584,12 @@ fn render_anchor(
         ),
     );
     render_verification_target(&mut text, definition.verification_spec());
-    if definition.acceptance_criteria().is_empty() {
+    if definition.acceptance_criteria().is_empty() && definition.addressed_criteria().is_empty() {
         text.push_str("step_acceptance=legacy_unmapped\n");
     } else {
+        for criterion_id in definition.addressed_criteria() {
+            push_line(&mut text, format_args!("step_addresses={criterion_id}"));
+        }
         for criterion_id in definition.acceptance_criteria() {
             push_line(&mut text, format_args!("step_acceptance={criterion_id}"));
         }
@@ -1495,6 +1498,7 @@ const fn verification_method(method: a3_domain::VerificationMethod) -> &'static 
         a3_domain::VerificationMethod::Diagnostic => "diagnostic",
         a3_domain::VerificationMethod::UserConfirm => "user_confirm",
         a3_domain::VerificationMethod::DeferredCommand => "deferred_command",
+        a3_domain::VerificationMethod::LoopbackHttp => "loopback_http",
     }
 }
 
@@ -1579,6 +1583,12 @@ fn render_verification_target(text: &mut String, spec: &a3_domain::VerificationS
             text,
             format_args!("verification_target=user_confirm scope={scope_id}"),
         ),
+        a3_domain::VerificationTarget::LoopbackHttp(_) => {
+            push_line(
+                text,
+                format_args!("verification_target=loopback_http core_owned=true"),
+            );
+        }
         a3_domain::VerificationTarget::DeferredCommand(deferred) => {
             push_line(
                 text,

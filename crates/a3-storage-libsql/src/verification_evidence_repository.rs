@@ -1,28 +1,36 @@
-use crate::catalog::is_corruption;
+use crate::{
+    catalog::is_corruption, loopback_http_codec as http, python_translation_codec as python,
+};
 use a3_application::{
-    AgentControllerControl, StoredVerificationState, VerificationEvidenceStoreFailure,
+    AgentControllerControl, PreparedLoopbackStartupCoverage, PreparedLoopbackVerification,
+    StoredVerificationState, VerificationEvidenceStoreFailure,
 };
 use a3_domain::{
     AgentRunId, CommandEvidence, CommandEvidenceContext, ContentHash, DiagnosticCount,
     DiagnosticEvidence, DiffEvidence, DiffEvidenceSource, EvidenceDependency, FileRevision,
-    IndexRunId, PatchActionDigest, PolicyDecisionId, PolicyResourceId, ProcessDuration,
-    ProcessExit, ProcessOutputDigest, ProcessOutputRedaction, ProcessStreamEvidence,
-    ProcessTermination, PublishedIndex, RepositoryPath, SnapshotId, StoredDiffEvidenceContext,
-    StoredProcessEvidence, TaskEvidenceId, TaskId, TaskLedgerTimestamp, TestCaseEvidence,
-    TestCaseName, TestCaseOutcome, TestEvidence, ToolRunId, UserConfirmationEvidence,
-    VerificationDependencies, VerificationEvidence, VerificationRunId, VerificationSpecId,
-    WorktreeId,
+    IndexRunId, LoopbackHttpEvidence, LoopbackHttpRecipe, MutationActionFingerprint,
+    PatchActionDigest, PolicyAction, PolicyDecisionId, PolicyDecisionOutcome, PolicyDecisionReason,
+    PolicyResourceId, ProcessDuration, ProcessExit, ProcessOutputDigest, ProcessOutputRedaction,
+    ProcessStreamEvidence, ProcessTermination, PublishedIndex, RepositoryPath, SnapshotId,
+    StoredDiffEvidenceContext, StoredProcessEvidence, TaskEvidenceId, TaskId, TaskLedgerTimestamp,
+    TestCaseEvidence, TestCaseName, TestCaseOutcome, TestEvidence, ToolRunId,
+    UserConfirmationEvidence, VerificationDependencies, VerificationEvidence, VerificationRunId,
+    VerificationSpecId, WorktreeId,
 };
-use libsql::{Connection, Transaction, TransactionBehavior, params};
+use libsql::{Connection, Transaction, TransactionBehavior, Value, params, params_from_iter};
 use std::fmt;
 use std::time::{Duration, Instant};
 
 const SQLITE_CONSTRAINT: i32 = 19;
+// Each completed active step can provide one typed HTTP receipt.
+const MAX_LOOPBACK_RECOVERY_EVIDENCE: usize = 256;
+const MAX_DIFF_RECOVERY_EVIDENCE: usize = 16_384;
 
 pub(crate) async fn append(
     connection: &Connection,
     worktree_id: WorktreeId,
     evidence: &VerificationEvidence,
+    schema: u32,
     timeout: Duration,
     control: &dyn AgentControllerControl,
 ) -> Result<(), VerificationEvidenceRepositoryError> {
@@ -31,49 +39,90 @@ pub(crate) async fn append(
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .await
         .map_err(VerificationEvidenceRepositoryError::Begin)?;
-    let result = async {
-        guard.checkpoint()?;
-        let task_id = evidence_task_id(
-            &transaction,
-            worktree_id,
-            evidence.spec_id(),
-            evidence.run_id(),
-        )
-        .await?;
-        if let Some(existing) =
-            read_evidence(&transaction, worktree_id, task_id, evidence.id()).await?
-        {
-            return if &existing == evidence {
-                guard.checkpoint()?;
-                Ok(())
-            } else {
-                Err(VerificationEvidenceRepositoryError::EvidenceConflict)
-            };
-        }
-        transaction
-            .execute(
+    let result = append_in_transaction(&transaction, worktree_id, evidence, schema, &guard).await;
+    close_write(transaction, result).await
+}
+
+pub(crate) async fn append_in_transaction(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    evidence: &VerificationEvidence,
+    schema: u32,
+    guard: &OperationGuard<'_>,
+) -> Result<(), VerificationEvidenceRepositoryError> {
+    guard.checkpoint()?;
+    let task_id = evidence_task_id(
+        transaction,
+        worktree_id,
+        evidence.spec_id(),
+        evidence.run_id(),
+    )
+    .await?;
+    require_test_guard(
+        transaction,
+        task_id,
+        evidence,
+        schema >= python::SCHEMA_VERSION,
+    )
+    .await?;
+    if matches!(evidence, VerificationEvidence::LoopbackHttp(_)) && schema < http::SCHEMA_VERSION {
+        return Err(VerificationEvidenceRepositoryError::InvalidStoredData);
+    }
+    if let VerificationEvidence::LoopbackHttp(receipt) = evidence
+        && receipt.startup().is_some()
+        && schema < http::STARTUP_EVIDENCE_SCHEMA_VERSION
+    {
+        return Err(VerificationEvidenceRepositoryError::InvalidStoredData);
+    }
+    if let Some(existing) =
+        read_evidence(transaction, worktree_id, task_id, evidence.id(), schema).await?
+    {
+        return if &existing == evidence {
+            guard.checkpoint()?;
+            Ok(())
+        } else {
+            Err(VerificationEvidenceRepositoryError::EvidenceConflict)
+        };
+    }
+    if let VerificationEvidence::LoopbackHttp(receipt) = evidence {
+        require_loopback_binding(transaction, worktree_id, task_id, receipt).await?;
+        require_current_loopback_source(transaction, worktree_id, receipt).await?;
+    }
+    let mut values = Vec::from(params![
+        id_bytes(evidence.id().as_bytes()),
+        id_bytes(task_id.as_bytes()),
+        id_bytes(worktree_id.as_bytes()),
+        evidence_kind(evidence),
+        id_bytes(evidence.verification_run_id().as_bytes()),
+        id_bytes(evidence.spec_id().as_bytes()),
+        id_bytes(evidence.run_id().as_bytes()),
+        id_bytes(evidence.snapshot_id().as_bytes()),
+    ]);
+    let (column, parameter) = if let VerificationEvidence::LoopbackHttp(receipt) = evidence {
+        values.push(Ok(Value::Blob(http::encode_evidence(receipt))));
+        (", loopback_http_evidence", ", ?9")
+    } else if let VerificationEvidence::Test(test) = evidence
+        && let Some(witness) = test.python_integer_translation()
+    {
+        values.push(Ok(Value::Blob(python::write_witness(witness))));
+        (", python_integer_translation_witness", ", ?9")
+    } else {
+        ("", "")
+    };
+    transaction
+        .execute(
+            &format!(
                 "INSERT INTO verification_evidence (
                  evidence_id, task_id, worktree_id, evidence_kind, schema_version,
-                 verification_run_id, verification_spec_id, run_id, snapshot_id
-                 ) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8)",
-                params![
-                    id_bytes(evidence.id().as_bytes()),
-                    id_bytes(task_id.as_bytes()),
-                    id_bytes(worktree_id.as_bytes()),
-                    evidence_kind(evidence),
-                    id_bytes(evidence.verification_run_id().as_bytes()),
-                    id_bytes(evidence.spec_id().as_bytes()),
-                    id_bytes(evidence.run_id().as_bytes()),
-                    id_bytes(evidence.snapshot_id().as_bytes())
-                ],
-            )
-            .await
-            .map_err(classify_write)?;
-        write_variant(&transaction, evidence, &guard).await?;
-        guard.checkpoint()
-    }
-    .await;
-    close_write(transaction, result).await
+                 verification_run_id, verification_spec_id, run_id, snapshot_id{column}
+                 ) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8{parameter})"
+            ),
+            params_from_iter(values),
+        )
+        .await
+        .map_err(classify_write)?;
+    write_variant(transaction, evidence, guard).await?;
+    guard.checkpoint()
 }
 
 pub(crate) struct VerificationStateQuery<'a> {
@@ -125,6 +174,7 @@ impl<'a> VerificationStateQuery<'a> {
 pub(crate) async fn load_state(
     connection: &Connection,
     query: VerificationStateQuery<'_>,
+    schema: u32,
     control: &dyn AgentControllerControl,
 ) -> Result<StoredVerificationState, VerificationEvidenceRepositoryError> {
     let guard = OperationGuard::new(query.timeout, control)?;
@@ -147,15 +197,94 @@ pub(crate) async fn load_state(
                 guard.checkpoint()?;
             }
             evidence.push(
-                read_evidence(&transaction, query.worktree_id, query.task_id, *evidence_id)
-                    .await?
-                    .ok_or(VerificationEvidenceRepositoryError::InvalidStoredData)?,
+                read_evidence(
+                    &transaction,
+                    query.worktree_id,
+                    query.task_id,
+                    *evidence_id,
+                    schema,
+                )
+                .await?
+                .ok_or(VerificationEvidenceRepositoryError::InvalidStoredData)?,
             );
         }
         validate_latest_publication(&transaction, query.worktree_id, &query.published).await?;
         guard.checkpoint()?;
         StoredVerificationState::new(query.published, evidence)
             .map_err(|_| VerificationEvidenceRepositoryError::InvalidStoredData)
+    }
+    .await;
+    close_read(transaction, result).await
+}
+
+pub(crate) async fn load_loopback_recovery_evidence(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    task_id: TaskId,
+    evidence_ids: &[TaskEvidenceId],
+    schema: u32,
+    timeout: Duration,
+    control: &dyn AgentControllerControl,
+) -> Result<Vec<VerificationEvidence>, VerificationEvidenceRepositoryError> {
+    use VerificationEvidenceRepositoryError as Error;
+    if evidence_ids.len() > MAX_LOOPBACK_RECOVERY_EVIDENCE {
+        return Err(Error::ResourceLimit);
+    }
+    let guard = OperationGuard::new(timeout, control)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Deferred)
+        .await
+        .map_err(Error::Begin)?;
+    let result = async {
+        let mut evidence = Vec::with_capacity(evidence_ids.len());
+        for id in evidence_ids {
+            guard.checkpoint()?;
+            if let Some(receipt @ VerificationEvidence::LoopbackHttp(_)) =
+                read_evidence(&transaction, worktree_id, task_id, *id, schema).await?
+            {
+                evidence.push(receipt);
+            }
+        }
+        guard.checkpoint()?;
+        Ok(evidence)
+    }
+    .await;
+    close_read(transaction, result).await
+}
+
+/// Reads existing typed Diff rows without requiring their historical snapshot to be current.
+/// The application independently evaluates their exact step binding and granular freshness.
+pub(crate) async fn load_diff_recovery_evidence(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    task_id: TaskId,
+    evidence_ids: &[TaskEvidenceId],
+    schema: u32,
+    timeout: Duration,
+    control: &dyn AgentControllerControl,
+) -> Result<Vec<DiffEvidence>, VerificationEvidenceRepositoryError> {
+    use VerificationEvidenceRepositoryError as Error;
+    if evidence_ids.len() > MAX_DIFF_RECOVERY_EVIDENCE {
+        return Err(Error::ResourceLimit);
+    }
+    let guard = OperationGuard::new(timeout, control)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Deferred)
+        .await
+        .map_err(Error::Begin)?;
+    let result = async {
+        let mut evidence = Vec::with_capacity(evidence_ids.len());
+        for id in evidence_ids {
+            guard.checkpoint()?;
+            if let Some(VerificationEvidence::Diff(diff)) =
+                read_evidence(&transaction, worktree_id, task_id, *id, schema).await?
+            {
+                evidence.push(diff);
+            }
+        }
+        evidence.sort_by_key(DiffEvidence::id);
+        guard.checkpoint()?;
+        Ok(evidence)
     }
     .await;
     close_read(transaction, result).await
@@ -333,6 +462,10 @@ async fn write_variant(
                 .await
                 .map_err(classify_write)?;
         }
+        VerificationEvidence::LoopbackHttp(_) => {
+            // The V56 payload owns the revision and observations. No legacy child
+            // can stand in for it if this content-free payload is missing.
+        }
     }
     Ok(())
 }
@@ -423,12 +556,17 @@ async fn read_evidence(
     worktree_id: WorktreeId,
     task_id: TaskId,
     evidence_id: TaskEvidenceId,
+    schema: u32,
 ) -> Result<Option<VerificationEvidence>, VerificationEvidenceRepositoryError> {
+    let guarded = schema >= python::SCHEMA_VERSION;
+    let loopback = schema >= http::SCHEMA_VERSION;
+    let guard_column = if guarded { python::WITNESS_SELECT } else { "" };
+    let http_column = if loopback { http::EVIDENCE_SELECT } else { "" };
     let mut rows = transaction
         .query(
-            "SELECT evidence_kind, verification_run_id, verification_spec_id, run_id, snapshot_id
+            &format!("SELECT evidence_kind, verification_run_id, verification_spec_id, run_id, snapshot_id{guard_column}{http_column}
              FROM verification_evidence
-             WHERE evidence_id = ?1 AND task_id = ?2 AND worktree_id = ?3",
+             WHERE evidence_id = ?1 AND task_id = ?2 AND worktree_id = ?3"),
             params![
                 id_bytes(evidence_id.as_bytes()),
                 id_bytes(task_id.as_bytes()),
@@ -452,6 +590,46 @@ async fn read_evidence(
         run_id: AgentRunId::from_bytes(read_id(&row, 3)?),
         snapshot_id: SnapshotId::from_bytes(read_id(&row, 4)?),
     };
+    let witness = if guarded {
+        python::read_witness(&row, 5)
+            .map_err(|_| VerificationEvidenceRepositoryError::InvalidStoredData)?
+    } else {
+        None
+    };
+    let http_receipt = if loopback {
+        let column = 5 + i32::from(guarded);
+        let startup_step = http::read_startup_step(&row, column)
+            .map_err(|_| VerificationEvidenceRepositoryError::InvalidStoredData)?;
+        let recipe = if let Some(step) = startup_step {
+            if schema < http::STARTUP_EVIDENCE_SCHEMA_VERSION {
+                return Err(VerificationEvidenceRepositoryError::InvalidStoredData);
+            }
+            Some(
+                crate::task_ledger_repository::read_bound_loopback_recipe(
+                    transaction,
+                    task_id,
+                    step,
+                    header.spec_id,
+                )
+                .await
+                .map_err(|_| VerificationEvidenceRepositoryError::InvalidStoredData)?,
+            )
+        } else {
+            None
+        };
+        http::read_evidence(
+            &row,
+            column,
+            header.verification_run_id,
+            header.spec_id,
+            header.run_id,
+            header.snapshot_id,
+            recipe.as_ref(),
+        )
+        .map_err(|_| VerificationEvidenceRepositoryError::InvalidStoredData)?
+    } else {
+        None
+    };
     if rows
         .next()
         .await
@@ -459,6 +637,17 @@ async fn read_evidence(
         .is_some()
     {
         return Err(VerificationEvidenceRepositoryError::InvalidStoredData);
+    }
+    if header.kind != "test" && witness.is_some() {
+        return Err(VerificationEvidenceRepositoryError::InvalidStoredData);
+    }
+    if let Some(receipt) = http_receipt {
+        if header.kind != "command" || receipt.id() != header.id {
+            return Err(VerificationEvidenceRepositoryError::InvalidStoredData);
+        }
+        require_no_legacy_evidence_children(transaction, header.id).await?;
+        require_loopback_binding(transaction, worktree_id, task_id, &receipt).await?;
+        return Ok(Some(VerificationEvidence::LoopbackHttp(receipt)));
     }
     let evidence = match header.kind.as_str() {
         "command" => VerificationEvidence::Command(
@@ -473,6 +662,10 @@ async fn read_evidence(
             let cases = read_test_cases(transaction, header.id).await?;
             let test = TestEvidence::new(command, cases)
                 .map_err(|_| VerificationEvidenceRepositoryError::InvalidStoredData)?;
+            let test = match witness {
+                Some(witness) => test.with_python_integer_translation(witness),
+                None => test,
+            };
             if test.id() != header.id {
                 return Err(VerificationEvidenceRepositoryError::InvalidStoredData);
             }
@@ -497,7 +690,318 @@ async fn read_evidence(
         }
         _ => return Err(VerificationEvidenceRepositoryError::InvalidStoredData),
     };
+    require_test_guard(transaction, task_id, &evidence, guarded).await?;
     Ok(Some(evidence))
+}
+
+async fn require_no_legacy_evidence_children(
+    tx: &Transaction,
+    id: TaskEvidenceId,
+) -> Result<(), VerificationEvidenceRepositoryError> {
+    use VerificationEvidenceRepositoryError as Error;
+    let mut rows = tx
+        .query(
+            "SELECT 1 FROM verification_process_evidence WHERE evidence_id=?1
+             UNION ALL SELECT 1 FROM verification_diff_evidence WHERE evidence_id=?1
+             UNION ALL SELECT 1 FROM verification_user_confirmations WHERE evidence_id=?1
+             UNION ALL SELECT 1 FROM verification_evidence_dependencies WHERE evidence_id=?1
+             LIMIT 1",
+            params![id_bytes(id.as_bytes())],
+        )
+        .await
+        .map_err(Error::Read)?;
+    if rows.next().await.map_err(Error::Read)?.is_some() {
+        return Err(Error::InvalidStoredData);
+    }
+    Ok(())
+}
+
+async fn require_loopback_binding(
+    tx: &Transaction,
+    worktree: WorktreeId,
+    task: TaskId,
+    receipt: &LoopbackHttpEvidence,
+) -> Result<(), VerificationEvidenceRepositoryError> {
+    use VerificationEvidenceRepositoryError as Error;
+    let context = receipt.context();
+    let recipe = crate::task_ledger_repository::read_bound_loopback_recipe(
+        tx,
+        task,
+        context.step_id,
+        context.spec_id,
+    )
+    .await
+    .map_err(|_| Error::InvalidStoredData)?;
+    let binding = bind_loopback_receipt(worktree, receipt, recipe)?;
+    let mut attempts = tx
+        .query(
+            "SELECT a.started_at_unix_millis, t.event_sequence
+             FROM tool_runs t
+             JOIN agent_runs r ON r.run_id=t.run_id
+             JOIN tool_run_attempts a ON a.tool_run_id=t.tool_run_id AND a.run_id=t.run_id
+             JOIN mutation_attempts m ON m.tool_run_id=a.tool_run_id AND m.attempt_sequence=a.attempt_sequence
+             JOIN machine_effect_scopes s ON s.tool_run_id=a.tool_run_id AND s.attempt_sequence=a.attempt_sequence
+             WHERE t.tool_run_id=?1 AND t.run_id=?2 AND r.task_id=?3
+               AND t.snapshot_before_id=?4 AND t.snapshot_after_id=?4 AND a.snapshot_id=?4
+               AND t.result_digest=?5 AND t.result_truncated=0
+               AND t.status='succeeded' AND a.status='succeeded' AND m.action_kind='machine_process'
+               AND m.application_state='applied' AND m.reconciliation_state='not_required'
+               AND m.action_fingerprint=?6 AND s.step_id=?7
+               AND s.resource_kind='process' AND s.resource_id=?8 AND s.target='python'",
+            params![
+                id_bytes(context.tool_run_id.as_bytes()), id_bytes(context.run_id.as_bytes()),
+                id_bytes(task.as_bytes()), id_bytes(context.snapshot_id.as_bytes()),
+                id_bytes(receipt.id().as_bytes()), id_bytes(&binding.fingerprint.as_bytes()),
+                id_bytes(context.step_id.as_bytes()), id_bytes(binding.resource.as_bytes()),
+            ],
+        )
+        .await
+        .map_err(Error::Read)?;
+    let attempt = attempts
+        .next()
+        .await
+        .map_err(Error::Read)?
+        .ok_or(Error::InvalidStoredData)?;
+    let started_at = read_u64(&attempt, 0)?;
+    let completion = read_i64(&attempt, 1)?;
+    if attempts.next().await.map_err(Error::Read)?.is_some() {
+        return Err(Error::InvalidStoredData);
+    }
+    for (decision, action) in binding.authorizations {
+        require_loopback_decision(tx, receipt, decision, &action, started_at, completion).await?;
+    }
+    Ok(())
+}
+
+struct LoopbackBinding {
+    resource: PolicyResourceId,
+    fingerprint: MutationActionFingerprint,
+    authorizations: Vec<(PolicyDecisionId, PolicyAction)>,
+}
+
+fn bind_loopback_receipt(
+    worktree: WorktreeId,
+    receipt: &LoopbackHttpEvidence,
+    recipe: LoopbackHttpRecipe,
+) -> Result<LoopbackBinding, VerificationEvidenceRepositoryError> {
+    use VerificationEvidenceRepositoryError::InvalidStoredData;
+    let context = receipt.context();
+    if recipe.id() != receipt.recipe_id()
+        || recipe.script() != receipt.script().path()
+        || recipe.checks().len() != receipt.observations().len()
+    {
+        return Err(InvalidStoredData);
+    }
+    let process = recipe
+        .process_spec(
+            context.run_id,
+            worktree,
+            context.step_id,
+            receipt.process().settings(),
+        )
+        .map_err(|_| InvalidStoredData)?;
+    if process.specification_id() != receipt.process_specification() {
+        return Err(InvalidStoredData);
+    }
+    match (recipe.default_start_check_index(), receipt.startup()) {
+        (Some(_), Some(startup)) => {
+            let prepared = PreparedLoopbackStartupCoverage::new(
+                context.run_id,
+                worktree,
+                context.step_id,
+                context.snapshot_id,
+                receipt.script().clone(),
+                recipe,
+                receipt.process().settings(),
+            )
+            .map_err(|_| InvalidStoredData)?;
+            let actions = prepared.policy_actions();
+            let mut decisions = vec![
+                startup.reserve_decision(),
+                startup.held_explicit_decision(),
+                receipt.start_decision(),
+            ];
+            decisions.extend(
+                receipt
+                    .observations()
+                    .iter()
+                    .map(|observation| observation.decision()),
+            );
+            decisions.extend([
+                startup.default_start_decision(),
+                startup.default_observation().decision(),
+                startup.invalid_port_decision(),
+            ]);
+            if actions.len() != decisions.len() {
+                return Err(InvalidStoredData);
+            }
+            Ok(LoopbackBinding {
+                resource: prepared.effect_resource(),
+                fingerprint: prepared.effect_fingerprint(),
+                authorizations: decisions.into_iter().zip(actions).collect(),
+            })
+        }
+        (None, None) => {
+            let start = process.policy_action();
+            let mut authorizations = vec![(receipt.start_decision(), start.clone())];
+            for (index, observation) in receipt.observations().iter().enumerate() {
+                let action = PreparedLoopbackVerification::bound_probe_policy_action(
+                    worktree,
+                    context.step_id,
+                    receipt.process_specification(),
+                    context.snapshot_id,
+                    &recipe,
+                    receipt.script(),
+                    index,
+                )
+                .ok_or(InvalidStoredData)?;
+                authorizations.push((observation.decision(), action));
+            }
+            Ok(LoopbackBinding {
+                resource: receipt.process_specification(),
+                fingerprint: MutationActionFingerprint::from_bytes(*start.fingerprint().as_bytes()),
+                authorizations,
+            })
+        }
+        _ => Err(InvalidStoredData),
+    }
+}
+
+pub(crate) async fn expected_loopback_effect_resource(
+    tx: &Transaction,
+    worktree: WorktreeId,
+    task: TaskId,
+    receipt: &LoopbackHttpEvidence,
+) -> Result<PolicyResourceId, VerificationEvidenceRepositoryError> {
+    let context = receipt.context();
+    let recipe = crate::task_ledger_repository::read_bound_loopback_recipe(
+        tx,
+        task,
+        context.step_id,
+        context.spec_id,
+    )
+    .await
+    .map_err(|_| VerificationEvidenceRepositoryError::InvalidStoredData)?;
+    bind_loopback_receipt(worktree, receipt, recipe).map(|binding| binding.resource)
+}
+
+async fn require_current_loopback_source(
+    tx: &Transaction,
+    worktree: WorktreeId,
+    receipt: &LoopbackHttpEvidence,
+) -> Result<(), VerificationEvidenceRepositoryError> {
+    use VerificationEvidenceRepositoryError as Error;
+    let mut rows = tx
+        .query(
+            "WITH latest AS (
+                SELECT index_run_id, snapshot_id FROM index_runs
+                WHERE worktree_id=?1 AND status='published' ORDER BY run_sequence DESC LIMIT 1
+             )
+             SELECT 1 FROM latest JOIN file_revisions f USING(index_run_id)
+             WHERE latest.snapshot_id=?2 AND f.repository_path=?3 AND f.content_hash=?4",
+            params![
+                id_bytes(worktree.as_bytes()),
+                id_bytes(receipt.context().snapshot_id.as_bytes()),
+                receipt.script().path().as_bytes().to_vec(),
+                id_bytes(receipt.script().content_hash().as_bytes()),
+            ],
+        )
+        .await
+        .map_err(Error::Read)?;
+    if rows.next().await.map_err(Error::Read)?.is_none() {
+        return Err(Error::SnapshotMismatch);
+    }
+    Ok(())
+}
+
+async fn require_loopback_decision(
+    tx: &Transaction,
+    receipt: &LoopbackHttpEvidence,
+    id: PolicyDecisionId,
+    action: &PolicyAction,
+    started_at: u64,
+    completion: i64,
+) -> Result<(), VerificationEvidenceRepositoryError> {
+    use VerificationEvidenceRepositoryError as Error;
+    let context = receipt.context();
+    let decision = crate::policy_repository::load_decision(tx, id)
+        .await
+        .map_err(|_| Error::InvalidStoredData)?
+        .ok_or(Error::InvalidStoredData)?;
+    if decision.run_id() != context.run_id
+        || decision.outcome() != PolicyDecisionOutcome::Allowed
+        || decision.reason() != PolicyDecisionReason::ApprovalGranted
+        || decision.action_fingerprint() != action.fingerprint()
+        || decision.scope_digest() != action.scope_digest()
+        || decision.action_class() != action.class()
+        || decision.risk_level() != action.risk()
+        || decision.timing().decided_at().unix_millis() > started_at
+    {
+        return Err(Error::InvalidStoredData);
+    }
+    let mut events = tx.query(
+        "SELECT 1 FROM policy_decisions p JOIN run_events e ON e.event_id=p.event_id AND e.run_id=p.run_id
+         WHERE p.policy_decision_id=?1 AND p.run_id=?2 AND e.snapshot_id=?3 AND e.event_sequence<?4",
+        params![id_bytes(id.as_bytes()), id_bytes(context.run_id.as_bytes()),
+            id_bytes(context.snapshot_id.as_bytes()), completion],
+    ).await.map_err(Error::Read)?;
+    if events.next().await.map_err(Error::Read)?.is_none() {
+        return Err(Error::InvalidStoredData);
+    }
+    Ok(())
+}
+
+async fn require_test_guard(
+    tx: &Transaction,
+    task: TaskId,
+    evidence: &VerificationEvidence,
+    guarded: bool,
+) -> Result<(), VerificationEvidenceRepositoryError> {
+    use VerificationEvidenceRepositoryError as Error;
+    let VerificationEvidence::Test(test) = evidence else {
+        return Ok(());
+    };
+    // An actual process observation remains durable even when the separate source proof is open.
+    let Some(witness) = test.python_integer_translation() else {
+        return Ok(());
+    };
+    if !guarded {
+        return Err(Error::InvalidStoredData);
+    }
+    let projection = python::REQUIREMENT_SELECT;
+    let mut rows = tx
+        .query(
+            &format!(
+                "SELECT target_kind{projection} FROM verification_specs_v1
+         WHERE task_id=?1 AND verification_spec_id=?2"
+            ),
+            params![
+                id_bytes(task.as_bytes()),
+                id_bytes(evidence.spec_id().as_bytes())
+            ],
+        )
+        .await
+        .map_err(Error::Read)?;
+    let requirement = if let Some(row) = rows.next().await.map_err(Error::Read)? {
+        let requirement =
+            python::read_requirement(&row, 1).map_err(|_| Error::InvalidStoredData)?;
+        if requirement.is_some() && read_text(&row, 0)? != "test" {
+            return Err(Error::InvalidStoredData);
+        }
+        requirement
+    } else {
+        None
+    };
+    if requirement.as_ref() != Some(witness.requirement()) {
+        return Err(Error::InvalidStoredData);
+    }
+    if !test.command().dependencies().as_slice().iter().any(
+            |dependency| matches!(dependency, EvidenceDependency::Present(revision) if revision == witness.revision())
+        )
+    {
+        return Err(Error::InvalidStoredData);
+    }
+    Ok(())
 }
 
 struct EvidenceHeader {
@@ -907,14 +1411,14 @@ async fn validate_latest_publication(
     Ok(())
 }
 
-struct OperationGuard<'a> {
+pub(crate) struct OperationGuard<'a> {
     started: Instant,
     timeout: Duration,
     control: &'a dyn AgentControllerControl,
 }
 
 impl<'a> OperationGuard<'a> {
-    fn new(
+    pub(crate) fn new(
         timeout: Duration,
         control: &'a dyn AgentControllerControl,
     ) -> Result<Self, VerificationEvidenceRepositoryError> {
@@ -930,7 +1434,7 @@ impl<'a> OperationGuard<'a> {
         Ok(guard)
     }
 
-    fn checkpoint(&self) -> Result<(), VerificationEvidenceRepositoryError> {
+    pub(crate) fn checkpoint(&self) -> Result<(), VerificationEvidenceRepositoryError> {
         if self.control.is_cancelled() {
             return Err(VerificationEvidenceRepositoryError::Cancelled);
         }
@@ -986,6 +1490,8 @@ fn evidence_kind(evidence: &VerificationEvidence) -> &'static str {
         VerificationEvidence::Diff(_) => "diff_invariant",
         VerificationEvidence::Diagnostic(_) => "diagnostic",
         VerificationEvidence::UserConfirmation(_) => "user_confirm",
+        // This constrained V28 projection has no operational command child.
+        VerificationEvidence::LoopbackHttp(_) => "command",
     }
 }
 
@@ -1299,5 +1805,18 @@ impl fmt::Display for VerificationEvidenceRepositoryError {
             Self::Cancelled => "verification evidence operation was cancelled",
             Self::TimedOut => "verification evidence operation timed out",
         })
+    }
+}
+
+impl std::error::Error for VerificationEvidenceRepositoryError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Begin(error)
+            | Self::Read(error)
+            | Self::Write(error)
+            | Self::Commit(error)
+            | Self::Rollback(error) => Some(error),
+            _ => None,
+        }
     }
 }

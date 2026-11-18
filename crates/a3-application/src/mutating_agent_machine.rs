@@ -353,6 +353,7 @@ impl ExecuteMutatingAgentAction<'_> {
                         control,
                         lease,
                         MutationFailureClass::VerificationFailed,
+                        false,
                     )
                     .await;
             }

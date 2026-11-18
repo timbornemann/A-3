@@ -374,15 +374,41 @@ fn inspect_tree(
         let child_depth = depth
             .checked_add(1)
             .ok_or(LanguageParseFailure::ResourceLimitExceeded)?;
-        for index in (0..node.child_count()).rev() {
-            let index =
-                u32::try_from(index).map_err(|_| LanguageParseFailure::ResourceLimitExceeded)?;
-            let child = node.child(index).ok_or(LanguageParseFailure::ParseFailed)?;
-            stack.push((child, child_depth));
-        }
+        push_tree_children(
+            node,
+            child_depth,
+            &mut stack,
+            control,
+            started,
+            parse_timeout,
+        )?;
     }
     ensure_active(control)?;
     normalize_parse_diagnostics(source_bytes, policy.max_diagnostics(), diagnostics)
+}
+
+fn push_tree_children<'tree>(
+    node: Node<'tree>,
+    child_depth: usize,
+    stack: &mut Vec<(Node<'tree>, usize)>,
+    control: &dyn LanguageParseControl,
+    started: Instant,
+    parse_timeout: Duration,
+) -> Result<(), LanguageParseFailure> {
+    let pending = stack.len();
+    let mut cursor = node.walk();
+    for (index, child) in node.children(&mut cursor).enumerate() {
+        if index.is_multiple_of(256) {
+            ensure_active(control)?;
+            if started.elapsed() >= parse_timeout {
+                return Err(LanguageParseFailure::TimedOut);
+            }
+        }
+        stack.push((child, child_depth));
+    }
+    // Preserve preorder without reversing older pending siblings or rescanning child prefixes.
+    stack[pending..].reverse();
+    Ok(())
 }
 
 fn syntax_diagnostic(node: Node<'_>) -> Result<ParseDiagnostic, LanguageParseFailure> {
@@ -503,13 +529,14 @@ fn report_progress(
 
 #[cfg(test)]
 mod tests {
-    use super::{ParserPoolSize, TreeSitterParserPool};
+    use super::{ParserPoolSize, TreeSitterParserPool, push_tree_children};
     use a3_application::{
         LanguageParseControl, LanguageParseControlError, LanguageParseFailure, LanguageParsePolicy,
     };
     use a3_domain::Progress;
     use std::error::Error;
-    use std::time::Duration;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
     use tree_sitter::Language;
 
     #[derive(Debug, Default)]
@@ -610,6 +637,98 @@ mod tests {
             pool.parse(b"{}", LanguageParsePolicy::v1(), &ActiveControl)
                 .is_ok()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn child_cursor_keeps_preorder_and_existing_pending_siblings() -> Result<(), Box<dyn Error>> {
+        let source = format!(
+            "[{}]",
+            std::iter::repeat_n("0", 600).collect::<Vec<_>>().join(",")
+        );
+        let parsed =
+            json_pool(1)?.parse(source.as_bytes(), LanguageParsePolicy::v1(), &ActiveControl)?;
+        let sentinel = parsed.tree().root_node();
+        let array = sentinel.named_child(0).ok_or("array is missing")?;
+        let mut stack = vec![(sentinel, 1)];
+        push_tree_children(
+            array,
+            3,
+            &mut stack,
+            &ActiveControl,
+            Instant::now(),
+            Duration::from_secs(2),
+        )?;
+        let mut cursor = array.walk();
+        for expected in array.children(&mut cursor) {
+            let (actual, depth) = stack.pop().ok_or("child is missing")?;
+            assert_eq!(actual, expected);
+            assert_eq!(depth, 3);
+        }
+        assert_eq!(stack, vec![(sentinel, 1)]);
+        Ok(())
+    }
+
+    #[derive(Debug, Default)]
+    struct CancelAfterOnePoll(AtomicUsize);
+    impl LanguageParseControl for CancelAfterOnePoll {
+        fn is_cancelled(&self) -> bool {
+            self.0.fetch_add(1, Ordering::Relaxed) >= 1
+        }
+        fn report_progress(&self, _: Progress) -> Result<(), LanguageParseControlError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn wide_child_enqueue_cancels_before_finishing_and_can_be_repeated()
+    -> Result<(), Box<dyn Error>> {
+        let source = format!(
+            "[{}]",
+            std::iter::repeat_n("0", 600).collect::<Vec<_>>().join(",")
+        );
+        let parsed =
+            json_pool(1)?.parse(source.as_bytes(), LanguageParsePolicy::v1(), &ActiveControl)?;
+        let sentinel = parsed.tree().root_node();
+        let array = sentinel.named_child(0).ok_or("array is missing")?;
+        let mut stack = vec![(sentinel, 1)];
+        assert!(matches!(
+            push_tree_children(
+                array,
+                2,
+                &mut stack,
+                &CancelAfterOnePoll::default(),
+                Instant::now(),
+                Duration::from_secs(2)
+            ),
+            Err(LanguageParseFailure::Cancelled)
+        ));
+        assert!(stack.len() > 1 && stack.len() < array.child_count() + 1);
+        assert_eq!(stack[0], (sentinel, 1));
+        stack.truncate(1);
+        push_tree_children(
+            array,
+            2,
+            &mut stack,
+            &ActiveControl,
+            Instant::now(),
+            Duration::from_secs(2),
+        )?;
+        assert_eq!(stack.len(), array.child_count() + 1);
+        Ok(())
+    }
+
+    #[test]
+    fn tree_depth_limit_remains_typed_and_returns_the_parser_lease() -> Result<(), Box<dyn Error>> {
+        let policy = LanguageParsePolicy::v1();
+        let depth = policy.max_tree_depth() + 8;
+        let source = format!("{}0{}", "[".repeat(depth), "]".repeat(depth));
+        let pool = json_pool(1)?;
+        assert!(matches!(
+            pool.parse(source.as_bytes(), policy, &ActiveControl),
+            Err(LanguageParseFailure::ResourceLimitExceeded)
+        ));
+        assert!(pool.parse(b"[]", policy, &ActiveControl).is_ok());
         Ok(())
     }
 

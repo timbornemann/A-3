@@ -1,13 +1,95 @@
 //! Application use cases and ports for A^3.
 
+mod execute_http_context_intent;
+mod execute_http_no_change_replan;
+mod http_no_change_replan;
+mod http_no_change_window_apply;
+mod http_no_change_window_edit;
+mod http_no_change_window_material;
+pub use execute_http_no_change_replan::{
+    ExecuteHttpNoChangeReplan, HttpNoChangeReplanExecutionFailure,
+    HttpNoChangeReplanExecutionReport,
+};
+pub use http_no_change_replan::{
+    HttpNoChangeReplanAnchor, HttpNoChangeReplanDecision, HttpNoChangeReplanFailure,
+    HttpNoChangeReplanHalt, HttpNoChangeReplanResume, HttpNoChangeReplanResumeState,
+    HttpNoChangeReplanSettlement, PreparedHttpNoChangeReplanV6Job,
+    replay_http_no_change_replan_job,
+};
+pub use http_no_change_window_apply::ApplyHttpNoChangeWindowPlan;
+pub use http_no_change_window_edit::{
+    ActivateHttpNoChangeWindowEdit, HttpNoChangeWindowEditDiagnostic,
+};
+pub use http_no_change_window_material::{
+    AppliedHttpNoChangeWindowOrigin, HttpNoChangeWindowFailure, HttpNoChangeWindowMaterialPlan,
+    HttpNoChangeWindowMaterialProof, derive_http_no_change_window_material_plan,
+    http_no_change_window_material_identity,
+};
+mod http_context_intent;
+pub use execute_http_context_intent::{
+    ExecuteHttpContextIntent, HttpContextIntentExecutionFailure, HttpContextIntentExecutionReport,
+};
+pub use http_context_intent::{
+    CoreBoundHttpContextReply, HttpContextIntentAnchor, HttpContextIntentReply,
+    HttpContextIntentReservation, HttpContextIntentSettlement, HttpContextReadOrigin,
+    PreparedHttpContextIntent,
+};
+mod execute_http_correction_plan;
+mod execute_initial_plan;
+mod execute_intake_phase;
+mod goal_intake_review;
+mod http_correction_apply;
+mod http_correction_edit;
+pub use http_correction_edit::{
+    ActivateHttpCorrectionEdit, HttpCorrectionEditFailure, HttpCorrectionOrigin,
+    HttpCorrectionProducer, HttpFailureEditDiagnostic, http_correction_definition_page_matches,
+    http_correction_definition_source,
+};
+mod http_correction_plan;
+pub use http_correction_apply::{
+    ApplyHttpCorrectionPlan, HttpCorrectionMaterialPlan, HttpCorrectionPlanApplied,
+    HttpCorrectionPlanApplyFailure, derive_http_correction_material_plan,
+};
+mod initial_plan_reservation;
+pub use execute_http_correction_plan::{
+    ExecuteHttpCorrectionPlan, HttpCorrectionPlanExecutionFailure,
+    HttpCorrectionPlanExecutionReport,
+};
+pub use http_correction_plan::{
+    HttpCorrectionPlanAnchor, HttpCorrectionPlanDecision, HttpCorrectionPlanFailure,
+    HttpCorrectionPlanIntent, HttpCorrectionPlanProposal, HttpCorrectionPlanReservation,
+    HttpCorrectionPlanSourceOffer, HttpCorrectionPlanStore, PreparedHttpCorrectionPlan,
+};
+mod intake_phase;
+mod intake_phase_anchor;
+mod intake_phase_reservation;
+mod intake_window;
+pub use goal_intake_review::{RecordGoalIntakeReview, RecordGoalIntakeReviewFailure};
+mod prepare_goal_from_intake_review;
+pub use prepare_goal_from_intake_review::{
+    PrepareGoalFromIntakeReviewFailure, prepare_goal_from_intake_review,
+};
+
 mod agent_action_codec;
 mod agent_machine_codec;
 mod agent_permissions;
+mod loopback_startup_verification;
+mod loopback_verification;
 mod machine_file_tool;
 mod machine_network;
 mod machine_process;
 pub use agent_permissions::{
     AgentPermissionFuture, AgentPermissionStore, AgentPermissionStoreFailure,
+};
+pub use loopback_startup_verification::{
+    AuthorizedLoopbackStartupCoverage, LoopbackStartupCleanupProof, LoopbackStartupDecisions,
+    LoopbackStartupVerificationFuture, LoopbackStartupVerificationOutcome,
+    LoopbackStartupVerificationReport, PreparedLoopbackStartupCoverage,
+};
+pub use loopback_verification::{
+    AuthorizedLoopbackVerification, LoopbackCleanupProof, LoopbackMethod, LoopbackProbe,
+    LoopbackVerificationFailure, LoopbackVerificationFuture, LoopbackVerificationOutcome,
+    LoopbackVerificationReport, LoopbackVerificationRunner, PreparedLoopbackVerification,
 };
 pub use machine_file_tool::{
     AuthorizedMachineFileAction, MachineFileControl, MachineFileReceipt, MachineFileTool,
@@ -26,11 +108,35 @@ mod agent_approval;
 mod agent_ask_research;
 mod agent_controller;
 mod agent_execution_checkpoint;
+mod closed_http_no_change;
+mod edit_job_digest;
+mod edit_no_change;
+mod edit_phase;
+mod edit_phase_request;
+mod edit_phase_reservation;
+mod edit_scope_frame;
+mod execute_edit_phase;
 pub use agent_execution_checkpoint::{
     AgentExecutionCheckpoint, AgentExecutionCheckpointError, ExecutedAgentMutation,
     LoadAgentExecutionCheckpoint,
 };
 mod agent_goal;
+mod agent_goal_admission;
+mod source_failure_replan;
+mod source_step_admission;
+pub use source_failure_replan::{
+    ApplySourceTestCorrection, SourceFailureEditDiagnostic, SourceTestCorrection,
+    SourceTestCorrectionFailure,
+};
+pub use source_step_admission::{AdmitSourceTaskStep, SourceTaskStepAdmissionFailure};
+mod goal_intake;
+pub use agent_goal_admission::{AdmitAgentGoalExecution, AgentGoalAdmissionFailure};
+pub use goal_intake::{
+    CaptureGoalIntake, CaptureGoalIntakeFailure, GoalIntakeLoadResult, GoalIntakeStoreVersion,
+    GoalIntakeStoreVersionError, PENDING_GOAL_INTAKE_PAGE_SIZE, PendingGoalIntakePage,
+    PendingGoalIntakePageError, PromoteGoalIntake, PromoteGoalIntakeFailure,
+    StoredPendingGoalIntake,
+};
 mod agent_inspection;
 mod agent_prompt;
 mod agent_read_result;
@@ -69,6 +175,7 @@ mod agent_source_reader;
 mod agent_task_control;
 mod agent_turn;
 mod ask_research_action_codec;
+mod bound_edit_source;
 mod command_discovery;
 mod context_compiler;
 mod context_original_source;
@@ -90,6 +197,11 @@ mod exact_search;
 mod explorer_model_provider;
 mod function_flow;
 mod goal_contract;
+mod materialize_original_task;
+pub use materialize_original_task::{
+    MaterializeOriginalTask, MaterializeOriginalTaskFailure, MaterializedOriginalTask,
+    OriginalPlanPreview, OriginalPlanPreviewStep,
+};
 mod graph_traversal;
 pub use function_flow::{
     ExploreFunctionFlows, FUNCTION_FLOW_MAX_CONTEXTS, FUNCTION_FLOW_PAGE_SIZE, FlowTraceDirection,
@@ -97,6 +209,7 @@ pub use function_flow::{
     FunctionFlowInspection, FunctionFlowReadDocument, FunctionFlowReadFailure,
     FunctionFlowSelection,
 };
+mod caller_relocalization;
 mod health_query;
 mod index_overview;
 mod index_trace;
@@ -110,6 +223,7 @@ mod model_capability;
 mod model_catalog;
 mod model_provider;
 mod model_stream_collector;
+mod model_wire;
 mod module_card_claim_codec;
 mod module_card_claim_proposer;
 mod module_card_detail;
@@ -124,9 +238,14 @@ mod mutating_agent_controller;
 mod mutation_coordinator;
 mod mutation_reconciliation;
 mod open_project;
+mod phase_json;
+mod plan_phase;
 mod policy;
 mod policy_store;
+mod prepare_next_intake_phase;
 mod process_runner;
+mod project_ask;
+mod project_ask_sources;
 mod project_catalog;
 mod project_map_atlas;
 mod project_map_scene;
@@ -151,6 +270,8 @@ mod semantic_embedding_store;
 mod semantic_embeddings;
 mod settings;
 mod slash_commands;
+mod source_delivery;
+mod source_read;
 mod task_ledger;
 mod task_lens;
 mod task_lens_workspace;
@@ -208,7 +329,8 @@ pub use agent_read_result::{AgentReadResult, AgentReadResultError, RecordedAgent
 pub use agent_recovery::{
     AgentMutationResultRecord, AgentRecoveryChoice, AgentRecoveryError, AgentRecoveryInspection,
     AgentRecoveryOutcome, AgentRecoveryOutcomeKind, AgentRecoveryStore, AgentRecoveryStoreFailure,
-    AgentRecoveryStoreFuture, InspectAgentRunRecovery, MachineEffectScope, RecoverAgentRun,
+    AgentRecoveryStoreFuture, CompletedDiffRecoveryEvidence, InspectAgentRunRecovery,
+    MachineEffectScope, RecoverAgentRun,
 };
 pub use agent_research_controller::{
     BeginResearchDecision, BoundedResearchController, ResearchActionBatch, ResearchControllerError,
@@ -242,6 +364,15 @@ pub use ask_research_action_codec::{
     AskResearchAction, AskResearchDecision, AskResearchDecisionDecodeError,
     AskResearchDecisionJsonSchema, AskResearchDecisionNote, AskResearchEvidenceStatus,
     AskResearchFindingKind, AskResearchNoteOrigin, AskResearchRelation, DecodeAskResearchDecision,
+};
+pub use bound_edit_source::{BoundEditSource, BoundEditSourceFailure};
+pub use caller_relocalization::{
+    CallerRelocalization, CallerRelocalizationAdmission, CallerRelocalizationOutcome,
+    CallerRelocalizationReceipt, ObservedCallerRelocalization,
+};
+pub use closed_http_no_change::{
+    ClosedEditNoChangeCall, ClosedEditNoChangeFact, ClosedEditNoChangeOwner, ClosedEditWindow,
+    ClosedHttpNoChangeOrigin, ClosedNoChangeProfileLimits, replay_closed_no_change_edit_job,
 };
 pub use command_discovery::{
     CommandAllowlistStore, CommandAllowlistStoreFailure, CommandAllowlistStoreFuture,
@@ -300,6 +431,24 @@ pub use deep_map_read_tools::{
     DeepMapReadTools, ExplorerObservation, ExplorerObservationError, ExplorerObservationStatus,
 };
 pub use deep_map_runner::RunDeepMap;
+pub use edit_no_change::{
+    CloseEditNoChange, EditNoChangeClosure, EditNoChangeFailure, EditNoChangeReceipt,
+    EditNoChangeWindow, derive_edit_no_change_closure,
+};
+pub use edit_phase::{
+    BoundEditPhaseReply, EditEvidenceNeed, EditPhaseAnchor, EditPhaseFailure, EditPhaseOutcome,
+    EditPhaseState, PreparedEditPhase,
+};
+pub use edit_phase_request::{
+    CompiledEditPhaseRequest, EditPhasePrerequisites, EditPhaseRequestFailure,
+    build_edit_phase_request,
+};
+pub use edit_phase_reservation::{
+    EditPhaseCallKind, EditPhaseHalt, EditPhaseHaltReceipt, EditPhaseObservation,
+    EditPhaseObservationOutcome, EditPhaseReservation, EditPhaseReservationFailure,
+    EditPhaseReservationFuture, EditPhaseReservationStore, EditPhaseReservedUsage,
+    EditPhaseWireCost,
+};
 pub use embedding_provider::{
     EmbeddingCapabilityProbe, EmbeddingCapabilityProbeFuture, EmbeddingCapabilityProbeRequest,
     EmbeddingOperationControl, EmbeddingProvider, EmbeddingProviderFailure,
@@ -312,6 +461,16 @@ pub use evidence_diagram::{
     EvidenceDiagramRelationship,
 };
 pub use exact_search::SearchExactIndex;
+pub use execute_edit_phase::{
+    EditPhaseExecutionFailure, EditPhaseExecutionReport, ExecuteEditPhase,
+};
+pub use execute_initial_plan::{
+    ExecuteInitialPlan, InitialPlanExecutionFailure, InitialPlanExecutionOutcome,
+    InitialPlanExecutionReport,
+};
+pub use execute_intake_phase::{
+    ExecuteIntakePhase, IntakePhaseExecutionFailure, IntakePhaseExecutionReport,
+};
 pub use explorer_model_provider::{
     ExplorerModelControl, ExplorerModelFailure, ExplorerModelFuture, ExplorerModelProvider,
     ExplorerModelRequest, ExplorerModelRequestPhase, ExplorerModelTimeout,
@@ -335,6 +494,19 @@ pub use index_trace::{
     IndexTraceFileQuery, IndexTraceFileRecord, IndexTracePhaseProgress, IndexTraceRunSummary,
     IndexTraceSnapshot, IndexTraceStore, IndexTraceStoreFailure, IndexTraceStoreFuture,
     RetainedIndexTraces,
+};
+pub use initial_plan_reservation::{
+    InitialPlanFinish, InitialPlanRejection, InitialPlanReservation, InitialPlanReservationFailure,
+    InitialPlanReservationFuture, InitialPlanReservationStore,
+};
+pub use intake_phase::{IntakePhaseFailure, MAX_INTAKE_PHASE_REPLY_BYTES, PreparedIntakePhase};
+pub use intake_phase_anchor::{IntakePhaseAnchor, IntakePhaseAnchorFailure};
+pub use intake_phase_reservation::{
+    IntakePhaseAccounting, IntakePhaseFinish, IntakePhaseRejection, IntakePhaseReservation,
+    IntakePhaseReservationFailure, IntakePhaseReservationFuture, IntakePhaseReservationStore,
+};
+pub use intake_window::{
+    IntakeWindowByteLimit, IntakeWindowSelectionFailure, select_intake_window,
 };
 pub use jobs::{
     CancellationToken, JobCancelResult, JobCancellationError, JobClock, JobCompletion, JobContext,
@@ -374,6 +546,9 @@ pub use model_provider::{
     ModelProviderCompletion, ModelProviderFailure, ModelProviderFuture, ModelProviderRequest,
     ModelProviderRequestError, ModelProviderUsage, ModelRequestTimeout, ModelRequestTimeoutError,
     ProviderEvent, ProviderEventStream, StructuredOutputSchema, StructuredOutputSchemaError,
+};
+pub use model_wire::{
+    ModelWireProjection, ModelWireThinking, PhaseWireBudget, PhaseWireBudgetError,
 };
 pub use module_card_claim_codec::{
     DecodeModuleCardClaims, ModuleCardClaimDecodeError, ModuleCardClaimJsonSchema,
@@ -439,10 +614,12 @@ pub use module_tree::{
 };
 pub use mutating_agent_controller::{
     BuiltinProcessVerificationEvidenceFactory, ConservativeProcessVerificationEvidenceFactory,
-    ExecuteMutatingAgentAction, MutationCommandSelection, MutationContextSeed,
+    ExecuteMutatingAgentAction, LoopbackApprovalAdmission, LoopbackApprovalSequence,
+    LoopbackProbeApproval, LoopbackVerificationAuthority, LoopbackVerificationRequest,
+    LoopbackVerificationResume, MutationCommandSelection, MutationContextSeed,
     MutationControllerFailure, MutationControllerOutcome, MutationExecutionIds,
     ProcessVerificationEvidenceFactory, ProcessVerificationEvidenceFailure,
-    ProcessVerificationEvidenceRequest,
+    ProcessVerificationEvidenceRequest, PythonIntegerTranslationVerifier,
 };
 pub use mutation_coordinator::{
     MutationFailureClass, MutationProgressDecision, WorktreeMutationBusy,
@@ -457,6 +634,10 @@ pub use open_project::{
     ProjectReconciliationChoice, ProjectReconciliationConfirmationError,
     ProjectReconciliationConfirmer,
 };
+pub use plan_phase::{
+    AdmittedInitialPlan, PlanEvidenceKind, PlanPhaseAnchor, PlanPhaseFailure, PlanPhaseHalt,
+    PlanPhaseOutcome, PlanPhaseState, PlanStepOffer, PreparedPlanPhase,
+};
 pub use policy::{
     EvaluateActionPolicy, EvaluateActionPolicyError, EvaluatedPolicyAction, PolicyEvaluationContext,
 };
@@ -464,9 +645,15 @@ pub use policy_store::{
     GrantPolicyApproval, GrantPolicyApprovalError, PersistPolicyEvaluation, PolicyStore,
     PolicyStoreFailure, PolicyStoreFuture, RevokePolicyApproval, RevokePolicyApprovalError,
 };
+pub use prepare_next_intake_phase::{PrepareNextIntakePhaseFailure, prepare_next_intake_phase};
 pub use process_runner::{
     AuthorizedProcessSpec, ProcessAuthorizationError, ProcessEventSink, ProcessEventSinkError,
     ProcessRunControl, ProcessRunFailure, ProcessRunFuture, ProcessRunner,
+};
+pub use project_ask::{
+    AnswerProjectQuestion, ProjectAskAnswer, ProjectAskCallReceipt, ProjectAskFailure,
+    ProjectAskOutcome, ProjectAskPart, ProjectAskPartKind, ProjectAskPhaseReceipt,
+    ProjectAskRequest,
 };
 pub use project_catalog::{
     ActivateCatalogProject, ActivateCatalogProjectError, PROJECT_CATALOG_PAGE_SIZE,
@@ -566,6 +753,15 @@ pub use slash_commands::{
     SLASH_COMMAND_LENSES, SLASH_COMMANDS, SlashCommandDescriptor, SlashCommandExecutionProfile,
     SlashCommandLensDescriptor,
 };
+pub use source_delivery::{
+    DeliveredSourceRange, SourceAcquisition, SourceAcquisitionAdmission, SourceAcquisitionOrdinal,
+    SourceDeliveryFailure, SourceDeliveryOutcome, SourceDeliveryProgress, SourceDeliveryReceipt,
+    SourceDeliveryScope, SourceWireDelivery,
+};
+pub use source_read::{
+    AcquiredSourceRead, SourceReadAdmission, SourceReadFailure, SourceReadFuture, SourceReadState,
+    SourceReadStore,
+};
 pub use task_ledger::{
     CreateTaskLedger, SaveTaskLedger, StoredTaskLedger, TaskLedgerStore, TaskLedgerStoreFailure,
     TaskLedgerStoreFuture, TaskLedgerStoreVersion, TaskLedgerStoreVersionError,
@@ -604,6 +800,13 @@ pub use workspace_directory::{
 };
 pub use workspace_patch::{
     AuthorizedPatchAction, PatchApplyFailure, PatchApplyFuture, PatchAuthorizationError,
-    PatchConflictKind, PatchPreviewFailure, PatchPreviewFuture, WorkspacePatchControl,
-    WorkspacePatchProgressError, WorkspacePatchTool,
+    PatchConflictKind, PatchPreviewFailure, PatchPreviewFuture, PatchUpdateBaseFuture,
+    WorkspacePatchControl, WorkspacePatchProgressError, WorkspacePatchTool,
+};
+
+mod agent_horizon;
+pub use agent_horizon::{
+    ActivateAgentHorizonPlan, AgentHorizonFailure, AppendAgentHorizonPlan, ContinueSourceAgentPlan,
+    PendingPlanningPairDisposition, SourcePlanContinuationOutcome, load_pending_planning_pair,
+    validate_pending_planning_pair, validate_pending_planning_transition,
 };

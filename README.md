@@ -6,6 +6,16 @@ Der sichtbare Produktname besteht exakt aus den drei Zeichen **A^3**. In technis
 
 ## Entwicklungsstand
 
+Der geplante Umbau auf einen kleineren Agentenkern steht in
+[Plan 22](docs/plans/22-SMALL-LOCAL-MODEL-AGENT-CORE.md). Er erhält den sicheren
+Unterbau und richtet Chat, projektbezogenes Ask und ausführende Agentenarbeit auf
+nachgewiesene Aufgabenlösungen lokaler Modelle einschließlich 4k-Kontext aus.
+[ADR-0119](docs/adrs/0119-kleinschrittiger-agentenkern-fuer-lokale-modelle.md)
+ist seit dem 2026-11-06 angenommen. Die reproduzierbare Ausgangsmessung P0 ist
+[verifiziert und eingefroren](docs/plans/22-P0_BASELINE_STATUS.md); P1 hat die
+Arbeitsverträge ausgerichtet. P2 beginnt mit dauerhaftem Auftrag und passenden
+Kriterien. Der neue Produktkern und seine Modellabnahme sind offen.
+
 Die gemeinsame Recherche erhält einen dauerhaften, quellengebundenen Prüfstand für Ask,
 Plan und Agent-Vorbereitung. Der Core wählt aktive Teilfragen, verhindert identische
 Analysen desselben Belegpakets und rendert Planstruktur sowie Quellenzuordnung selbst.

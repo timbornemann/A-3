@@ -1852,3 +1852,56 @@ impl fmt::Display for TestError {
 }
 
 impl Error for TestError {}
+
+#[test]
+fn progress_roles_render_as_addresses_without_becoming_legacy_or_proof()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let base = input(fixture.snapshot_id)?;
+    let criterion = base.goal_contract().draft().acceptance_criteria()[0].id();
+    let definition = base
+        .task_ledger()
+        .step(base.current_step_id())
+        .ok_or("step")?
+        .definition()
+        .clone()
+        .with_criterion_coverage(vec![criterion], Vec::new())?;
+    let ledger = TaskLedger::new(
+        base.goal_contract().reference(),
+        vec![definition],
+        TaskLedgerTimestamp::from_unix_millis(1)?,
+    )?;
+    let input = AgentContextCompileInput::new(
+        base.project().clone(),
+        base.goal_contract().clone(),
+        ledger,
+        base.current_step_id(),
+        base.model_profile().clone(),
+        None,
+        Vec::new(),
+        Vec::new(),
+    )?;
+    let calls = Mutex::new(Vec::new());
+    let store = StubStore {
+        published: fixture.published.clone(),
+        symbol_id: fixture.symbol_id,
+        module_id: fixture.module_id,
+        calls: &calls,
+    };
+    let compiler = DeterministicAgentContextCompiler::new(
+        CompileTaskLens::new(&store, &store, &store),
+        &UnavailableSource,
+    );
+    let compiled = block_on(compiler.compile(&input, &RecordingControl::default()))?;
+    let pack = compiled
+        .request()
+        .messages()
+        .iter()
+        .map(|message| message.content())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(pack.contains(&format!("step_addresses={criterion}")));
+    assert!(!pack.contains("step_acceptance=legacy_unmapped"));
+    assert!(!pack.contains(&format!("step_acceptance={criterion}")));
+    Ok(())
+}

@@ -1,7 +1,32 @@
 # Sicherheit und kontrollierte Ausführung
 
 Status: verbindliche Baseline  
-Stand: 2026-08-06
+Stand: 2026-11-06
+
+## Geltung und Übergang nach ADR-0119
+
+[ADR-0119](adrs/0119-kleinschrittiger-agentenkern-fuer-lokale-modelle.md) und der
+[angenommene Zielvertrag](SMALL_LOCAL_MODEL_AGENT_CORE.md) gelten für neue Modell-,
+Arbeits- und Gesprächsverträge. Die beschriebene bisherige Implementierung bleibt
+bis P11 von [Plan 22](plans/22-SMALL-LOCAL-MODEL-AGENT-CORE.md) die ausgewählte
+Produktions-Altbaseline. P2 bis P10 komponieren neue Verträge ausschließlich in
+Kandidaten-Tests und isolierten Datenkopien; P11 ist die einzige Produktionsumstellung.
+Es gibt weder eine zweite produktive Engine noch ein Flag für einen unvollständigen Kern.
+
+Abgelöst werden nur die ausdrücklich benannten Steuerungsformen: globaler
+AgentAction-Modelloutput, SourceGuided-Auswahlkaskade, starre Read-Übergänge und
+obligatorische Markdown-/Recherchehandoffs. Root-, Secret-, Schema-, Policy-,
+Freigabe-, Mutations-, Freshness- und Unknown-Recoverygrenzen bleiben verbindlich.
+Historische Schemas und Nachweise behalten ihren ursprünglichen Vertrag.
+
+Neue öffentliche Modi sind Chat, Ask und Agent. Chat funktioniert ohne Projekt und
+besitzt keine Index-, Datei-, Prozess-, Netzwerk- oder Mutationswerkzeuge. Er liest
+auch bei geöffnetem Projekt nicht automatisch Quellen und benötigt keine
+Coding-JSON-Probe. Providergrenzen, Timeout und Cancellation gelten weiterhin.
+Ask erhält ausschließlich Reads des Core-gebundenen geöffneten Projekts, auch bei
+Full machine. Planung ist interne Agentenarbeit. Historische Plan-Sessions bleiben
+lesbar; ihr Inhalt erhält im neuen Vertrag keine Ausführungsautorität und startet
+weder automatisch Agentenarbeit noch alte Queueeinträge.
 
 ## Trust Boundary
 
@@ -343,7 +368,8 @@ Shellmodus ist eine eigene hochriskante Aktion und immer freigabepflichtig.
 | Löschen/Destruktion/Push/Veröffentlichung | Einzelabfrage | Einzelabfrage |
 
 Diese Baseline aus [ADR-0118](adrs/0118-appweite-agent-berechtigungsmodi.md) gilt
-appweit und unabhängig vom Conversation-Modus. Ask/Plan bleiben read-only. Neue und
+appweit und unabhängig vom Conversation-Modus. Ask und historische Plan-Läufe bleiben
+read-only; die neuen Chat-/Ask-Grenzen werden dadurch nicht erweitert. Neue und
 migrierte Einstellungen beginnen mit Ask permissions. Der Core persistiert den bewussten
 Moduswechsel per CAS; automatische Entscheidungen behalten Modus und Revision im Audit.
 Vor Werkzeugadmission wird die Revision erneut geprüft. Bereits gestartete Aktionen enden
@@ -384,6 +410,63 @@ bleibt zwischen Grant und Ausführung ein Widerrufsfenster. `deny` blockiert den
 wechselt den Run ohne Toolwirkung nach `Failed`; Replan oder Cancel bleiben die expliziten
 Folgepfade. Die UI hat keine vorausgewählte Entscheidung und stellt AllowOnce und Deny neutral dar.
 
+Das isolierte HTTP-Rezept aus Plan 22 verwendet dieselbe taskgebundene Grenze. Die
+flüchtige Projektion zeigt den exakten Start mit `127.0.0.1` und Port sowie später
+jeweils eine Probe mit Methode und URL. Für den Start ohne Portargument zeigt sie
+den gebundenen Standardport an. Jedes Fortsetzen bindet die sichtbare Freigabe und
+Ledger-Version. Erst das letzte Fortsetzen lässt den Controller alle Grants erneut
+prüfen und vor einem Werkzeugversuch verbrauchen. Die Folge verfällt bei Verlust der
+flüchtigen Projektion, einer neuen Berechtigungsrevision oder veralteten Quellankern.
+Der bisherige IPC-Pfad nimmt keine solche Kandidatenprojektion an.
+Für das vollständige Startrezept wird vor jedem Bind eine eigene exakte
+Freigabe für die besessene Portreservierung verlangt. Gehaltener und freier
+Start haben trotz identischer Argumente verschiedene Phasenscopes. Alle
+Starts und Proben binden dasselbe Rezept, Snapshot, Skripthash und Limits.
+Auch Full machine ersetzt diese Freigaben für das unbekannte Skript nicht.
+Vor dem ersten Effekt liegt ein gemeinsamer dauerhafter Unknown-Versuch vor;
+nicht nachgewiesener Cleanup sperrt Wiederholung und automatische Wiederaufnahme.
+
+Unter Linux schließt der HTTP-Adapter ausschließlich den zuvor als besessen
+geprüften privaten Probesocket beim Verlassen seines Scopes mit einem TCP-Reset.
+Das vorhandene Linux-Modul setzt dafür die sichere Tokio-Option `set_zero_linger`;
+Hyper wird über seine vorhandene `poll_without_shutdown`-API getrieben, damit vor
+dem Drop kein TCP-FIN diesen Abschluss vorwegnimmt. Das verhindert, dass ein eigener
+Probelauf den unverändert exklusiv und ohne Reuse gebundenen Rezeptport durch
+`TIME_WAIT` blockiert. Ein `TIME_WAIT`-Eintrag ist kein fremder Listener; daraus
+folgt keine Erlaubnis, einen fremden Prozess zu beenden oder die Bindung zu lockern.
+
+Der Reset ist nur die Entsorgung dieser eigenen Verbindung. Ein Erfolgsbeleg
+verlangt weiterhin den vollständig gelesenen, korrekt gerahmten und begrenzten
+HTTP-Body mit den passenden Status-/Headermerkmalen. Unvollständiger Body,
+Parserfehler, Größenlimit, Timeout oder Cancellation werden durch den Reset nicht
+erfolgreich. Die gesonderte Terminierung und beobachtete vollständige Beendigung
+der besessenen Prozessgruppe beziehungsweise des Windows-Jobs sowie der Nachweis
+des verschwundenen Listeners bleiben erforderlich. Ein Reset ist kein Cleanup-
+oder Funktionsnachweis. Freigaben, Port, Header, Skriptanker, argv, Fristen und die
+exklusive gehaltene Bindung behalten ihre Verträge; Windows bleibt unverändert.
+
+Der isolierte Kandidat kann eine vollständig beobachtete abweichende
+HTTP-Antwort als begrenzte Fehlversuchsdiagnose speichern. Dies setzt
+nachgewiesenen vollständigen Cleanup und unveränderte aktuelle Skript-/
+Snapshotanker voraus. Cancellation, ursprüngliche Frist, Stale und Unknown
+behalten Vorrang. Die Diagnose enthält Status, Bodyhash/-länge und die
+geschlossenen Headermerkmale, keine rohen Antwortbytes oder freien Header.
+Alle geordneten Freigaben und ihre tatsächliche Consumption werden erneut
+gegen das vollständige Originalrezept geprüft. Der Fehlerabschluss ist
+atomar mit `Failed`/`Applied` und ToolFailed; daraus folgt weder ein
+Erfolgsbeleg noch eine neue Ausführungserlaubnis. Der erste Diagnoseslice
+bleibt terminal und öffnet keine automatischen Korrekturen oder Retries.
+
+Alle Loopback-Proben benötigen in Ask permissions und Full machine eine
+exakte Einmalfreigabe. DELETE erhält die primäre Klasse `Destructive` und
+Risiko `Critical`; die zusätzlichen Workspace-Restriktionen `Network` und
+`Write` bleiben erhalten. GET, POST, PUT und PATCH bleiben `Network`/`High`,
+ergänzt um Read bei GET und Write bei den übrigen Methoden. Jede beteiligte
+Workspace-Deny-Regel blockiert auch einen bereits vorhandenen passenden
+Grant, ohne ihn zu verbrauchen. Eine erwartete 405-Antwort stuft eine
+DELETE-Anfrage nicht herab. Aktionsparameter, Fingerprint und Scope-Digest
+behalten ihre Kodierung; die Korrektur benötigt keine DDL-Änderung.
+
 ## Patch-Policy
 
 Eine PatchAction enthält:
@@ -393,6 +476,16 @@ Eine PatchAction enthält:
 - strukturierte Änderungen;
 - Begründung und zugehörigen TaskStep;
 - erwartete Verifikation.
+
+Für neue Modellverträge liefert das Modell bei Updates nur einen Core-gebundenen
+Fensteralias und Ersatztext. Der Core prüft die tatsächlich gelieferten Ausgangsbytes,
+Pfad, Snapshot und vollständigen Dateihash und erzeugt daraus den bestehenden
+vollständigen PatchUpdate. BOM, Encoding und alle Bytes außerhalb des Fensters bleiben
+erhalten. Die positionsgebundene E3-Vorschau folgt
+[ADR-0120](adrs/0120-positionsgebundene-patchvorschau.md). Exakter Fingerprint, Policy,
+Lease, Live-Revalidierung, atomare Veröffentlichung und Unknown-Recovery behalten
+denselben Ausführungspfad. Unscharfe Suche, Regexmutation und automatische
+Konfliktübernahme bleiben ausgeschlossen.
 
 Vor Anwendung:
 
@@ -462,12 +555,17 @@ Destruktive Git-Aktionen sind nie implizit durch „implementiere dies“ autori
 
 ## LLM-Ausgaben
 
-- Ausgabe muss dem erwarteten Schema entsprechen.
+- Strukturierte Agenten- und Werkzeugausgabe muss dem erwarteten Schema entsprechen.
 - Toolname muss für den Controllerzustand erlaubt sein.
 - Parameter durchlaufen dieselbe Validierung wie UI-Eingaben.
 - Text in Argumenten wird nie als Shellcode interpretiert.
 - unbekannte Felder werden standardmäßig abgelehnt.
 - Reparaturversuch maximal einmal und ohne Ausführung des ungültigen Originals.
+
+Die folgende H6-Beschreibung betrifft den historischen Modellvertrag der Altbaseline;
+neue Phasenaufträge erhalten eigene kleine versionierte Schemas und dieselbe unabhängige
+Validierung mit höchstens einem Strukturrepair. Freier Chattext ist keine ausführbare
+Eingabe und wird nicht zu autoritativer Projekt-Evidence.
 
 Die allgemeine H6-Ausgabe ist das versionierte `agent-action-v1`-Dokument. Sein statisches Schema
 und der davon unabhängige Runtime-Decoder erlauben ausschließlich Search, Inspect, sichere
@@ -543,18 +641,25 @@ Vor einer Vorschau und erneut nach dem Staging unmittelbar vor der ersten Mutati
 Workspace-Adapter Worktree, Published Snapshot, alle Indexrevisionen, alle Live-Hashes und die
 Abwesenheit neuer Ziele. Jeder Pfad wird verlustfrei in einen Plattformpfad überführt; Symlink-
 oder Reparse-Komponenten werden abgelehnt, und kanonische Eltern müssen im ausgewählten Root
-liegen. V1 erzeugt keine Verzeichnisse implizit. Die Vorschau ist auf exakte UTF-8-Präfixe von
-höchstens 16 KiB pro Inhaltsseite und 64 KiB insgesamt begrenzt und trägt für den vollständigen
-Inhalt Hash, Bytezahl, Encoding, Line Endings und Trunkierung.
+liegen. Add und Move können fehlende Elternverzeichnisse innerhalb des geprüften Roots nach
+[ADR-0113](adrs/0113-sichere-unterverzeichnisse-fuer-patches.md) anlegen. Die Vorschau ist auf 16 KiB pro Inhaltsseite
+und 64 KiB insgesamt begrenzt und trägt für den vollständigen Inhalt Hash, Bytezahl,
+Encoding, Line Endings und Trunkierung. Der eingefrorene Pfad liefert UTF-8-Präfixe. Der
+Kandidat zeigt nach ADR-0120 die geänderten Zeilen eines Update mit absoluten Startzeilen
+und nachgewiesenen bytegleichen Außenbereichen. Passt der Änderungsausschnitt nicht,
+scheitert die Vorschau vor der Policyentscheidung.
 
 Neue Inhalte werden mit exklusiver temporärer Datei im kanonischen Zielverzeichnis vollständig
-geschrieben und synchronisiert. Add und Move reservieren das weiterhin abwesende Ziel ohne
-Überschreiben; Update ersetzt erst nach der zweiten Hashprüfung durch die atomare Rename-Primitive
-der Plattform, soweit das Dateisystem sie bereitstellt. Nach jeder sichtbaren Operation wird der
-resultierende Hash erneut geprüft. Ein späterer Konflikt, Cancellation- oder Progressfehler gibt
-ein vollständiges oder partielles `PatchChangeSet` zurück, sodass die bereits geänderten Pfade vor
-weiterem Reasoning invalidiert werden können. Fremde Änderungen werden nie automatisch
-zurückgesetzt.
+geschrieben und synchronisiert. Vor jeder Operation werden Pfad, erwarteter Livehash und
+Abwesenheit des neuen Ziels erneut geprüft, soweit sie zur Operation gehören. Add und Move
+reservieren das weiterhin abwesende Ziel ohne Überschreiben. Update verwendet nach der
+Liveprüfung die atomare Rename-Primitive der Plattform, soweit das Dateisystem sie
+bereitstellt. Hashprüfung und Rename sind getrennte Operationen. Nach jeder sichtbaren
+Operation wird der resultierende Hash erneut geprüft. Tritt danach ein Konflikt, Cancellation-
+oder Progressfehler auf, enthält das partielle `PatchChangeSet` nur bereits ausgeführte
+Operationen. Bei einem Konflikt beobachtet der Index den betroffenen Aktionsscope neu,
+bevor weiterer Kontext kompiliert wird. Fremde Bytes erhalten keine Agent-Zuordnung und
+werden nie automatisch zurückgesetzt.
 
 E8 speichert vor jeder Patch- oder Prozessgrenze atomar einen Mutationsversuch mit der
 fail-closed Disposition `Unknown`. Konflikt, Ablehnung, Cancellation vor Prozessstart und
@@ -594,6 +699,10 @@ wakebare Cancellation beenden nicht nur den direkten Prozess, sondern dessen ges
 Prozessgruppe: auf Unix über eine eigene Process Group und auf Windows über ein Job Object mit
 Kill-on-Close. Prozess, stdout-/stderr-Reader und alle Channels besitzen einen Owner und werden vor
 der Rückkehr beendet beziehungsweise gejoint.
+Ein früher Exit des direkten Prozesses beendet die Frist- und Cancellationprüfung
+nicht, solange Nachkommen stdout oder stderr offen halten. Erst beide beobachteten
+EOFs erlauben einen normalen Exit-Abschluss; andernfalls bleibt dieselbe besessene
+Prozessgruppe bis Timeout oder Abbruch unter Kontrolle.
 
 stdout und stderr werden in 8-KiB-Blöcken über einen begrenzten Channel mit Backpressure gelesen.
 Nach dem konfigurierten Retained Limit werden weitere Bytes bis EOF verworfen, aber weiterhin in
@@ -635,7 +744,7 @@ Run-Memory-Checkpoint verhindert außerdem den Abschluss mit einer offenen aktue
 taskbezogenen Hypothesis. Diese Entscheidungen sind content-freie Rust-Resultate; weder WebView,
 LLM noch Storageadapter können den Success-Bool liefern.
 
-E7 lässt bei neuen Turns nur das geschlossene statusfreie `AgentAction`-V5-Schema über die
+Der historische E7-Vertrag lässt nur das geschlossene statusfreie `AgentAction`-V5-Schema über die
 Modellgrenze. V5 behält die ausführbare Autorität von V4 unverändert. V4 ergänzt ausschließlich
 einen begrenzten, quellengebundenen Ablauf-Read nach
 [ADR-0045](FAST_INDEX_FLOWS.md), ohne Ausführungsautorität. V3 ergänzte neben der
@@ -645,11 +754,11 @@ sämtliche bestehenden E3-Anker und vollständige Inhalte; `Run` enthält aussch
 aktuelle kataloggebundene Command-ID. Rohe argv, Shell, Git, Netzwerk, Install und Publishing sind
 im Modellvertrag nicht darstellbar. Der Model-Turn besitzt selbst keine mutierende Capability.
 
-Der Desktop-Composition-Root verwendet nach ADR-0115 die SourceGuided-Projektion des aktuellen
-statusfreien V5-Vertrags. SourceWork-, Choice- und Arguments-Dokumente sind nicht ausführbar. Der
+Die bis P11 ausgewählte Altbaseline verwendet nach ADR-0115 die SourceGuided-Projektion des aktuellen
+AgentAction-Vertrags. SourceWork-, Choice- und Arguments-Dokumente sind nicht ausführbar. Der
 Core gleicht eine modellseitige Add/Update-Wahl mit der tatsächlichen Pfadexistenz ab und ersetzt
 erwartete Hashes ausschließlich durch die aktuelle Indexrevision desselben Pfads; neue Pfade,
-Inhalte oder Scopes werden dadurch nicht erfunden. Erst die vollständig rekonstruierte V5-Aktion
+Inhalte oder Scopes werden dadurch nicht erfunden. Erst die vollständig rekonstruierte Aktion
 durchläuft Decoder, Policy, Approval und Toolgrenze.
 
 `ExecuteMutatingAgentAction` hält den einzigen injizierten Worktree-Lease, bevor eine Policy-
@@ -667,7 +776,7 @@ content-identischer Fehler darf einmal mit frischem Kontext wiederholt werden; d
 Wiederholung erzwingt `Replan`, weitere Wiederholungen `Failed`, sodass das Modell keine
 unbegrenzte Fehlerschleife erzeugen kann.
 
-ADR-0042 erweitert diesen Replan nicht um eine freie Plan- oder Toolautorität. `RequestReplan`
+In der Altbaseline erweitert ADR-0042 diesen Replan nicht um freie Plan- oder Toolautorität. `RequestReplan`
 schließt den aktuellen Versuch und transportiert nur einen begrenzten Grund. Der Core erzeugt die
 neuen Step-, Verification- und Dependency-Identitäten, schreibt Planrevision und Runanker atomar
 und begrenzt einen produktiven Run auf höchstens acht automatische Replans. Das eingefügte
@@ -676,6 +785,38 @@ Netzwerk, Installation oder Publishing benötigen weiterhin eine ausdrückliche 
 `ReportBlocked` ist ausschließlich der sichere Haltepunkt für eine notwendige Richtungsentscheidung
 und wird als verständliche Nutzerfrage projiziert. Weder die öffentliche Arbeitsnotiz noch diese
 Frage kann eine Mutation autorisieren.
+
+Neue Phasenverträge erlauben eine echte kleinere oder anders zerlegte Umsetzung mit
+geänderten Evidenzpflichten. Der Core prüft vollständige Zielerhaltung und Abdeckung,
+materielle Planänderung sowie endliche Budgets. Neue IDs erneuern kein Runbudget;
+eine neue Dokument-ID umgeht keinen verbrauchten Strukturrepair derselben unveränderten
+Ausgabepflicht. Offene globale Kriterien
+führen im selben Controller per dauerhafter Ledger-/Journal-CAS zu weiterer Planung;
+ein abgeschlossener momentaner Horizont ist keine Acceptance.
+
+Die Modell-Planphase begrenzt ihre einzeilige Ergebnisbeschreibung auf
+64 UTF-8-Bytes in Schema und Decoder. Der allgemeine Domaintexttyp bleibt
+unverändert. Ein bloßer angebotener Zielpfad ersetzt kein Schrittziel.
+Vollständiger Originalbezug, Kriterienabdeckung und
+alle anwendbaren Constraints bleiben Pflichtbestandteile der Projektion.
+
+Bei einem aktuellen publizierten Index ohne Dateirevisionen und einem
+Core-gebundenen Add-Auftrag erhält das Modell den geprüften Fakt
+`inventory: "emptyPublishedIndex"` mit leeren Ausgangsbytes. Sein Edit-Schema
+erlaubt für denselben Fensteralias nur `replacement` oder `tooLarge`.
+Eine eingeschleuste `need`-Antwort wird auch unabhängig vom Providerschema
+abgewiesen. Bei vorhandenem publiziertem Bestand bleiben `definition`,
+`caller` und `test` als Quellenbedarf verfügbar. Diese Auswahl kürzt weder
+Originalauftrag noch aktive Kriterien, Constraints, Nichtziele oder
+Nutzerentscheidungen und ersetzt keine E3-Liveprüfung des Add-Ziels.
+
+Der tatsächliche Leerstatus gehört zum Editanker und zum Fenster-/Jobdigest
+`a3 edit phase window v2`. Vor dem Providerdispatch prüft die bestehende
+Reservierungstransaktion Run, Goal, Ledger, Snapshot und den dazu passenden
+publizierten Dateibestand erneut. Eine andere Bestandsaufnahme bei denselben
+IDs wird abgewiesen. Diese Bindung erweitert weder Ausführungsrechte noch
+Daten-/DDL-Schema. Die Abnahme des aktuellen Kandidatenstands folgt den
+offenen Prüfungen in Plan 22.
 
 ## Netzwerk und Datenschutz
 
@@ -720,9 +861,9 @@ Quellcode, Embeddings, Projektkarten, Prompts und Logs werden nie ohne ausdrück
 Die ADR-0041-Nachrichtenwarteschlange ist keine zusätzliche Autorität. Vor der Persistenz prüft
 der Rust-Core Zielmodus, Slash-Command-Profil, Rechercheauswahl und UTF-8-Grenzen; vor dem Start
 prüft er Sessionrevision, Capability und aktuelle Projektanker erneut. Ein vorgemerkter
-Agent-Auftrag umgeht weder Recherche, `AgentWorkPlan`, Policy, Approval, Reindex noch
-Verification. Nach Ask oder Plan erzeugt er einen neuen Arbeitsplan und materialisiert ihn nach
-ADR-0109 ohne Nutzer-Planfreigabe. Queue-Requests akzeptieren nur eine opake sessiongebundene
+Agent-Auftrag umgeht keine Policy, Approval, Reindex oder Verification. Die Altbaseline
+verwendet dafür Recherche und `AgentWorkPlan` nach ADR-0109; neue Verträge ersetzen nur
+diesen obligatorischen Handoff durch konkrete kleine Phasenaufträge. Queue-Requests akzeptieren nur eine opake sessiongebundene
 Referenz und die exakte Queue-Revision. Modus-Chips und deaktivierte UI-Schritte sind
 ausschließlich Darstellung.
 
@@ -866,13 +1007,13 @@ Sicherheitsrelevante Aktionen speichern:
 - sichere Digests
 
 Nicht gespeichert werden rohe Secrets, vollständige Umgebungen oder uneingeschränkte Prozessausgaben.
-Der Agent-Session-IPC ist keine generische Chat-Tool-Brücke. `Ask` und `Plan` besitzen keine
+Der Agent-Session-IPC ist keine generische Chat-Tool-Brücke. `Ask` und historische `Plan`-Läufe besitzen keine
 mutierenden Capabilities. `Agent` erhält ebenfalls keine WebView-Datei- oder Shellbefugnis;
 Chattext wird nur in Core-eigene Goal-/Ledger-Anker überführt und jede konkrete Aktion erneut durch
 Schemas, kanonische Worktree-Pfade, zentrale Policy, Approval, Tooladapter und Verification
 geprüft. Presentation Delete löscht keine Auditdaten.
 
-Die gemeinsame Recherche für Ask, Plan und Agent-Vorbereitung erweitert diese Grenze ausschließlich
+Die bestehende gemeinsame Recherche für Ask, Plan und Agent-Vorbereitung der Altbaseline erweitert diese Grenze ausschließlich
 um endliche Reads. Genau ein gebundener veröffentlichter Index versorgt Task Lens, optionale
 Source-Suche und sichere Inspektionen; jede Modellentscheidung kann höchstens vier Aktionen aus
 `searchIndex`, `searchSourceText`, `inspectPath`, `inspectSource`, `inspectRelations` und
@@ -1004,13 +1145,13 @@ unabhängige typisierte Auswahl verlangen weiterhin 50er-Offsets von 0 bis 4050;
 Provider-STOP oder formal übersetzbarer Output sind keine Zulassung. Nur Schema-
 Positionen ändern sich, nicht Const-/Enum-Daten. Unbekannte Keywords bleiben Fehler.
 
-Nach [ADR-0087](adrs/0087-agentaktionen-ohne-modellstatusnotiz.md) verwenden neue
-normale Agentturns seit dieser historischen Entscheidung AgentAction V5 mit genau `schema_version` und `action`.
+Nach [ADR-0087](adrs/0087-agentaktionen-ohne-modellstatusnotiz.md) verwenden normale
+Agentturns der Altbaseline AgentAction V5 mit genau `schema_version` und `action`.
 `public_note` ist verboten; Legacy V3/V4 behalten ihre strengen Notizregeln.
 Die unabhängige Prüfung von Aktionen, aktuellen IDs und Patch-Snapshots bleibt
 vollständig bestehen. Fortschritt stammt aus bestehendem Run-Journal und Ledger,
 nicht aus einer vom Modell behaupteten Erkenntnis oder erfolgreichen Prüfung.
-Neue Replan-Localization verwendet nach
+Replan-Localization der Altbaseline verwendet nach
 [ADR-0091](adrs/0091-statusfreie-replan-lokalisierung.md) ebenfalls AgentAction V5
 ohne Modellstatus, strikt auf Search/Inspect beschränkt. Dies gilt für Primär- und
 Einzelrepair und erweitert weder Reads noch Berechtigungen. Replan-Analyse bleibt Research

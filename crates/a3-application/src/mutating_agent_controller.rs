@@ -6,42 +6,52 @@ use crate::{
     AgentProcessInspectionKind, AgentRecoveryStore, AgentRecoveryStoreFailure, AppendRunEvent,
     ContextCompileControl, ContextCompileFailure, ContextToolResult, ContextToolResultDigest,
     EvaluateActionPolicy, EvaluateActionPolicyError, EvaluateStepVerification,
-    EvaluateStepVerificationError, MutationActionFingerprint, MutationActionFingerprintError,
+    EvaluateStepVerificationError, LanguageParseControl, LanguageParseControlError,
+    LanguageParseFailure, MutationActionFingerprint, MutationActionFingerprintError,
     MutationFailureClass, MutationProgressDecision, PatchApplyFailure, PatchAuthorizationError,
     PatchPreviewFailure, PersistPolicyEvaluation, PolicyEvaluationContext, PolicyStore,
     PolicyStoreFailure, PrepareDiscoveredCommand, ProcessAuthorizationError, ProcessEventSink,
     ProcessRunControl, ProcessRunFailure, ProcessRunner, RefreshRepositoryIndex,
     RefreshRepositoryIndexError, RepositoryChangeBatch, RepositoryChangeBatchError,
-    RepositoryIndexCompiler, RepositoryIndexControl, RunJournalStore, RunJournalStoreFailure,
-    StoredProjectCommandAllowlist, TaskLedgerStoreVersion, VerificationEvidenceStore,
-    VerificationEvidenceStoreFailure, WorkspacePatchControl, WorkspacePatchTool,
-    WorktreeMutationBusy, WorktreeMutationCoordinator,
+    RepositoryIndexCompiler, RepositoryIndexControl, RunEventPageLimit, RunJournalStore,
+    RunJournalStoreFailure, StoredProjectCommandAllowlist, TaskLedgerStoreVersion,
+    VerificationEvidenceStore, VerificationEvidenceStoreFailure, WorkspacePatchControl,
+    WorkspacePatchProgressError, WorkspacePatchTool, WorktreeMutationBusy,
+    WorktreeMutationCoordinator,
 };
 use a3_domain::{
     ActionClass, AgentAction, AgentControllerState, AgentMutationDisposition, AgentMutationKind,
     AgentRun, AgentRunAction, AgentRunTimestamp, AgentToolAttemptStatus, ApprovalGrant,
     ApprovalRequestId, CommandEvidence, CommandEvidenceContext, DiscoveredCommandId,
-    DiscoveredCommandKind, EvidenceDependency, GoalContract, ModelProfile,
-    MutationApplicationState, MutationReconciliation, PatchAction, PatchChangeSet, PolicyDecision,
+    DiscoveredCommandKind, EvidenceDependency, FileRevision, GoalContract,
+    MAX_PYTHON_TRANSLATION_SOURCE_BYTES, ModelProfile, MutationApplicationState,
+    MutationReconciliation, PatchAction, PatchChangeSet, PatchPreview, PolicyDecision,
     PolicyDecisionId, PolicyDecisionOutcome, PolicyEvaluationTiming,
     PreparedDiscoveredCommandApproval, ProcessOutputRedaction, ProcessRunResult,
-    ProcessTermination, ProjectCommandCatalog, ProjectIdentity, PublishedIndex, RepositoryPath,
-    RunEventCode, RunEventId, RunEventKind, RunEventOutcome, RunEventPayload, RunEventRedaction,
+    ProcessTermination, Progress, ProjectCommandCatalog, ProjectIdentity, PublishedIndex,
+    PythonIntegerTranslation, PythonIntegerTranslationWitness, RepositoryPath, RunEventCode,
+    RunEventId, RunEventKind, RunEventOutcome, RunEventPayload, RunEventRedaction,
     RunEventRedactionSource, RunEventSubject, SnapshotId, StepVerificationId, TaskEvidenceId,
     TaskLedger, TaskLedgerTimestamp, TaskLensSeed, TaskStepBlockingReason, TaskStepFailureReason,
     TaskStepId, TaskStepResultSummary, TaskStepStatus, TestCaseEvidence, TestCaseName,
     TestCaseOutcome, TestEvidence, ToolRunId, VerificationDependencies, VerificationEvidence,
-    VerificationMethod, VerificationRunId, VerificationSpec, VerificationTarget, WorkspacePolicy,
-    WorkspacePolicyRestriction, WorkspacePolicyRule,
+    VerificationEvidenceEvaluation, VerificationMethod, VerificationRunId, VerificationSpec,
+    VerificationTarget, WorkspacePolicy, WorkspacePolicyRestriction, WorkspacePolicyRule,
 };
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[path = "mutating_agent_machine.rs"]
 mod machine;
 use machine::PreparedMachineMutation;
+
+mod loopback;
+pub use loopback::{
+    LoopbackApprovalAdmission, LoopbackApprovalSequence, LoopbackProbeApproval,
+    LoopbackVerificationAuthority, LoopbackVerificationRequest, LoopbackVerificationResume,
+};
 
 const VERIFICATION_EVIDENCE_TIMEOUT: Duration = Duration::from_secs(30);
 const APPROVAL_WAIT_REASON: &str = "exact mutation approval is required";
@@ -205,6 +215,51 @@ pub trait ProcessVerificationEvidenceFactory: fmt::Debug + Send + Sync {
     ) -> Result<VerificationEvidence, ProcessVerificationEvidenceFailure>;
 }
 
+/// Proves the closed Python recipe from one bounded, complete current revision.
+pub trait PythonIntegerTranslationVerifier: fmt::Debug + Send + Sync {
+    /// Checks source without filesystem, persistence, or process access.
+    fn prove(
+        &self,
+        required: &PythonIntegerTranslation,
+        revision: &FileRevision,
+        source: &[u8],
+        control: &dyn LanguageParseControl,
+    ) -> Result<Option<PythonIntegerTranslationWitness>, LanguageParseFailure>;
+}
+
+#[derive(Debug)]
+struct PythonTranslationProofControl<'a, C> {
+    owner: &'a C,
+    deadline: Instant,
+}
+
+impl<C: AgentControllerControl + WorkspacePatchControl> WorkspacePatchControl
+    for PythonTranslationProofControl<'_, C>
+{
+    fn is_cancelled(&self) -> bool {
+        AgentControllerControl::is_cancelled(self.owner)
+            || WorkspacePatchControl::is_cancelled(self.owner)
+            || Instant::now() >= self.deadline
+    }
+
+    fn report_progress(&self, progress: Progress) -> Result<(), WorkspacePatchProgressError> {
+        self.owner.report_progress(progress)
+    }
+}
+
+impl<C: AgentControllerControl + WorkspacePatchControl> LanguageParseControl
+    for PythonTranslationProofControl<'_, C>
+{
+    fn is_cancelled(&self) -> bool {
+        WorkspacePatchControl::is_cancelled(self)
+    }
+
+    fn report_progress(&self, progress: Progress) -> Result<(), LanguageParseControlError> {
+        WorkspacePatchControl::report_progress(self, progress)
+            .map_err(|_| LanguageParseControlError::Unavailable)
+    }
+}
+
 /// Exact typed inputs from which a process verification artifact may be derived.
 #[derive(Debug, Clone, Copy)]
 pub struct ProcessVerificationEvidenceRequest<'a> {
@@ -323,6 +378,7 @@ impl ProcessVerificationEvidenceFactory for ConservativeProcessVerificationEvide
             VerificationTarget::DiffInvariant(_)
             | VerificationTarget::UserConfirm { .. }
             | VerificationTarget::DeferredCommand(_)
+            | VerificationTarget::LoopbackHttp(_)
             | VerificationTarget::Legacy(_) => {
                 Err(ProcessVerificationEvidenceFailure::EvidenceKindMismatch)
             }
@@ -360,6 +416,7 @@ impl ProcessVerificationEvidenceFactory for BuiltinProcessVerificationEvidenceFa
             VerificationTarget::DiffInvariant(_)
             | VerificationTarget::UserConfirm { .. }
             | VerificationTarget::DeferredCommand(_)
+            | VerificationTarget::LoopbackHttp(_)
             | VerificationTarget::Legacy(_) => {
                 Err(ProcessVerificationEvidenceFailure::EvidenceKindMismatch)
             }
@@ -430,6 +487,114 @@ fn python_unittest_evidence(
     Ok(VerificationEvidence::Test(evidence))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SourceUnittestFailure {
+    cases: u32,
+    failures: u32,
+    assertion_operands: Option<(i64, i64)>,
+}
+
+impl SourceUnittestFailure {
+    fn summary(self) -> String {
+        let mut summary = format!("Python unittest failed ({}/{}).", self.failures, self.cases);
+        if let Some((left, right)) = self.assertion_operands {
+            summary.push_str(&format!(" An assertion compared {left} and {right}."));
+        }
+        summary
+    }
+}
+
+fn source_unittest_failure(result: &ProcessRunResult) -> Option<SourceUnittestFailure> {
+    const MAX_REPORT_BYTES: u64 = 16 * 1024;
+    let stdout = result.stdout();
+    let stderr = result.stderr();
+    if !matches!(result.termination(), ProcessTermination::Exited(exit) if exit.code() == Some(1))
+        || stdout.truncated()
+        || stderr.truncated()
+        || stdout
+            .observed_bytes()
+            .checked_add(stderr.observed_bytes())?
+            > MAX_REPORT_BYTES
+    {
+        return None;
+    }
+
+    let mut cases = None;
+    let mut failures = None;
+    let mut failure_headers = 0_u32;
+    let mut assertion_operands = None;
+    let mut multiple_integer_assertions = false;
+    // unittest reports to stderr. Ordinary stdout is never diagnostic text.
+    stdout.content().as_text()?;
+    for line in stderr.content().as_text()?.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("Ran ") {
+            let (count, rest) = rest.split_once(' ')?;
+            let duration = rest
+                .strip_prefix("test in ")
+                .or_else(|| rest.strip_prefix("tests in "))?;
+            let seconds: f64 = duration.strip_suffix('s')?.parse().ok()?;
+            if !seconds.is_finite()
+                || seconds.is_sign_negative()
+                || failure_headers == 0
+                || cases.replace(count.parse().ok()?).is_some()
+            {
+                return None;
+            }
+        } else if let Some(count) = line
+            .strip_prefix("FAILED (failures=")
+            .and_then(|rest| rest.strip_suffix(')'))
+        {
+            if cases.is_none() || failures.replace(count.parse().ok()?).is_some() {
+                return None;
+            }
+        } else if line
+            .strip_prefix("FAIL: ")
+            .is_some_and(|name| !name.is_empty())
+        {
+            if cases.is_some() {
+                return None;
+            }
+            failure_headers = failure_headers.checked_add(1)?;
+        } else if line.starts_with("OK") || line.starts_with("FAILED") || line.starts_with("ERROR:")
+        {
+            return None;
+        } else if failure_headers == 1
+            && cases.is_none()
+            && let Some((left, right)) = line
+                .strip_prefix("AssertionError: ")
+                .and_then(|rest| rest.split_once(" != "))
+            && let (Ok(left), Ok(right)) = (left.parse::<i64>(), right.parse::<i64>())
+        {
+            multiple_integer_assertions |= assertion_operands.replace((left, right)).is_some();
+        }
+    }
+    let (cases, failures) = (cases?, failures?);
+    (cases <= MAX_BUILTIN_TEST_CASES
+        && failures > 0
+        && failures <= cases
+        && failures == failure_headers)
+        .then_some(SourceUnittestFailure {
+            cases,
+            failures,
+            assertion_operands: if failures == 1 && !multiple_integer_assertions {
+                assertion_operands
+            } else {
+                None
+            },
+        })
+}
+
+fn is_source_check_failure_event(event: &a3_domain::RunEvent) -> bool {
+    event.kind()
+        == (RunEventKind::StateTransition {
+            from: AgentControllerState::Execute,
+            to: AgentControllerState::Replan,
+        })
+        && event.payload().code() == RunEventCode::VerificationFailure
+        && event.payload().outcome() == Some(RunEventOutcome::Failed)
+}
+
 /// Completed controller response; no variant allows the model to assert verification or success.
 pub enum MutationControllerOutcome {
     /// Exact policy scope is durable and the controller is waiting for the named request.
@@ -438,6 +603,13 @@ pub enum MutationControllerOutcome {
     Denied,
     /// The action succeeded but verification requires another freshly compiled Execute turn.
     NextAction(Box<crate::CompiledAgentContext>),
+    /// A complete candidate patch is published and its current step has a bound test.
+    BoundVerificationReady {
+        /// Planned check selection only. Execution still requires current policy and approval.
+        command: AgentRunAction,
+        /// Published snapshot after the patch and dependent evidence invalidation.
+        snapshot_id: SnapshotId,
+    },
     /// Actual bounded machine observation; never repository verification evidence.
     MachineObserved(Box<ContextToolResult>),
     /// Typed current evidence passed and completed the current Task Ledger step.
@@ -487,6 +659,14 @@ impl fmt::Debug for MutationControllerOutcome {
                 .debug_struct("NextAction")
                 .field("context_digest", &context.digest())
                 .field("snapshot_id", &context.snapshot_id())
+                .finish(),
+            Self::BoundVerificationReady {
+                command,
+                snapshot_id,
+            } => formatter
+                .debug_struct("BoundVerificationReady")
+                .field("command", command)
+                .field("snapshot_id", snapshot_id)
                 .finish(),
             Self::StepVerified {
                 evidence_id,
@@ -596,6 +776,8 @@ pub struct ExecuteMutatingAgentAction<'a> {
     patch_tool: &'a dyn WorkspacePatchTool,
     process_runner: &'a dyn ProcessRunner,
     evidence_factory: &'a dyn ProcessVerificationEvidenceFactory,
+    python_integer_translation_verifier: Option<&'a dyn PythonIntegerTranslationVerifier>,
+    source_failure_goal: Option<&'a GoalContract>,
     context_compiler: &'a dyn AgentContextCompiler,
     refresh: &'a RefreshRepositoryIndex,
 }
@@ -635,6 +817,8 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             patch_tool,
             process_runner,
             evidence_factory,
+            python_integer_translation_verifier: None,
+            source_failure_goal: None,
             context_compiler,
             refresh,
         }
@@ -648,6 +832,23 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         permissions: &'a dyn crate::AgentPermissionStore,
     ) -> Self {
         self.permissions = Some(permissions);
+        self
+    }
+
+    /// Injects the checked source verifier for a guarded Python test specification.
+    #[must_use]
+    pub const fn with_python_integer_translation_verifier(
+        mut self,
+        verifier: &'a dyn PythonIntegerTranslationVerifier,
+    ) -> Self {
+        self.python_integer_translation_verifier = Some(verifier);
+        self
+    }
+
+    /// Binds guarded check failures to the candidate's immutable original-backed Goal.
+    #[must_use]
+    pub const fn with_source_failure_replan(mut self, goal: &'a GoalContract) -> Self {
+        self.source_failure_goal = Some(goal);
         self
     }
 
@@ -693,6 +894,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             + RepositoryIndexControl
             + WorkspacePatchControl,
     {
+        let started = Instant::now();
         let fingerprint = MutationActionFingerprint::from_action(&action)?;
         let prepared = if let AgentAction::Machine(machine) = action {
             PreparedMutation::Machine(Box::new(
@@ -703,17 +905,52 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             prepare_action(project, run, ledger, published, action, command)?
         };
         let step_id = prepared.step_id();
+        if let Some(goal) = self.source_failure_goal {
+            let step = ledger
+                .step(step_id)
+                .ok_or(MutationControllerFailure::AnchorMismatch)?;
+            if goal.original().is_none()
+                || goal.reference() != run.goal_contract()
+                || goal.reference() != ledger.goal_contract()
+                || goal != &context_seed.goal_contract
+                || crate::AdmitSourceTaskStep
+                    .execute(goal, step.definition())
+                    .is_err()
+            {
+                return Err(MutationControllerFailure::AnchorMismatch);
+            }
+        }
         let mutation_kind = prepared.kind();
         let lease = self
             .coordinator
             .try_acquire(run.id(), project.worktree().id(), fingerprint)?;
 
         let patch_preview = match &prepared {
-            PreparedMutation::Patch(patch) => Some(
-                self.patch_tool
+            PreparedMutation::Patch(patch) => {
+                let preview = self
+                    .patch_tool
                     .preview(project, published, patch, control)
-                    .await?,
-            ),
+                    .await;
+                if let Err(PatchPreviewFailure::Conflict(kind)) = &preview
+                    && context_seed.goal_contract.reference() == run.goal_contract()
+                    && context_seed.goal_contract.original().is_some()
+                {
+                    self.fail_active_step_and_transition(
+                        project,
+                        run,
+                        ledger,
+                        ledger_version,
+                        step_id,
+                        kind.repair_code(),
+                        AgentControllerSignal::FatalFailure,
+                        ids.resolution_transition_event_id,
+                        observed_at,
+                        control,
+                    )
+                    .await?;
+                }
+                Some(require_bound_patch_preview(patch, preview?)?)
+            }
             PreparedMutation::Run { .. } | PreparedMutation::Machine(_) => None,
         };
 
@@ -799,7 +1036,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                         step_id,
                         ids.approval_transition_event_id,
                         observed_at,
-                        control,
+                        AgentControllerControl::is_cancelled(control),
                     )
                     .await?;
                 }
@@ -925,11 +1162,30 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                 .await
             }
             PreparedMutation::Patch(patch) => {
+                // These paths scope a later repository observation. Only the returned
+                // change set can attribute an actual effect to the agent.
+                let mut observed_paths = Vec::new();
+                for operation in patch.operations() {
+                    observed_paths.push(operation.primary_path().clone());
+                    if let a3_domain::PatchOperation::Move(movement) = operation {
+                        observed_paths.push(movement.destination().clone());
+                    }
+                }
+                let expected_action = patch.digest();
                 let authorized = crate::AuthorizedPatchAction::new(patch, &decision)?;
                 let applied = self
                     .patch_tool
                     .apply(project, published, authorized, control)
                     .await;
+                if self.source_guarded_test_step(ledger, step_id).is_some()
+                    && let Ok(changes) = &applied
+                    && (!changes.complete()
+                        || changes.action_digest() != expected_action
+                        || changes.policy_decision_id() != decision.id())
+                {
+                    // The durable attempt remains Unknown for existing reconciliation.
+                    return Err(MutationControllerFailure::InvalidToolResult);
+                }
                 self.finish_patch(
                     project,
                     run,
@@ -943,6 +1199,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                     control,
                     attempt.tool_attempt().attempt(),
                     applied,
+                    observed_paths,
                     &lease,
                 )
                 .await
@@ -955,11 +1212,32 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                 dependencies,
                 ..
             } => {
+                let source_guarded_test = verification_adapter
+                    == ProcessVerificationAdapter::PythonUnittest
+                    && self
+                        .source_guarded_test_step(ledger, action.step_id())
+                        .is_some();
                 let authorized = crate::AuthorizedProcessSpec::new(result_spec, &decision)?;
+                let specification_id = authorized.specification().specification_id();
+                let proof_deadline = run
+                    .created_at()
+                    .unix_millis()
+                    .checked_add(run.budget().duration_limit().millis())
+                    .and_then(|deadline| deadline.checked_sub(observed_at.unix_millis()))
+                    .and_then(|remaining| started.checked_add(Duration::from_millis(remaining)));
                 let result = self
                     .process_runner
                     .run(project, authorized, control, process_events)
-                    .await;
+                    .await
+                    .and_then(|result| {
+                        if source_guarded_test
+                            && (result.specification_id() != specification_id
+                                || result.policy_decision_id() != decision.id())
+                        {
+                            return Err(ProcessRunFailure::InvalidResult);
+                        }
+                        Ok(result)
+                    });
                 self.finish_process(
                     project,
                     run,
@@ -976,11 +1254,28 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                     control,
                     attempt.tool_attempt().attempt(),
                     result,
+                    proof_deadline,
+                    source_guarded_test,
                     &lease,
                 )
                 .await
             }
         }
+    }
+
+    fn source_guarded_test_step(
+        self,
+        ledger: &TaskLedger,
+        step_id: TaskStepId,
+    ) -> Option<&a3_domain::TaskStep> {
+        self.source_failure_goal?;
+        ledger.step(step_id).filter(|step| {
+            let definition = step.definition();
+            let spec = definition.verification_spec();
+            !definition.acceptance_criteria().is_empty()
+                && matches!(spec.target(), VerificationTarget::Test { .. })
+                && spec.python_integer_translation().is_some()
+        })
     }
 
     async fn record_approval_request(
@@ -1019,7 +1314,8 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                     context,
                     &request,
                     reason,
-                    AgentProcessInspectionKind::classify(spec.method(), *command_kind),
+                    AgentProcessInspectionKind::classify(spec.method(), *command_kind)
+                        .ok_or(MutationControllerFailure::InvalidCommandSelection)?,
                     result_spec,
                 )
                 .map(Some)?,
@@ -1079,7 +1375,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn await_approval<C>(
+    async fn await_approval(
         self,
         project: &ProjectIdentity,
         run: &mut AgentRun,
@@ -1088,11 +1384,8 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         step_id: TaskStepId,
         event_id: RunEventId,
         observed_at: AgentRunTimestamp,
-        control: &C,
-    ) -> Result<(), MutationControllerFailure>
-    where
-        C: AgentControllerControl,
-    {
+        cancellation_requested: bool,
+    ) -> Result<(), MutationControllerFailure> {
         let mut next_run = run.clone();
         let mut next_ledger = ledger.clone();
         let timestamp = ledger_timestamp(observed_at)?;
@@ -1110,7 +1403,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             event_id,
             run.current_snapshot_id(),
             observed_at,
-            AgentControllerControl::is_cancelled(control),
+            cancellation_requested,
         )?;
         let next_version = self
             .action_store
@@ -1244,6 +1537,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         control: &C,
         attempt: a3_domain::AgentToolAttemptNumber,
         applied: Result<PatchChangeSet, PatchApplyFailure>,
+        observed_paths: Vec<RepositoryPath>,
         lease: &crate::WorktreeMutationLease<'_>,
     ) -> Result<MutationControllerOutcome, MutationControllerFailure>
     where
@@ -1252,6 +1546,12 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             + RepositoryIndexControl
             + WorkspacePatchControl,
     {
+        let observe_conflict = matches!(
+            &applied,
+            Err(PatchApplyFailure::Changed(_)
+                | PatchApplyFailure::Conflict
+                | PatchApplyFailure::StaleSnapshot)
+        );
         let (changes, failure, terminal) = match applied {
             Ok(changes) => (Some(changes), None, None),
             Err(PatchApplyFailure::Changed(changes)) => (
@@ -1289,14 +1589,25 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                 .map_err(MutationControllerFailure::MutationResultStore)?;
         }
 
-        let current_index = if let Some(changes) = changes.as_ref() {
-            let batch = RepositoryChangeBatch::incremental(changes.changed_paths())?;
+        let refresh_paths = if observe_conflict {
+            // The conflicting file may have changed outside this action. Include its
+            // actual bytes in the current index before compiling another context.
+            Some(observed_paths)
+        } else {
+            changes.as_ref().map(PatchChangeSet::changed_paths)
+        };
+        let current_index = if let Some(paths) = refresh_paths {
+            let batch = RepositoryChangeBatch::incremental(paths)?;
             match self
                 .refresh
                 .execute(project, &batch, index_compiler, control)
                 .await
             {
-                Ok(refresh) if refresh.snapshot().id() != changes.base_snapshot_id() => {
+                Ok(refresh)
+                    if changes.as_ref().is_none_or(|changes| {
+                        refresh.snapshot().id() != changes.base_snapshot_id()
+                    }) =>
+                {
                     Some(refresh.published_index().clone())
                 }
                 Ok(_) | Err(_) => {
@@ -1379,6 +1690,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                     control,
                     lease,
                     failure,
+                    false,
                 )
                 .await;
         }
@@ -1386,6 +1698,16 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         let changes = changes.ok_or(MutationControllerFailure::InvalidToolResult)?;
         let current_index = current_index.ok_or(MutationControllerFailure::InvalidToolResult)?;
         let spec = current_step_spec(ledger, step_id)?;
+        if let Some(step) = self.source_guarded_test_step(ledger, step_id) {
+            let command = crate::RequestAgentFinish
+                .verification_command(step)
+                .ok_or(MutationControllerFailure::InvalidToolResult)?;
+            lease.record_success();
+            return Ok(MutationControllerOutcome::BoundVerificationReady {
+                command,
+                snapshot_id,
+            });
+        }
         if spec.method() != VerificationMethod::DiffInvariant {
             lease.record_success();
             return self
@@ -1447,14 +1769,18 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         control: &C,
         attempt: a3_domain::AgentToolAttemptNumber,
         result: Result<ProcessRunResult, ProcessRunFailure>,
+        proof_deadline: Option<Instant>,
+        source_guarded_test: bool,
         lease: &crate::WorktreeMutationLease<'_>,
     ) -> Result<MutationControllerOutcome, MutationControllerFailure>
     where
         C: AgentControllerControl
             + ContextCompileControl
             + ProcessRunControl
-            + RepositoryIndexControl,
+            + RepositoryIndexControl
+            + WorkspacePatchControl,
     {
+        let before_process_snapshot = run.current_snapshot_id();
         let result = match result {
             Ok(result) => result,
             Err(failure) => {
@@ -1503,12 +1829,14 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                         control,
                         lease,
                         class,
+                        source_guarded_test,
                     )
                     .await;
             }
         };
         let spec = current_step_spec(ledger, action.step_id())?;
-        let inspection_kind = AgentProcessInspectionKind::classify(spec.method(), command_kind);
+        let inspection_kind = AgentProcessInspectionKind::classify(spec.method(), command_kind)
+            .ok_or(MutationControllerFailure::InvalidCommandSelection)?;
         let observed_bytes = result
             .stdout()
             .observed_bytes()
@@ -1655,6 +1983,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                     control,
                     lease,
                     MutationFailureClass::TimedOut,
+                    source_guarded_test,
                 )
                 .await;
         }
@@ -1674,7 +2003,32 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             observed_at,
         )
         .await?;
-        let evidence = match self
+        if source_guarded_test
+            && matches!(result.termination(), ProcessTermination::Exited(exit) if !exit.success())
+        {
+            return self
+                .resolve_source_check_failure(
+                    project,
+                    run,
+                    ledger,
+                    ledger_version,
+                    action.step_id(),
+                    ids,
+                    observed_at,
+                    control,
+                    lease,
+                    &result,
+                    before_process_snapshot == snapshot_id,
+                    proof_deadline,
+                )
+                .await;
+        }
+        let dependencies = if before_process_snapshot == snapshot_id {
+            python_translation_dependencies(spec, &current_index, dependencies)
+        } else {
+            dependencies
+        };
+        let factory_evidence = self
             .evidence_factory
             .create(ProcessVerificationEvidenceRequest {
                 spec,
@@ -1686,7 +2040,14 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                 dependencies: &dependencies,
                 result: &result,
                 adapter: verification_adapter,
-            }) {
+            })
+            .and_then(|evidence| {
+                if matches!(&evidence, VerificationEvidence::Test(test) if test.python_integer_translation().is_some()) {
+                    return Err(ProcessVerificationEvidenceFailure::InvalidEvidence);
+                }
+                Ok(evidence)
+            });
+        let evidence = match factory_evidence {
             Ok(evidence) => evidence,
             Err(_) => {
                 return self
@@ -1708,9 +2069,68 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                                 MutationFailureClass::VerificationFailed
                             }
                         },
+                        source_guarded_test,
                     )
                     .await;
             }
+        };
+        let evidence = if spec.python_integer_translation().is_some() {
+            let evidence = if before_process_snapshot == snapshot_id
+                && evidence.snapshot_id() == snapshot_id
+                && evidence.run_id() == run.id()
+                && matches!(result.termination(), ProcessTermination::Exited(exit) if exit.success())
+            {
+                self.attach_python_integer_translation(
+                    project,
+                    &current_index,
+                    spec,
+                    evidence,
+                    proof_deadline,
+                    control,
+                )
+                .await
+            } else {
+                evidence
+            };
+            if AgentControllerControl::is_cancelled(control)
+                || WorkspacePatchControl::is_cancelled(control)
+            {
+                self.transition_without_ledger(
+                    project,
+                    run,
+                    AgentControllerSignal::CancelRequested,
+                    ids.verification_transition_event_id,
+                    observed_at,
+                    control,
+                )
+                .await?;
+                return Ok(MutationControllerOutcome::Stopped {
+                    failure: MutationFailureClass::Cancelled,
+                    snapshot_id,
+                });
+            }
+            if proof_deadline.is_none_or(|deadline| Instant::now() >= deadline) {
+                self.fail_active_step_and_transition(
+                    project,
+                    run,
+                    ledger,
+                    ledger_version,
+                    action.step_id(),
+                    "Python source verification reached the run deadline",
+                    AgentControllerSignal::FatalFailure,
+                    ids.verification_transition_event_id,
+                    observed_at,
+                    control,
+                )
+                .await?;
+                return Ok(MutationControllerOutcome::Stopped {
+                    failure: MutationFailureClass::TimedOut,
+                    snapshot_id,
+                });
+            }
+            evidence
+        } else {
+            evidence
         };
         self.verify_evidence(
             project,
@@ -1727,6 +2147,103 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             evidence,
         )
         .await
+    }
+
+    async fn attach_python_integer_translation<C>(
+        self,
+        project: &ProjectIdentity,
+        current: &PublishedIndex,
+        spec: &VerificationSpec,
+        evidence: VerificationEvidence,
+        deadline: Option<Instant>,
+        owner: &C,
+    ) -> VerificationEvidence
+    where
+        C: AgentControllerControl + WorkspacePatchControl,
+    {
+        let (Some(verifier), Some(required), Some(deadline)) = (
+            self.python_integer_translation_verifier,
+            spec.python_integer_translation(),
+            deadline,
+        ) else {
+            return evidence;
+        };
+        let VerificationTarget::Test {
+            command_id,
+            selector,
+            minimum_cases,
+            scope,
+        } = spec.target()
+        else {
+            return evidence;
+        };
+        let process_only = VerificationSpec::test(
+            spec.id(),
+            spec.requirement().clone(),
+            *command_id,
+            selector.clone(),
+            *minimum_cases,
+            *scope,
+        );
+        if VerificationEvidenceEvaluation::evaluate(&process_only, &evidence)
+            != VerificationEvidenceEvaluation::Passed
+        {
+            return evidence;
+        }
+        let control = PythonTranslationProofControl { owner, deadline };
+        if WorkspacePatchControl::is_cancelled(&control) {
+            return evidence;
+        }
+        let Some(revision) = current
+            .publication()
+            .graph()
+            .files()
+            .iter()
+            .find(|revision| revision.path() == required.path())
+        else {
+            return evidence;
+        };
+        let VerificationEvidence::Test(test) = &evidence else {
+            return evidence;
+        };
+        if !test
+            .command()
+            .dependencies()
+            .as_slice()
+            .contains(&EvidenceDependency::Present(revision.clone()))
+        {
+            return evidence;
+        }
+        let Ok(source) = self
+            .patch_tool
+            .read_update_base(project, current, revision, &control)
+            .await
+        else {
+            return evidence;
+        };
+        if source.as_bytes().len() > MAX_PYTHON_TRANSLATION_SOURCE_BYTES
+            || source.content_hash() != revision.content_hash()
+            || WorkspacePatchControl::is_cancelled(&control)
+        {
+            return evidence;
+        }
+        let Ok(Some(witness)) = verifier.prove(required, revision, source.as_bytes(), &control)
+        else {
+            return evidence;
+        };
+        if witness.requirement() != required
+            || witness.revision() != revision
+            || witness.declaration().end_byte() as usize > source.as_bytes().len()
+            || WorkspacePatchControl::is_cancelled(&control)
+        {
+            return evidence;
+        }
+        match evidence {
+            VerificationEvidence::Test(test) => {
+                VerificationEvidence::Test(test.with_python_integer_translation(witness))
+            }
+            _ => evidence,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1766,24 +2283,53 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
     where
         C: AgentControllerControl + ContextCompileControl,
     {
-        self.evidence_store
-            .append_verification_evidence(
-                project,
-                &evidence,
-                VERIFICATION_EVIDENCE_TIMEOUT,
-                control,
-            )
-            .await?;
-        let spec = current_step_spec(ledger, step_id)?;
-        let verification = EvaluateStepVerification.execute(
+        // HTTP observations are committed atomically with their ToolAction before this CAS.
+        if !matches!(&evidence, VerificationEvidence::LoopbackHttp(_)) {
+            self.evidence_store
+                .append_verification_evidence(
+                    project,
+                    &evidence,
+                    VERIFICATION_EVIDENCE_TIMEOUT,
+                    control,
+                )
+                .await?;
+        }
+        let step = ledger
+            .step(step_id)
+            .ok_or(MutationControllerFailure::AnchorMismatch)?;
+        let definition = step.definition();
+        let spec = definition.verification_spec();
+        let loopback = spec.method() == VerificationMethod::LoopbackHttp;
+        let cancelled = AgentControllerControl::is_cancelled(control);
+        if loopback && cancelled {
+            return self
+                .cancel_loopback_step(
+                    project,
+                    run,
+                    ledger,
+                    ledger_version,
+                    step_id,
+                    ids.resolution_transition_event_id,
+                    observed_at,
+                    control,
+                )
+                .await;
+        }
+        let verification = EvaluateStepVerification.execute_for_step(
             ids.step_verification_id,
-            spec,
+            definition,
             run.id(),
             &evidence,
             current_index,
             ledger_timestamp(observed_at)?,
         )?;
         let passed = verification.passed();
+        let missing_source_proof = self.source_failure_goal.is_some()
+            && spec.python_integer_translation().is_some()
+            && matches!(
+                &evidence,
+                VerificationEvidence::Test(test) if test.python_integer_translation().is_none()
+            );
         let mut next_ledger = ledger.clone();
         next_ledger.begin_step_verification(
             step_id,
@@ -1806,11 +2352,10 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             ids.verification_transition_event_id,
             run.current_snapshot_id(),
             observed_at,
-            AgentControllerControl::is_cancelled(control),
+            cancelled,
         )?;
-        let next_version = self
-            .action_store
-            .commit_ledger_action(
+        let commit = if loopback {
+            self.action_store.commit_current_ledger_action(
                 project,
                 *ledger_version,
                 expected_sequence,
@@ -1818,7 +2363,23 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                 &next_run,
                 advance.event(),
             )
-            .await?;
+        } else {
+            self.action_store.commit_ledger_action(
+                project,
+                *ledger_version,
+                expected_sequence,
+                &next_ledger,
+                &next_run,
+                advance.event(),
+            )
+        };
+        let next_version = commit.await.map_err(|error| {
+            if loopback {
+                MutationControllerFailure::LoopbackStepCommit(error)
+            } else {
+                MutationControllerFailure::ActionStore(error)
+            }
+        })?;
         *run = next_run;
         *ledger = next_ledger;
         *ledger_version = next_version;
@@ -1831,6 +2392,47 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             });
         }
         let decision = lease.record_failure(MutationFailureClass::VerificationFailed);
+        if loopback {
+            self.transition_without_ledger(
+                project,
+                run,
+                AgentControllerSignal::VerificationNeedsReplan,
+                ids.resolution_transition_event_id,
+                observed_at,
+                control,
+            )
+            .await?;
+            return Ok(if run.state() == AgentControllerState::Replan {
+                MutationControllerOutcome::ReplanRequired {
+                    failure: MutationFailureClass::VerificationFailed,
+                    snapshot_id: run.current_snapshot_id(),
+                }
+            } else {
+                MutationControllerOutcome::Stopped {
+                    failure: MutationFailureClass::VerificationFailed,
+                    snapshot_id: run.current_snapshot_id(),
+                }
+            });
+        }
+        if missing_source_proof {
+            // The real TestEvidence and failed attempt are already durable. There is
+            // no supported source correction for this case, so never compile a retry.
+            if run.state() == AgentControllerState::Verify {
+                self.transition_without_ledger(
+                    project,
+                    run,
+                    AgentControllerSignal::FatalFailure,
+                    ids.resolution_transition_event_id,
+                    observed_at,
+                    control,
+                )
+                .await?;
+            }
+            return Ok(MutationControllerOutcome::Stopped {
+                failure: MutationFailureClass::VerificationFailed,
+                snapshot_id: run.current_snapshot_id(),
+            });
+        }
         self.resolve_after_failed_verification(
             project,
             run,
@@ -1844,6 +2446,88 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             decision,
         )
         .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn resolve_source_check_failure<C>(
+        self,
+        project: &ProjectIdentity,
+        run: &mut AgentRun,
+        ledger: &mut TaskLedger,
+        ledger_version: &mut TaskLedgerStoreVersion,
+        step_id: TaskStepId,
+        ids: MutationExecutionIds,
+        observed_at: AgentRunTimestamp,
+        control: &C,
+        lease: &crate::WorktreeMutationLease<'_>,
+        result: &ProcessRunResult,
+        snapshot_unchanged: bool,
+        proof_deadline: Option<Instant>,
+    ) -> Result<MutationControllerOutcome, MutationControllerFailure>
+    where
+        C: AgentControllerControl,
+    {
+        let diagnostic = snapshot_unchanged
+            .then(|| source_unittest_failure(result))
+            .flatten();
+        let can_replan = if diagnostic.is_some() {
+            // A full bounded page proves this is the first correction on this run. A
+            // missing, changed, or larger history grants no correction.
+            let limit = RunEventPageLimit::new(256)
+                .map_err(|_| MutationControllerFailure::InvalidToolResult)?;
+            let history = self
+                .journal
+                .load_run_events(project, run.id(), None, limit)
+                .await
+                .map_err(MutationControllerFailure::Journal)?;
+            !history.has_more()
+                && history.events().last().is_some_and(|event| {
+                    event.run_id() == run.id()
+                        && event.id() == ids.tool_event_id
+                        && event.sequence() == run.last_event_sequence()
+                        && event.snapshot_id() == run.current_snapshot_id()
+                        && event.kind() == RunEventKind::ToolAction
+                        && event.subject() == Some(RunEventSubject::Tool(ids.tool_run_id))
+                        && event.payload().outcome() == Some(RunEventOutcome::Succeeded)
+                })
+                && !history.events().iter().any(is_source_check_failure_event)
+                && proof_deadline.is_some_and(|deadline| Instant::now() < deadline)
+        } else {
+            false
+        };
+        let reason = diagnostic.map_or_else(
+            || "guarded Python unittest exited unsuccessfully without a current complete failure report".to_owned(),
+            SourceUnittestFailure::summary,
+        );
+        let failure = MutationFailureClass::VerificationFailed;
+        let _ = lease.record_failure(failure);
+        self.fail_active_step_and_transition(
+            project,
+            run,
+            ledger,
+            ledger_version,
+            step_id,
+            &reason,
+            AgentControllerSignal::ExecutionVerificationFailed {
+                correction_allowed: can_replan,
+            },
+            ids.resolution_transition_event_id,
+            observed_at,
+            control,
+        )
+        .await?;
+        let snapshot_id = run.current_snapshot_id();
+        Ok(if run.state() == AgentControllerState::Replan {
+            MutationControllerOutcome::ReplanRequired {
+                failure,
+                snapshot_id,
+            }
+        } else {
+            MutationControllerOutcome::Stopped {
+                failure,
+                snapshot_id,
+            }
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1932,10 +2616,47 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         control: &C,
         lease: &crate::WorktreeMutationLease<'_>,
         failure: MutationFailureClass,
+        source_guarded_process: bool,
     ) -> Result<MutationControllerOutcome, MutationControllerFailure>
     where
         C: AgentControllerControl + ContextCompileControl,
     {
+        if source_guarded_process {
+            // Unknown dispositions have already returned to reconciliation.
+            let reason = match failure {
+                MutationFailureClass::TimedOut => "guarded test exceeded its process timeout",
+                MutationFailureClass::Cancelled => "guarded test was cancelled before execution",
+                MutationFailureClass::VerificationFailed => {
+                    "guarded test did not produce usable verification evidence"
+                }
+                _ => "guarded test could not run",
+            };
+            let signal = if failure == MutationFailureClass::Cancelled {
+                AgentControllerSignal::CancelRequested
+            } else {
+                AgentControllerSignal::ExecutionVerificationFailed {
+                    correction_allowed: false,
+                }
+            };
+            let _ = lease.record_failure(failure);
+            self.fail_active_step_and_transition(
+                project,
+                run,
+                ledger,
+                ledger_version,
+                step_id,
+                reason,
+                signal,
+                ids.resolution_transition_event_id,
+                observed_at,
+                control,
+            )
+            .await?;
+            return Ok(MutationControllerOutcome::Stopped {
+                failure,
+                snapshot_id: run.current_snapshot_id(),
+            });
+        }
         self.transition_without_ledger(
             project,
             run,
@@ -1977,6 +2698,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                     ledger,
                     ledger_version,
                     step_id,
+                    MUTATION_FAILURE_REASON,
                     AgentControllerSignal::VerificationNeedsReplan,
                     ids.resolution_transition_event_id,
                     observed_at,
@@ -1995,6 +2717,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                     ledger,
                     ledger_version,
                     step_id,
+                    MUTATION_FAILURE_REASON,
                     AgentControllerSignal::FatalFailure,
                     ids.resolution_transition_event_id,
                     observed_at,
@@ -2121,6 +2844,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         ledger: &mut TaskLedger,
         ledger_version: &mut TaskLedgerStoreVersion,
         step_id: TaskStepId,
+        reason: &str,
         signal: AgentControllerSignal,
         event_id: RunEventId,
         observed_at: AgentRunTimestamp,
@@ -2133,7 +2857,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         next_ledger.fail_step(
             step_id,
             run.id(),
-            TaskStepFailureReason::try_from_string(MUTATION_FAILURE_REASON.to_owned())
+            TaskStepFailureReason::try_from_string(reason.to_owned())
                 .map_err(|_| MutationControllerFailure::InvalidStaticText)?,
             ledger_timestamp(observed_at)?,
         )?;
@@ -2361,6 +3085,16 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
     }
 }
 
+fn require_bound_patch_preview(
+    action: &PatchAction,
+    preview: PatchPreview,
+) -> Result<PatchPreview, PatchPreviewFailure> {
+    if preview.action_digest() != action.digest() || preview.snapshot_id() != action.snapshot_id() {
+        return Err(PatchPreviewFailure::InvalidResult);
+    }
+    Ok(preview)
+}
+
 fn prepare_action(
     project: &ProjectIdentity,
     run: &AgentRun,
@@ -2389,6 +3123,11 @@ fn prepare_action(
             PreparedMutation::Patch(*action)
         }
         AgentAction::Run(action) => {
+            if current_step_spec(ledger, action.step_id())?.method()
+                == VerificationMethod::LoopbackHttp
+            {
+                return Err(MutationControllerFailure::InvalidCommandSelection);
+            }
             let selection = command.ok_or(MutationControllerFailure::CommandSelectionRequired)?;
             let catalog = selection.catalog;
             let (spec, approval_required) = match selection.authorization {
@@ -2489,6 +3228,32 @@ fn verification_adapter_for(command: &a3_domain::DiscoveredCommand) -> ProcessVe
     } else {
         ProcessVerificationAdapter::Generic
     }
+}
+
+fn python_translation_dependencies(
+    spec: &VerificationSpec,
+    current: &PublishedIndex,
+    dependencies: VerificationDependencies,
+) -> VerificationDependencies {
+    let Some(required) = spec.python_integer_translation() else {
+        return dependencies;
+    };
+    let Some(revision) = current
+        .publication()
+        .graph()
+        .files()
+        .iter()
+        .find(|revision| revision.path() == required.path())
+    else {
+        return dependencies;
+    };
+    let source = EvidenceDependency::Present(revision.clone());
+    if dependencies.as_slice().contains(&source) {
+        return dependencies;
+    }
+    let mut entries = dependencies.as_slice().to_vec();
+    entries.push(source);
+    VerificationDependencies::new(entries).unwrap_or(dependencies)
 }
 
 fn current_step_spec(
@@ -2665,9 +3430,15 @@ const fn map_process_failure_disposition(failure: ProcessRunFailure) -> AgentMut
     }
 }
 
-/// Stable orchestration failure before a safe finite controller outcome was persisted.
+/// Stable failure at a mutating controller boundary.
 #[derive(Debug)]
 pub enum MutationControllerFailure {
+    /// The candidate HTTP verification could not be admitted to its first external effect.
+    LoopbackAdmission(crate::LoopbackVerificationFailure),
+    /// A previous settled HTTP effect for this active step needs recovery before another launch.
+    LoopbackRecoveryPending,
+    /// The HTTP effect and its receipt are durable, while the step commit failed.
+    LoopbackStepCommit(AgentActionStoreFailure),
     /// A closed machine action could not be prepared before its effect.
     MachinePreparation,
     /// Action was not ApplyPatch or Run.
@@ -2698,7 +3469,7 @@ pub enum MutationControllerFailure {
     Busy(WorktreeMutationBusy),
     /// Action fingerprint construction failed.
     Fingerprint(MutationActionFingerprintError),
-    /// Patch preview failed before policy evaluation.
+    /// Preview failed before policy. An original-bound conflict halts its active step.
     PatchPreview(PatchPreviewFailure),
     /// Required exact pre-approval inspection could not be retained.
     Inspection(AgentInspectionSinkFailure),
@@ -2745,6 +3516,9 @@ pub enum MutationControllerFailure {
 impl fmt::Display for MutationControllerFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::LoopbackAdmission(_) => "loopback verification was not admitted",
+            Self::LoopbackRecoveryPending => "settled loopback verification requires recovery",
+            Self::LoopbackStepCommit(_) => "settled loopback verification step commit failed",
             Self::MachinePreparation => "machine action cannot be prepared safely",
             Self::NotMutatingAction => "controller action is not a mutation",
             Self::AnchorMismatch => "mutation action does not match current controller anchors",
@@ -2790,6 +3564,9 @@ impl MutationControllerFailure {
     #[must_use]
     pub const fn mutation_application_state(&self) -> MutationApplicationState {
         match self {
+            Self::LoopbackRecoveryPending | Self::LoopbackStepCommit(_) => {
+                MutationApplicationState::Applied
+            }
             Self::MutationStartStore(AgentRecoveryStoreFailure::MutationReconciliationRequired)
             | Self::MutationResultStore(_)
             | Self::InvalidContextState
@@ -2804,7 +3581,8 @@ impl MutationControllerFailure {
             | Self::Context(_)
             | Self::ExecutionCheckpoint(_)
             | Self::Run(_) => MutationApplicationState::Unknown,
-            Self::MachinePreparation
+            Self::LoopbackAdmission(_)
+            | Self::MachinePreparation
             | Self::NotMutatingAction
             | Self::AnchorMismatch
             | Self::CommandSelectionRequired
@@ -2834,6 +3612,8 @@ impl MutationControllerFailure {
 impl Error for MutationControllerFailure {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::LoopbackAdmission(error) => Some(error),
+            Self::LoopbackStepCommit(error) => Some(error),
             Self::Busy(error) => Some(error),
             Self::Fingerprint(error) => Some(error),
             Self::PatchPreview(error) => Some(error),
@@ -2868,7 +3648,8 @@ impl Error for MutationControllerFailure {
             | Self::InvalidTimestamp
             | Self::InvalidPolicyResult
             | Self::PermissionsChanged
-            | Self::InvalidToolResult => None,
+            | Self::InvalidToolResult
+            | Self::LoopbackRecoveryPending => None,
         }
     }
 }
@@ -2914,6 +3695,54 @@ mod tests {
         TestCaseSelector, VerificationRequirement, VerificationScope, VerificationSpecId,
     };
     use std::error::Error;
+
+    #[test]
+    fn patch_preview_requires_the_actual_action_and_base_snapshot() -> Result<(), Box<dyn Error>> {
+        use a3_domain::{
+            PatchActionSchemaVersion, PatchAdd, PatchContentPreview, PatchFileContent,
+            PatchOperation, PatchPreviewEntry, PatchRationale, WorktreeId,
+        };
+
+        let make_preview = |snapshot, bytes: &[u8]| -> Result<_, Box<dyn Error>> {
+            let path = RepositoryPath::try_from_bytes(b"fixture.txt".to_vec())?;
+            let content = PatchFileContent::try_from_bytes(bytes.to_vec())?;
+            let after = PatchContentPreview::from_content(&content, bytes.len())?;
+            let action = PatchAction::new(
+                PatchActionSchemaVersion::V1,
+                AgentRunId::from_bytes([1; 32]),
+                WorktreeId::from_bytes([2; 32]),
+                snapshot,
+                TaskStepId::from_bytes([3; 32]),
+                VerificationSpecId::from_bytes([4; 32]),
+                PatchRationale::try_from_string("show exact bytes".to_owned())?,
+                vec![PatchOperation::Add(PatchAdd::new(path.clone(), content))],
+            )?;
+            let preview = PatchPreview::new(
+                &action,
+                vec![PatchPreviewEntry::new(None, Some(path), None, Some(after))],
+            )?;
+            Ok((action, preview))
+        };
+        let snapshot = SnapshotId::from_bytes([5; 32]);
+        let (action, matching) = make_preview(snapshot, b"approved proposal\n")?;
+        let (_, other_action) = make_preview(snapshot, b"different proposal\n")?;
+        let (_, other_snapshot) =
+            make_preview(SnapshotId::from_bytes([6; 32]), b"approved proposal\n")?;
+
+        assert_eq!(
+            require_bound_patch_preview(&action, matching.clone())?,
+            matching
+        );
+        assert_eq!(
+            require_bound_patch_preview(&action, other_action),
+            Err(PatchPreviewFailure::InvalidResult)
+        );
+        assert_eq!(
+            require_bound_patch_preview(&action, other_snapshot),
+            Err(PatchPreviewFailure::InvalidResult)
+        );
+        Ok(())
+    }
 
     #[test]
     fn a_clean_timeout_can_reindex_and_replan_but_cancellation_requires_reconciliation() {
@@ -3008,24 +3837,115 @@ mod tests {
         Ok(())
     }
 
-    fn process_result(stdout: &str, stderr: &str) -> Result<ProcessRunResult, Box<dyn Error>> {
-        let capture = |stream, text: &str| -> Result<ProcessOutputCapture, Box<dyn Error>> {
-            Ok(ProcessOutputCapture::new(
-                stream,
-                ProcessOutputContent::text(text.to_owned())?,
-                u64::try_from(text.len())?,
-                1_024,
+    #[test]
+    fn source_unittest_failure_normalizes_the_actual_red_report() -> Result<(), Box<dyn Error>> {
+        let report = concat!(
+            "FAIL: test_known_example (test_behavior.Behavior)\n",
+            "AssertionError: 44 != 42\nRan 1 test in 0.001s\nFAILED (failures=1)\n",
+        );
+        let result = process_result_with_status(
+            "AssertionError: 99 != 100\n",
+            report,
+            ProcessTermination::Exited(ProcessExit::new(Some(1), false)?),
+            false,
+        )?;
+        let failure = source_unittest_failure(&result).ok_or("expected a complete failure")?;
+        assert_eq!(failure.cases, 1);
+        assert_eq!(failure.failures, 1);
+        assert_eq!(failure.assertion_operands, Some((44, 42)));
+        assert_eq!(
+            failure.summary(),
+            "Python unittest failed (1/1). An assertion compared 44 and 42."
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn source_unittest_failure_rejects_ambiguous_or_incomplete_red_reports()
+    -> Result<(), Box<dyn Error>> {
+        let red = ProcessTermination::Exited(ProcessExit::new(Some(1), false)?);
+        let report = "FAIL: test_case (Test)\nRan 1 test in 0.001s\nFAILED (failures=1)\n";
+        let duplicate = report.repeat(2);
+        for (stdout, stderr, status, truncated) in [
+            ("", report, red, true),
+            (report, "", red, false),
+            ("", duplicate.as_str(), red, false),
+            ("", report, ProcessTermination::TimedOut, false),
+            (
+                "",
+                report,
+                ProcessTermination::Exited(ProcessExit::new(Some(0), true)?),
                 false,
-                ProcessOutputDigest::from_bytes([17; 32]),
-            )?)
-        };
+            ),
+            (
+                "",
+                report,
+                ProcessTermination::Exited(ProcessExit::new(Some(2), false)?),
+                false,
+            ),
+            (
+                "",
+                "Ran 1 test in 0.001s\nFAILED (failures=1)\n",
+                red,
+                false,
+            ),
+            (
+                "",
+                "ERROR: test_case (Test)\nRan 1 test in 0.001s\nFAILED (errors=1)\n",
+                red,
+                false,
+            ),
+            (
+                "",
+                "FAIL: test_case (Test)\nRan 0 tests in 0.001s\nFAILED (failures=1)\n",
+                red,
+                false,
+            ),
+        ] {
+            let result = process_result_with_status(stdout, stderr, status, truncated)?;
+            assert_eq!(source_unittest_failure(&result), None);
+        }
+        Ok(())
+    }
+
+    fn process_result(stdout: &str, stderr: &str) -> Result<ProcessRunResult, Box<dyn Error>> {
+        process_result_with_status(
+            stdout,
+            stderr,
+            ProcessTermination::Exited(ProcessExit::new(Some(0), true)?),
+            false,
+        )
+    }
+
+    fn process_result_with_status(
+        stdout: &str,
+        stderr: &str,
+        status: ProcessTermination,
+        stderr_truncated: bool,
+    ) -> Result<ProcessRunResult, Box<dyn Error>> {
+        let capture =
+            |stream, text: &str, truncated| -> Result<ProcessOutputCapture, Box<dyn Error>> {
+                let observed = if truncated {
+                    1_025
+                } else {
+                    u64::try_from(text.len())?
+                };
+                Ok(ProcessOutputCapture::new(
+                    stream,
+                    ProcessOutputContent::text(text.to_owned())?,
+                    observed,
+                    1_024,
+                    truncated,
+                    ProcessOutputDigest::from_bytes([17; 32]),
+                )?)
+            };
         Ok(ProcessRunResult::new(
             PolicyResourceId::from_bytes([18; 32]),
             PolicyDecisionId::from_bytes([19; 32]),
-            ProcessTermination::Exited(ProcessExit::new(Some(0), true)?),
+            status,
             ProcessDuration::from_millis(1),
-            capture(ProcessStream::Stdout, stdout)?,
-            capture(ProcessStream::Stderr, stderr)?,
+            capture(ProcessStream::Stdout, stdout, false)?,
+            capture(ProcessStream::Stderr, stderr, stderr_truncated)?,
         )?)
     }
 }

@@ -41,10 +41,17 @@ pub enum AgentControllerSignal {
     ApprovalRequired,
     /// Verification needs another bounded execution turn.
     VerificationNeedsExecution,
+    /// Core verified horizon exhaustion with structurally unplanned original proofs.
+    VerificationNeedsPlanning,
     /// Verification requires a material replan.
     VerificationNeedsReplan,
     /// Execution identified a material plan gap after closing the active step attempt.
     ExecutionNeedsReplan,
+    /// An actual bound check failed and its active attempt is being closed.
+    ExecutionVerificationFailed {
+        /// The Core verified a current first failure eligible for one material correction.
+        correction_allowed: bool,
+    },
     /// The immediate next Task Ledger revision was applied.
     ReplanApplied,
     /// Scoped approval was granted.
@@ -145,13 +152,28 @@ impl AdvanceAgentController {
         if signal != AgentControllerSignal::TurnNeedsVerification
             && let Some(exhaustion) = run.budget_exhaustion(observed_at)?
         {
-            return exhaust_budget(run, event_id, snapshot_id, observed_at, exhaustion);
+            let hold_execute_for_approval = !matches!(
+                signal,
+                AgentControllerSignal::ExecutionVerificationFailed { .. }
+            );
+            return exhaust_budget(
+                run,
+                event_id,
+                snapshot_id,
+                observed_at,
+                exhaustion,
+                hold_execute_for_approval,
+            );
         }
         let next = next_state(run.state(), signal)?;
         let (code, outcome) = match signal {
             AgentControllerSignal::ApprovalDenied => {
                 (RunEventCode::PolicyDecision, Some(RunEventOutcome::Denied))
             }
+            AgentControllerSignal::ExecutionVerificationFailed { .. } => (
+                RunEventCode::VerificationFailure,
+                Some(RunEventOutcome::Failed),
+            ),
             AgentControllerSignal::FatalFailure => (
                 RunEventCode::ControllerDecision,
                 Some(RunEventOutcome::Failed),
@@ -212,8 +234,21 @@ fn next_state(
         (AgentControllerState::Execute, AgentControllerSignal::ApprovalRequired) => {
             Ok(AgentControllerState::AwaitApproval)
         }
-        (AgentControllerState::Execute, AgentControllerSignal::ExecutionNeedsReplan) => {
-            Ok(AgentControllerState::Replan)
+        (
+            AgentControllerState::Execute,
+            AgentControllerSignal::ExecutionNeedsReplan
+            | AgentControllerSignal::ExecutionVerificationFailed {
+                correction_allowed: true,
+            },
+        ) => Ok(AgentControllerState::Replan),
+        (
+            AgentControllerState::Execute,
+            AgentControllerSignal::ExecutionVerificationFailed {
+                correction_allowed: false,
+            },
+        ) => Ok(AgentControllerState::Failed),
+        (AgentControllerState::Verify, AgentControllerSignal::VerificationNeedsPlanning) => {
+            Ok(AgentControllerState::Plan)
         }
         (AgentControllerState::Verify, AgentControllerSignal::VerificationNeedsExecution) => {
             Ok(AgentControllerState::Execute)
@@ -246,8 +281,9 @@ fn exhaust_budget(
     snapshot_id: SnapshotId,
     observed_at: AgentRunTimestamp,
     exhaustion: AgentBudgetExhaustion,
+    hold_execute_for_approval: bool,
 ) -> Result<AgentControllerAdvance, AgentControllerError> {
-    let next = if run.state() == AgentControllerState::Execute {
+    let next = if hold_execute_for_approval && run.state() == AgentControllerState::Execute {
         AgentControllerState::AwaitApproval
     } else {
         AgentControllerState::Failed
@@ -340,7 +376,17 @@ impl AcceptanceVerificationRequest {
             .steps()
             .filter(|step| step.is_active_plan_step())
         {
-            let mapping = step.definition().acceptance_criteria();
+            let definition = step.definition();
+            let mapping = if goal_contract.original().is_some() {
+                definition
+                    .acceptance_criteria()
+                    .iter()
+                    .chain(definition.addressed_criteria())
+                    .copied()
+                    .collect::<Vec<_>>()
+            } else {
+                definition.acceptance_criteria().to_vec()
+            };
             if mapping
                 .iter()
                 .any(|criterion_id| !criteria.contains_key(criterion_id))
@@ -629,6 +675,7 @@ impl<'a> VerifyAgentAcceptance<'a> {
                         request.snapshot_id(),
                         observed_at,
                         exhaustion,
+                        true,
                     );
                 }
                 let next = match rejection {
@@ -853,8 +900,15 @@ mod tests {
             AgentControllerSignal::TurnNeedsVerification,
             AgentControllerSignal::ApprovalRequired,
             AgentControllerSignal::VerificationNeedsExecution,
+            AgentControllerSignal::VerificationNeedsPlanning,
             AgentControllerSignal::VerificationNeedsReplan,
             AgentControllerSignal::ExecutionNeedsReplan,
+            AgentControllerSignal::ExecutionVerificationFailed {
+                correction_allowed: true,
+            },
+            AgentControllerSignal::ExecutionVerificationFailed {
+                correction_allowed: false,
+            },
             AgentControllerSignal::ReplanApplied,
             AgentControllerSignal::ApprovalGranted,
             AgentControllerSignal::ApprovalDenied,
@@ -885,11 +939,27 @@ mod tests {
             ),
             (
                 AgentControllerState::Verify,
+                AgentControllerSignal::VerificationNeedsPlanning,
+            ),
+            (
+                AgentControllerState::Verify,
                 AgentControllerSignal::VerificationNeedsReplan,
             ),
             (
                 AgentControllerState::Execute,
                 AgentControllerSignal::ExecutionNeedsReplan,
+            ),
+            (
+                AgentControllerState::Execute,
+                AgentControllerSignal::ExecutionVerificationFailed {
+                    correction_allowed: true,
+                },
+            ),
+            (
+                AgentControllerState::Execute,
+                AgentControllerSignal::ExecutionVerificationFailed {
+                    correction_allowed: false,
+                },
             ),
             (
                 AgentControllerState::Replan,
@@ -914,6 +984,67 @@ mod tests {
                 assert_ne!(result.ok(), Some(AgentControllerState::Done));
             }
         }
+    }
+
+    #[test]
+    fn source_verification_failure_replans_or_stops_without_legacy_approval_wait()
+    -> Result<(), Box<dyn Error>> {
+        let goal = goal()?;
+        let budget = AgentRunBudget::new(
+            AgentTurnLimit::new(1)?,
+            AgentTokenLimit::new(100)?,
+            AgentTokenLimit::new(100)?,
+            AgentActionLimit::new(1)?,
+            AgentRunDurationLimit::from_millis(1_000)?,
+            AgentRepairLimit::new(1)?,
+        );
+        for (correction_allowed, at, expected_state, expected_code) in [
+            (
+                true,
+                5,
+                AgentControllerState::Replan,
+                RunEventCode::VerificationFailure,
+            ),
+            (
+                false,
+                5,
+                AgentControllerState::Failed,
+                RunEventCode::VerificationFailure,
+            ),
+            (
+                true,
+                1_002,
+                AgentControllerState::Failed,
+                RunEventCode::Timeout,
+            ),
+        ] {
+            let (mut run, _) = AgentRun::start_with_budget(
+                run_id(),
+                goal.reference(),
+                TaskLedgerRevision::INITIAL,
+                model_profile(),
+                budget,
+                snapshot(),
+                event_id(1),
+                timestamp(1)?,
+            )?;
+            reach_execute(&mut run)?;
+            let advance = AdvanceAgentController.execute(
+                &mut run,
+                AgentControllerSignal::ExecutionVerificationFailed { correction_allowed },
+                event_id(5),
+                snapshot(),
+                timestamp(at)?,
+                false,
+            )?;
+            assert_eq!(advance.state(), expected_state);
+            assert_eq!(advance.event().payload().code(), expected_code);
+            assert_eq!(
+                advance.event().payload().outcome(),
+                Some(RunEventOutcome::Failed)
+            );
+        }
+        Ok(())
     }
 
     #[test]

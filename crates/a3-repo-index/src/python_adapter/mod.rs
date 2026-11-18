@@ -1,3 +1,4 @@
+mod integer_translation;
 mod manifest;
 mod pyproject;
 mod requirements;

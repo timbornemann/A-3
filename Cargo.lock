@@ -71,6 +71,7 @@ dependencies = [
  "crossbeam-channel",
  "futures",
  "getrandom 0.3.4",
+ "serde",
  "serde_json",
  "tauri",
  "tauri-build",
@@ -168,13 +169,18 @@ dependencies = [
  "a3-application",
  "a3-context",
  "a3-domain",
+ "a3-provider",
+ "a3-repo-index",
  "a3-storage-contract-tests",
+ "a3-workspace",
  "blake3",
  "futures",
  "libsql",
  "rustix 1.1.4",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "tokio",
 ]
 
 [[package]]
@@ -187,9 +193,13 @@ dependencies = [
  "command-group",
  "futures",
  "gix",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "reqwest",
  "rustix 1.1.4",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

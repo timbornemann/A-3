@@ -308,6 +308,8 @@ pub enum VerificationEvidenceDetail {
     Diff(VerificationDiffInspection),
     /// Structured diagnostic evidence.
     Diagnostic(VerificationDiagnosticInspection),
+    /// Structured start, response and stop verification for an owned loopback service.
+    LoopbackHttp,
     /// Exact user-confirmed policy scope.
     UserConfirmation {
         /// Confirmed content-free scope identity.
@@ -332,10 +334,14 @@ pub struct VerificationEvidenceInspection {
 impl VerificationEvidenceInspection {
     fn build(
         spec: &VerificationSpec,
+        step_id: TaskStepId,
         evidence: &VerificationEvidence,
         published: &PublishedIndex,
     ) -> Result<Self, VerificationInspectionBuildError> {
-        if evidence.spec_id() != spec.id() || evidence.method() != spec.method() {
+        if evidence.spec_id() != spec.id()
+            || evidence.method() != spec.method()
+            || !crate::verification::evidence_matches_step(evidence, step_id)
+        {
             return Err(VerificationInspectionBuildError::EvidenceMismatch);
         }
         let detail = match evidence {
@@ -351,6 +357,7 @@ impl VerificationEvidenceInspection {
             VerificationEvidence::Diagnostic(value) => VerificationEvidenceDetail::Diagnostic(
                 VerificationDiagnosticInspection::from_evidence(value),
             ),
+            VerificationEvidence::LoopbackHttp(_) => VerificationEvidenceDetail::LoopbackHttp,
             VerificationEvidence::UserConfirmation(value) => user_confirmation_detail(value),
         };
         Ok(Self {
@@ -791,6 +798,7 @@ fn build_task_inspection(
                         .ok_or(VerificationInspectionBuildError::EvidenceMismatch)?;
                     VerificationEvidenceInspection::build(
                         step.definition().verification_spec(),
+                        step.definition().id(),
                         artifact,
                         state.published_index(),
                     )

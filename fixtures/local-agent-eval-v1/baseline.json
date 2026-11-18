@@ -1,0 +1,200 @@
+{
+  "schema": "a3.plan22.baseline-freeze.v1",
+  "frozen_at_utc": "2026-11-06T13:56:00.066777+00:00",
+  "baseline_commit": "38a07ce97f4f1d84c68101e531fdb027be5fa529",
+  "baseline_tree": "927b30dba9544307c179b67d6d58a2d421830739",
+  "engine": "current_production_source_guided",
+  "entrypoint": "AgentSessionManager::submit_for_target_mode",
+  "ollama_version": "0.40.14",
+  "models": {
+    "ornith-1.5:9b": {
+      "digest": "e5df7dcdd8a263994df62d610317e07be0d6af23f96fcbd8543273058fce575e",
+      "context_limit": 8192,
+      "output_limit": 2048,
+      "details": {
+        "parent_model": "",
+        "format": "gguf",
+        "family": "qwen35",
+        "families": [
+          "qwen35"
+        ],
+        "parameter_size": "9.0B",
+        "quantization_level": "Q4_K_M"
+      },
+      "template_sha256": "f55f52930aa8bf44ab5cb85f99370fcc3c56e9a85640b812086d5330bce5d86b",
+      "parameters_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "tag_parameters": "",
+      "capabilities": [
+        "tools",
+        "thinking",
+        "completion",
+        "vision"
+      ]
+    },
+    "qwen38-27b-iq3s:latest": {
+      "digest": "3b8e5b0c73869bffda41a1fb4cf096cfc9bf589cd38b1776b6724bda360bc7f8",
+      "context_limit": 8192,
+      "output_limit": 2048,
+      "details": {
+        "parent_model": "Qwen3.8-27B-GSQ-RCO-IQ3_S.gguf",
+        "format": "gguf",
+        "family": "qwen35",
+        "families": [
+          "qwen35"
+        ],
+        "parameter_size": "26.9B",
+        "quantization_level": "IQ3_S"
+      },
+      "template_sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+      "parameters_sha256": "a2542b2da0eb63a30a6a9bf8f5b7886ad5b90b3674430325f9e5ceb72b8ab033",
+      "tag_parameters": "temperature                    0.6\ntop_p                          0.95\nnum_ctx                        65536",
+      "capabilities": [
+        "tools",
+        "thinking",
+        "completion"
+      ]
+    },
+    "qwen38-4k:latest": {
+      "digest": "45fe387a57ba327d23477d8d2cfd095c767abb2d69195662f47863295b3cbf0e",
+      "context_limit": 4096,
+      "output_limit": 1024,
+      "details": {
+        "parent_model": "orcarouter/Qwen3.8-27B-Uncensored:iq3_m",
+        "format": "gguf",
+        "family": "qwen35",
+        "families": [
+          "qwen35"
+        ],
+        "parameter_size": "27.3B",
+        "quantization_level": "IQ3_M"
+      },
+      "template_sha256": "b507b9c2f6ca642bffcd06665ea7c91f235fd32daeefdf875a0f938db05fb315",
+      "parameters_sha256": "5745bf5098c49838fcd1f490df12470c5e1a0b948d65484a12459b3908601d9d",
+      "tag_parameters": "num_ctx                        4096\ntemperature                    1\ntop_k                          20\ntop_p                          0.95",
+      "capabilities": [
+        "completion",
+        "vision",
+        "tools",
+        "thinking"
+      ]
+    },
+    "qwen38-8k:latest": {
+      "digest": "43cbd35350737e9b9672d36aebddd1779713f418b8cb792af17e57a67408d933",
+      "context_limit": 8192,
+      "output_limit": 2048,
+      "details": {
+        "parent_model": "orcarouter/Qwen3.8-27B-Uncensored:iq3_m",
+        "format": "gguf",
+        "family": "qwen35",
+        "families": [
+          "qwen35"
+        ],
+        "parameter_size": "27.3B",
+        "quantization_level": "IQ3_M"
+      },
+      "template_sha256": "b507b9c2f6ca642bffcd06665ea7c91f235fd32daeefdf875a0f938db05fb315",
+      "parameters_sha256": "9a99ee278bbf8f059d2a756448e4922db7774f95eaf7f7996f9f969cb7939b0d",
+      "tag_parameters": "temperature                    1\ntop_k                          20\ntop_p                          0.95\nnum_ctx                        8192",
+      "capabilities": [
+        "completion",
+        "vision",
+        "tools",
+        "thinking"
+      ]
+    },
+    "qwen38-16k:latest": {
+      "digest": "095cb6be6a6f8725fd343715b32716fc25e5461e5d526d60c711ca674cb29e1b",
+      "context_limit": 16384,
+      "output_limit": 4096,
+      "details": {
+        "parent_model": "orcarouter/Qwen3.8-27B-Uncensored:iq3_m",
+        "format": "gguf",
+        "family": "qwen35",
+        "families": [
+          "qwen35"
+        ],
+        "parameter_size": "27.3B",
+        "quantization_level": "IQ3_M"
+      },
+      "template_sha256": "b507b9c2f6ca642bffcd06665ea7c91f235fd32daeefdf875a0f938db05fb315",
+      "parameters_sha256": "94c4119b5a8dd258fe821deae33eb41b8ccd33d8c298c8b43769170445efb4dd",
+      "tag_parameters": "num_ctx                        16384\ntemperature                    1\ntop_k                          20\ntop_p                          0.95",
+      "capabilities": [
+        "completion",
+        "vision",
+        "tools",
+        "thinking"
+      ]
+    },
+    "bonsai-2:27b": {
+      "digest": "f3c4f42086593225d8be9bb4270658d0e05f5232fb2b5e8faa49ef74d2cc843a",
+      "context_limit": 8192,
+      "output_limit": 2048,
+      "details": {
+        "parent_model": "bonsai-2:27b-q2_0",
+        "format": "gguf",
+        "family": "qwen35",
+        "families": [
+          "qwen35"
+        ],
+        "parameter_size": "26.9B",
+        "quantization_level": "Q2_0",
+        "runner": "llamacpp"
+      },
+      "template_sha256": "b507b9c2f6ca642bffcd06665ea7c91f235fd32daeefdf875a0f938db05fb315",
+      "parameters_sha256": "aea80fba6fa0a4c6f2269713c5bd9fee2db99ff06ab1eea3ff98ef01e062542e",
+      "tag_parameters": "temperature                    1\ntop_k                          20\ntop_p                          0.95\nmin_p                          0.05",
+      "capabilities": [
+        "completion",
+        "vision",
+        "tools",
+        "thinking"
+      ]
+    }
+  },
+  "profile_policy": {
+    "schema_grounding": "FormatFieldOnly",
+    "temperature_milli": 0,
+    "top_p_milli": 1000,
+    "parallelism": 1,
+    "thinking": false,
+    "token_counter": "ConservativeUtf8BytesV1",
+    "stop_sequences": [],
+    "inherited_tag_options": "recorded; not silently reset"
+  },
+  "task_budget_seconds": {
+    "A01": 360,
+    "Q01-Q06": 360,
+    "A02-A04,A06-A09,A11-A12": 900,
+    "A05,A10": 1800
+  },
+  "probe_budget_seconds": 120,
+  "outer_shutdown_grace_seconds": 30,
+  "hardware": {
+    "cpu": "AMD Ryzen 9 5900XT",
+    "physical_cores": 16,
+    "logical_processors": 32,
+    "ram_bytes": 34281078784,
+    "gpu": "NVIDIA GeForce RTX 5070 Ti",
+    "gpu_memory_mib": 16303,
+    "gpu_driver": "610.88"
+  },
+  "runtime": {
+    "python": "3.14.3",
+    "node": "v25.6.1",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)"
+  },
+  "isolation_observation": {
+    "docker_daemon": "29.9.2 linux x86_64",
+    "cached_python_image": "ghcr.io/open-webui/open-webui:latest",
+    "bounded_readonly_network_none_probe": "Python 3.12.16",
+    "hostile_code_hidden_oracle_protection_verified": false
+  },
+  "result_policy": {
+    "native_retries": 0,
+    "all_started_attempts_retained": true,
+    "capability_probe_is_task_success": false,
+    "formal_done_is_independent_correctness": false,
+    "manual_review_pending_is_correct": false
+  }
+}

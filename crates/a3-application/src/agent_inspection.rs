@@ -299,7 +299,7 @@ impl AgentDiffHunk {
     }
 }
 
-/// Full-content metadata plus the exact E3-retained prefix for one side of a file.
+/// Full-content metadata plus the exact E3-retained excerpt for one side of a file.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AgentDiffContent {
     text: String,
@@ -325,13 +325,13 @@ impl AgentDiffContent {
         })
     }
 
-    /// Returns the exact retained UTF-8 prefix.
+    /// Returns the exact retained UTF-8 excerpt.
     #[must_use]
     pub fn text(&self) -> &str {
         &self.text
     }
 
-    /// Returns the complete content byte count, including an omitted tail.
+    /// Returns the complete content byte count, including omitted exterior bytes.
     #[must_use]
     pub const fn total_bytes(&self) -> u64 {
         self.total_bytes
@@ -355,7 +355,7 @@ impl AgentDiffContent {
         self.line_endings
     }
 
-    /// Returns whether E3 deliberately omitted a tail from this exact prefix.
+    /// Returns whether E3 deliberately omitted bytes from the full file.
     #[must_use]
     pub const fn truncated(&self) -> bool {
         self.truncated
@@ -426,7 +426,11 @@ impl AgentDiffFile {
             target_path: entry.target_path().cloned(),
             before,
             after,
-            hunks: build_hunks(&operations)?,
+            hunks: build_hunks(
+                &operations,
+                entry.before().map_or(1, PatchContentPreview::first_line),
+                entry.after().map_or(1, PatchContentPreview::first_line),
+            )?,
             added_lines,
             removed_lines,
             attribution: AgentChangeAttribution::ProposedAgent,
@@ -596,11 +600,16 @@ pub enum AgentProcessInspectionKind {
 
 impl AgentProcessInspectionKind {
     /// Uses verification semantics first, then the closed E5 command category.
+    /// Returns `None` for the composite loopback recipe.
     #[must_use]
-    pub const fn classify(method: VerificationMethod, command_kind: DiscoveredCommandKind) -> Self {
-        match method {
+    pub const fn classify(
+        method: VerificationMethod,
+        command_kind: DiscoveredCommandKind,
+    ) -> Option<Self> {
+        Some(match method {
             VerificationMethod::Test => Self::Test,
             VerificationMethod::Diagnostic => Self::Diagnostic,
+            VerificationMethod::LoopbackHttp => return None,
             VerificationMethod::Command
             | VerificationMethod::DiffInvariant
             | VerificationMethod::UserConfirm
@@ -610,7 +619,7 @@ impl AgentProcessInspectionKind {
                 DiscoveredCommandKind::Lint => Self::Lint,
                 DiscoveredCommandKind::Format => Self::Format,
             },
-        }
+        })
     }
 }
 
@@ -1523,6 +1532,8 @@ fn append_lcs_diff(
 
 fn build_hunks(
     operations: &[LineOperation],
+    before_first_line: u32,
+    after_first_line: u32,
 ) -> Result<Vec<AgentDiffHunk>, AgentInspectionBuildError> {
     let mut ranges = Vec::<(usize, usize)>::new();
     for index in operations
@@ -1546,7 +1557,7 @@ fn build_hunks(
     }
     ranges
         .into_iter()
-        .map(|(start, end)| build_hunk(operations, start, end))
+        .map(|(start, end)| build_hunk(operations, start, end, before_first_line, after_first_line))
         .collect()
 }
 
@@ -1554,21 +1565,27 @@ fn build_hunk(
     operations: &[LineOperation],
     start: usize,
     end: usize,
+    before_first_line: u32,
+    after_first_line: u32,
 ) -> Result<AgentDiffHunk, AgentInspectionBuildError> {
-    let mut before_line = checked_u32(
+    let before_offset = checked_u32(
         operations[..start]
             .iter()
             .filter(|operation| !matches!(operation, LineOperation::Added(_)))
-            .count()
-            .saturating_add(1),
+            .count(),
     )?;
-    let mut after_line = checked_u32(
+    let after_offset = checked_u32(
         operations[..start]
             .iter()
             .filter(|operation| !matches!(operation, LineOperation::Removed(_)))
-            .count()
-            .saturating_add(1),
+            .count(),
     )?;
+    let mut before_line = before_first_line
+        .checked_add(before_offset)
+        .ok_or(AgentInspectionBuildError::TooMuchData)?;
+    let mut after_line = after_first_line
+        .checked_add(after_offset)
+        .ok_or(AgentInspectionBuildError::TooMuchData)?;
     let initial_before_line = before_line;
     let initial_after_line = after_line;
     let mut rows = Vec::with_capacity(end.saturating_sub(start));

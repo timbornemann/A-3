@@ -8,11 +8,11 @@ use a3_application::{
     VerificationEvidenceInspection, VerificationProcessStreamInspection,
 };
 use a3_domain::{
-    AcceptanceCriterionRequirement, DiffEvidenceSource, EvidenceFreshness,
-    EvidenceFreshnessFailure, PatchLineEndings, PatchTextEncoding, ProcessOutputRedaction,
-    ProcessStream, ProcessTermination, RepositoryPath, StepVerificationOutcome, TaskStepStaleCause,
-    TaskStepStatus, TestCaseOutcome, VerificationEvidenceEvaluation, VerificationEvidenceFailure,
-    VerificationMethod,
+    AcceptanceCriterionRequirement, CriterionEvidenceRequirement, DiffEvidenceSource,
+    EvidenceFreshness, EvidenceFreshnessFailure, PatchLineEndings, PatchTextEncoding,
+    ProcessOutputRedaction, ProcessStream, ProcessTermination, RepositoryPath,
+    StepVerificationOutcome, TaskStepStaleCause, TaskStepStatus, TestCaseOutcome,
+    VerificationEvidenceEvaluation, VerificationEvidenceFailure, VerificationMethod,
 };
 use a3_protocol::{
     AgentChangeAttributionV1, AgentCriterionInspectionV1, AgentCriterionProofStateV1,
@@ -247,6 +247,14 @@ fn map_verification_to_v1(value: &TaskVerificationInspection) -> AgentVerificati
         value
             .criteria()
             .iter()
+            .filter(|inspection| {
+                !inspection.criterion().origin().is_some_and(|origin| {
+                    matches!(
+                        origin.evidence_requirement(),
+                        CriterionEvidenceRequirement::LoopbackHttp(_)
+                    )
+                })
+            })
             .map(|inspection| {
                 let criterion = inspection.criterion();
                 AgentCriterionInspectionV1::new(
@@ -289,15 +297,17 @@ fn map_verification_to_v1(value: &TaskVerificationInspection) -> AgentVerificati
         value
             .steps()
             .iter()
-            .map(|step| {
+            .filter_map(|step| {
                 let definition = step.definition();
-                AgentVerificationStepV1::new(
+                let method =
+                    map_verification_method_to_v1(definition.verification_spec().method())?;
+                Some(AgentVerificationStepV1::new(
                     definition.id().to_string(),
                     definition.intended_outcome().as_str().to_owned(),
                     map_step_status_to_v1(step.status()),
                     step.stale_cause().map(map_stale_cause_to_v1),
                     definition.verification_spec().id().to_string(),
-                    map_verification_method_to_v1(definition.verification_spec().method()),
+                    method,
                     step.attempts()
                         .iter()
                         .map(|attempt| {
@@ -313,11 +323,15 @@ fn map_verification_to_v1(value: &TaskVerificationInspection) -> AgentVerificati
                                         }
                                     }
                                 },
-                                attempt.evidence().iter().map(map_evidence_to_v1).collect(),
+                                attempt
+                                    .evidence()
+                                    .iter()
+                                    .filter_map(map_evidence_to_v1)
+                                    .collect(),
                             )
                         })
                         .collect(),
-                )
+                ))
             })
             .collect(),
     )
@@ -351,17 +365,19 @@ fn map_stale_cause_to_v1(value: &TaskStepStaleCause) -> AgentStepStaleCauseV1 {
     }
 }
 
-fn map_evidence_to_v1(value: &VerificationEvidenceInspection) -> AgentVerificationEvidenceV1 {
-    AgentVerificationEvidenceV1::new(
+fn map_evidence_to_v1(
+    value: &VerificationEvidenceInspection,
+) -> Option<AgentVerificationEvidenceV1> {
+    Some(AgentVerificationEvidenceV1::new(
         value.id().to_string(),
         value.run_id().to_string(),
         value.snapshot_id().to_string(),
-        map_verification_method_to_v1(value.method()),
+        map_verification_method_to_v1(value.method())?,
         match value.semantic() {
             VerificationEvidenceEvaluation::Passed => AgentVerificationEvaluationV1::Passed,
             VerificationEvidenceEvaluation::Failed(reason) => {
                 AgentVerificationEvaluationV1::Failed {
-                    reason: map_evidence_failure_to_v1(reason),
+                    reason: map_evidence_failure_to_v1(reason)?,
                 }
             }
         },
@@ -378,31 +394,36 @@ fn map_evidence_to_v1(value: &VerificationEvidenceInspection) -> AgentVerificati
                 },
             },
         },
-        map_evidence_detail_to_v1(value.detail()),
-    )
+        map_evidence_detail_to_v1(value.detail())?,
+    ))
 }
 
-const fn map_verification_method_to_v1(value: VerificationMethod) -> AgentVerificationMethodV1 {
-    match value {
+const fn map_verification_method_to_v1(
+    value: VerificationMethod,
+) -> Option<AgentVerificationMethodV1> {
+    Some(match value {
         VerificationMethod::Command => AgentVerificationMethodV1::Command,
         VerificationMethod::Test => AgentVerificationMethodV1::Test,
         VerificationMethod::DiffInvariant => AgentVerificationMethodV1::DiffInvariant,
         VerificationMethod::Diagnostic => AgentVerificationMethodV1::Diagnostic,
         VerificationMethod::UserConfirm => AgentVerificationMethodV1::UserConfirm,
         VerificationMethod::DeferredCommand => AgentVerificationMethodV1::DeferredCommand,
-    }
+        VerificationMethod::LoopbackHttp => return None,
+    })
 }
 
 const fn map_evidence_failure_to_v1(
     value: VerificationEvidenceFailure,
-) -> AgentVerificationFailureV1 {
-    match value {
+) -> Option<AgentVerificationFailureV1> {
+    Some(match value {
         VerificationEvidenceFailure::LegacySpecification => {
             AgentVerificationFailureV1::LegacySpecification
         }
-        VerificationEvidenceFailure::SpecificationMismatch => {
+        VerificationEvidenceFailure::SpecificationMismatch
+        | VerificationEvidenceFailure::SourceProofMismatch => {
             AgentVerificationFailureV1::SpecificationMismatch
         }
+        VerificationEvidenceFailure::LoopbackHttpMismatch => return None,
         VerificationEvidenceFailure::EvidenceKindMismatch => {
             AgentVerificationFailureV1::EvidenceKindMismatch
         }
@@ -434,13 +455,13 @@ const fn map_evidence_failure_to_v1(
         VerificationEvidenceFailure::ConfirmationScopeMismatch => {
             AgentVerificationFailureV1::ConfirmationScopeMismatch
         }
-    }
+    })
 }
 
 fn map_evidence_detail_to_v1(
     value: &VerificationEvidenceDetail,
-) -> AgentVerificationEvidenceDetailV1 {
-    match value {
+) -> Option<AgentVerificationEvidenceDetailV1> {
+    Some(match value {
         VerificationEvidenceDetail::Command(command) => {
             AgentVerificationEvidenceDetailV1::Command {
                 command: map_verification_command_to_v1(command),
@@ -493,7 +514,8 @@ fn map_evidence_detail_to_v1(
             scope_id: scope_id.to_string(),
             confirmed_at_unix_millis: confirmed_at.unix_millis().to_string(),
         },
-    }
+        VerificationEvidenceDetail::LoopbackHttp => return None,
+    })
 }
 
 fn map_verification_command_to_v1(
@@ -522,7 +544,26 @@ fn map_verification_stream_to_v1(
 
 #[cfg(test)]
 mod tests {
-    use super::safe_path_display;
+    use super::{
+        AgentVerificationFailureV1, VerificationEvidenceFailure, VerificationMethod,
+        map_evidence_failure_to_v1, map_verification_method_to_v1, safe_path_display,
+    };
+
+    #[test]
+    fn v1_does_not_project_composite_http_as_an_existing_method() {
+        assert!(map_verification_method_to_v1(VerificationMethod::LoopbackHttp).is_none());
+        assert!(
+            map_evidence_failure_to_v1(VerificationEvidenceFailure::LoopbackHttpMismatch).is_none()
+        );
+    }
+
+    #[test]
+    fn source_proof_mismatch_uses_the_existing_v1_specification_failure() {
+        assert!(matches!(
+            map_evidence_failure_to_v1(VerificationEvidenceFailure::SourceProofMismatch),
+            Some(AgentVerificationFailureV1::SpecificationMismatch)
+        ));
+    }
 
     #[test]
     fn path_display_never_emits_raw_control_or_invalid_bytes() {

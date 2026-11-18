@@ -180,6 +180,7 @@ impl AgentReadResult {
             evidence: self.evidence,
             replan: None,
             original_evidence: self.original_evidence,
+            caller_relocalization: None,
         })
     }
 }
@@ -223,9 +224,24 @@ pub struct RecordedAgentRead {
     evidence: AgentToolEvidenceSet,
     replan: Option<crate::ReplanResearchCheckpoint>,
     original_evidence: Option<a3_domain::TaskEvidenceId>,
+    caller_relocalization: Option<crate::CallerRelocalizationReceipt>,
 }
 
 impl RecordedAgentRead {
+    pub(crate) fn with_caller_relocalization(
+        mut self,
+        receipt: crate::CallerRelocalizationReceipt,
+    ) -> Self {
+        self.caller_relocalization = Some(receipt);
+        self
+    }
+
+    /// Returns the typed receipt created by the reserved current graph inspect.
+    #[must_use]
+    pub const fn caller_relocalization(&self) -> Option<crate::CallerRelocalizationReceipt> {
+        self.caller_relocalization
+    }
+
     /// Metadata marking an actual reader page, not a search/graph span preview.
     #[must_use]
     pub const fn original_evidence(&self) -> Option<a3_domain::TaskEvidenceId> {

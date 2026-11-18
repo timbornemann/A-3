@@ -126,7 +126,9 @@ impl AgentPermissionSettings {
             PolicyAction::MachineHttpGet { .. } => {
                 matches!(self.mode, AgentPermissionMode::FullMachine)
             }
-            PolicyAction::Network { .. } => false,
+            PolicyAction::Network { .. }
+            | PolicyAction::LoopbackHttpProbe { .. }
+            | PolicyAction::LoopbackStartup { .. } => false,
             PolicyAction::Git { operation, .. } => match operation {
                 GitPolicyOperation::Status
                 | GitPolicyOperation::Diff

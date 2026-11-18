@@ -292,6 +292,29 @@ pub enum PolicyAction {
         /// Canonical URL and closed GET semantics.
         target_id: PolicyResourceId,
     },
+    /// One explicitly approved method on the exact Core-bound local verification socket.
+    LoopbackHttpProbe {
+        /// Exact worktree that owns the recipe lifecycle.
+        worktree_id: WorktreeId,
+        /// Active ledger step bound to the immutable recipe.
+        step_id: TaskStepId,
+        /// Exact recipe, snapshot, script revision and request ordinal digest.
+        target_id: PolicyResourceId,
+        /// Method whose effects retain their stricter workspace restrictions.
+        /// DELETE is Destructive/Critical and also retains Network and Write restrictions.
+        method: super::LoopbackMethod,
+    },
+    /// A closed, revision-bound effect in a complete local startup verification.
+    LoopbackStartup {
+        /// Worktree that exclusively owns the bounded lifecycle.
+        worktree_id: WorktreeId,
+        /// Active immutable plan step.
+        step_id: TaskStepId,
+        /// Complete recipe, process specifications, snapshot and script digest.
+        target_id: PolicyResourceId,
+        /// Exact effect, distinguishing identical argv under held and free ports.
+        phase: super::LoopbackStartupPhase,
+    },
     /// Canonical, full-content-bound external file operation prepared by a privileged adapter.
     MachineFile {
         /// Owner of the serialized action.
@@ -346,6 +369,11 @@ impl PolicyAction {
     #[must_use]
     pub const fn class(&self) -> ActionClass {
         match self {
+            Self::LoopbackStartup {
+                phase: super::LoopbackStartupPhase::ReserveEndpoint,
+                ..
+            } => ActionClass::Network,
+            Self::LoopbackStartup { .. } => ActionClass::ExecuteOpen,
             Self::MachineProcess { effect, .. } => match effect {
                 super::MachineProcessEffect::ReadOnly => ActionClass::ExecuteSafe,
                 super::MachineProcessEffect::Unknown => ActionClass::ExecuteOpen,
@@ -388,7 +416,13 @@ impl PolicyAction {
                     }
                 },
             },
-            Self::Network { .. } | Self::MachineHttpGet { .. } => ActionClass::Network,
+            Self::LoopbackHttpProbe {
+                method: super::LoopbackMethod::Delete,
+                ..
+            } => ActionClass::Destructive,
+            Self::Network { .. } | Self::MachineHttpGet { .. } | Self::LoopbackHttpProbe { .. } => {
+                ActionClass::Network
+            }
             Self::Git { operation, .. } => match operation {
                 GitPolicyOperation::Status
                 | GitPolicyOperation::Diff
@@ -416,10 +450,23 @@ impl PolicyAction {
     pub const fn risk(&self) -> RiskLevel {
         if matches!(
             self,
+            Self::LoopbackStartup {
+                phase: super::LoopbackStartupPhase::ReserveEndpoint,
+                ..
+            }
+        ) {
+            return RiskLevel::High;
+        }
+        if matches!(
+            self,
             Self::MachineProcess {
                 effect: super::MachineProcessEffect::Unknown,
                 ..
-            }
+            } | Self::LoopbackStartup { .. }
+                | Self::LoopbackHttpProbe {
+                    method: super::LoopbackMethod::Delete,
+                    ..
+                }
         ) {
             return RiskLevel::Critical;
         }
@@ -464,6 +511,16 @@ impl PolicyAction {
     #[must_use]
     pub const fn additional_restrictions(&self) -> [Option<ActionClass>; 4] {
         match self {
+            Self::LoopbackStartup {
+                phase: super::LoopbackStartupPhase::ReserveEndpoint,
+                ..
+            } => [None, None, None, None],
+            Self::LoopbackStartup { .. } => [
+                Some(ActionClass::Network),
+                Some(ActionClass::Destructive),
+                Some(ActionClass::Publish),
+                Some(ActionClass::OutsideRoot),
+            ],
             Self::MachineProcess {
                 effect: super::MachineProcessEffect::Unknown,
                 ..
@@ -489,6 +546,18 @@ impl PolicyAction {
                 [Some(ActionClass::Network), None, None, None]
             }
             Self::MachineHttpGet { .. } => [Some(ActionClass::Read), None, None, None],
+            Self::LoopbackHttpProbe { method, .. } => match method {
+                super::LoopbackMethod::Get => [Some(ActionClass::Read), None, None, None],
+                super::LoopbackMethod::Post
+                | super::LoopbackMethod::Put
+                | super::LoopbackMethod::Patch => [Some(ActionClass::Write), None, None, None],
+                super::LoopbackMethod::Delete => [
+                    Some(ActionClass::Network),
+                    Some(ActionClass::Write),
+                    None,
+                    None,
+                ],
+            },
             Self::MachineFile {
                 operation: PathPolicyOperation::Read,
                 ..
@@ -603,6 +672,8 @@ impl SystemPolicyV1 {
             PolicyAction::Patch(_)
             | PolicyAction::MachineFile { .. }
             | PolicyAction::MachineHttpGet { .. }
+            | PolicyAction::LoopbackHttpProbe { .. }
+            | PolicyAction::LoopbackStartup { .. }
             | PolicyAction::MachineProcess { .. } => PolicyDisposition::ApprovalRequired,
             PolicyAction::Process(process)
                 if matches!(process.mode(), ProcessExecutionMode::KnownSafe)
@@ -782,6 +853,30 @@ fn derive_action_digest(domain: &str, action: &PolicyAction) -> [u8; 32] {
             hasher.update(step_id.as_bytes());
             hasher.update(target_id.as_bytes());
         }
+        PolicyAction::LoopbackHttpProbe {
+            worktree_id,
+            step_id,
+            target_id,
+            method,
+        } => {
+            hash_tag(&mut hasher, 9);
+            hasher.update(worktree_id.as_bytes());
+            hasher.update(step_id.as_bytes());
+            hasher.update(target_id.as_bytes());
+            hash_bytes(&mut hasher, method.as_str().as_bytes());
+        }
+        PolicyAction::LoopbackStartup {
+            worktree_id,
+            step_id,
+            target_id,
+            phase,
+        } => {
+            hash_tag(&mut hasher, 10);
+            hasher.update(worktree_id.as_bytes());
+            hasher.update(step_id.as_bytes());
+            hasher.update(target_id.as_bytes());
+            hash_tag(&mut hasher, phase.tag());
+        }
         PolicyAction::Root {
             worktree_id,
             operation,
@@ -948,6 +1043,64 @@ mod tests {
         WorkspacePolicyError, WorkspacePolicyRestriction, WorkspacePolicyRule,
     };
     use crate::{PolicyResourceId, RepositoryPath, TaskStepId, WorktreeId};
+
+    #[test]
+    fn loopback_method_classes_admit_their_risks_and_preserve_all_effect_restrictions() {
+        use crate::LoopbackMethod;
+
+        for (method, expected_class, expected_risk, expected_restrictions) in [
+            (
+                LoopbackMethod::Get,
+                ActionClass::Network,
+                RiskLevel::High,
+                [Some(ActionClass::Read), None, None, None],
+            ),
+            (
+                LoopbackMethod::Post,
+                ActionClass::Network,
+                RiskLevel::High,
+                [Some(ActionClass::Write), None, None, None],
+            ),
+            (
+                LoopbackMethod::Put,
+                ActionClass::Network,
+                RiskLevel::High,
+                [Some(ActionClass::Write), None, None, None],
+            ),
+            (
+                LoopbackMethod::Delete,
+                ActionClass::Destructive,
+                RiskLevel::Critical,
+                [
+                    Some(ActionClass::Network),
+                    Some(ActionClass::Write),
+                    None,
+                    None,
+                ],
+            ),
+            (
+                LoopbackMethod::Patch,
+                ActionClass::Network,
+                RiskLevel::High,
+                [Some(ActionClass::Write), None, None, None],
+            ),
+        ] {
+            let action = PolicyAction::LoopbackHttpProbe {
+                worktree_id: WorktreeId::from_bytes([1; 32]),
+                step_id: TaskStepId::from_bytes([2; 32]),
+                target_id: PolicyResourceId::from_bytes([3; 32]),
+                method,
+            };
+            assert_eq!(action.class(), expected_class);
+            assert_eq!(action.risk(), expected_risk);
+            assert!(action.class().permits_risk(action.risk()));
+            assert_eq!(action.additional_restrictions(), expected_restrictions);
+            assert_eq!(
+                SystemPolicyV1.disposition(&action),
+                PolicyDisposition::ApprovalRequired
+            );
+        }
+    }
 
     #[test]
     fn action_class_and_risk_are_derived_from_closed_operations()

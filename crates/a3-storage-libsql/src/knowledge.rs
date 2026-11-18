@@ -12,6 +12,45 @@ use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+#[path = "plan22_candidate_open_tests.rs"]
+mod plan22_candidate_open_tests;
+
+#[derive(Clone, Copy)]
+enum KnowledgeOpenContract {
+    Production,
+    #[cfg(test)]
+    Plan22Candidate48,
+}
+
+impl KnowledgeOpenContract {
+    const fn supported(self) -> KnowledgeSchemaVersion {
+        match self {
+            Self::Production => KnowledgeSchemaVersion::CURRENT,
+            #[cfg(test)]
+            Self::Plan22Candidate48 => {
+                KnowledgeSchemaVersion::new(crate::migration::PLAN22_CANDIDATE_KNOWLEDGE_VERSION)
+            }
+        }
+    }
+
+    async fn migrate(
+        self,
+        connection: &Connection,
+        repository_id: &[u8; 32],
+        worktree_id: &[u8; 32],
+    ) -> Result<KnowledgeSchemaVersion, MigrationError> {
+        match self {
+            Self::Production => migrate_knowledge(connection, repository_id, worktree_id).await,
+            #[cfg(test)]
+            Self::Plan22Candidate48 => {
+                crate::migration::migrate_plan22_candidate(connection, repository_id, worktree_id)
+                    .await
+            }
+        }
+    }
+}
+
 /// An opened, identity-bound, policy-checked database for one worktree.
 ///
 /// Handles and rows remain private to the adapter boundary.
@@ -22,6 +61,7 @@ pub struct KnowledgeDatabase {
     schema_version: KnowledgeSchemaVersion,
     repository_id: RepositoryId,
     worktree_id: WorktreeId,
+    open_contract: KnowledgeOpenContract,
 }
 
 impl KnowledgeDatabase {
@@ -30,6 +70,22 @@ impl KnowledgeDatabase {
         layout: &ProjectStorageLayout,
         project: &ProjectIdentity,
     ) -> Result<Self, KnowledgeOpenError> {
+        Self::open_for_contract(layout, project, KnowledgeOpenContract::Production).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn open_plan22_candidate(
+        layout: &ProjectStorageLayout,
+        project: &ProjectIdentity,
+    ) -> Result<Self, KnowledgeOpenError> {
+        Self::open_for_contract(layout, project, KnowledgeOpenContract::Plan22Candidate48).await
+    }
+
+    async fn open_for_contract(
+        layout: &ProjectStorageLayout,
+        project: &ProjectIdentity,
+        open_contract: KnowledgeOpenContract,
+    ) -> Result<Self, KnowledgeOpenError> {
         if layout.worktree_id() != project.worktree().id() {
             return Err(KnowledgeOpenError::IdentityConflict);
         }
@@ -37,7 +93,7 @@ impl KnowledgeDatabase {
             .validate_knowledge_target()
             .map_err(KnowledgeOpenError::Layout)?;
         if layout.knowledge_path().exists() {
-            preflight_existing_knowledge(layout.knowledge_path(), project).await?;
+            preflight_existing_knowledge(layout.knowledge_path(), project, open_contract).await?;
         }
 
         let database = libsql::Builder::new_local(layout.knowledge_path())
@@ -45,19 +101,20 @@ impl KnowledgeDatabase {
             .await
             .map_err(classify_open_error)?;
         let connection = database.connect().map_err(classify_connect_error)?;
-        reject_newer_schema(&connection).await?;
+        validate_schema_for_contract(&connection, open_contract).await?;
         verify_integrity(&connection).await?;
         configure_connection(&connection)
             .await
             .map_err(classify_configuration_error)?;
         verify_connection_policy(&connection).await?;
-        let schema_version = migrate_knowledge(
-            &connection,
-            project.repository().id().as_bytes(),
-            project.worktree().id().as_bytes(),
-        )
-        .await
-        .map_err(classify_migration_error)?;
+        let schema_version = open_contract
+            .migrate(
+                &connection,
+                project.repository().id().as_bytes(),
+                project.worktree().id().as_bytes(),
+            )
+            .await
+            .map_err(classify_migration_error)?;
         verify_identity(&connection, project).await?;
         layout
             .validate_knowledge_target()
@@ -70,6 +127,7 @@ impl KnowledgeDatabase {
             schema_version,
             repository_id: project.repository().id(),
             worktree_id: project.worktree().id(),
+            open_contract,
         };
         knowledge.verify().await?;
         Ok(knowledge)
@@ -132,6 +190,7 @@ impl KnowledgeDatabase {
             schema_version,
             repository_id: target.repository().id(),
             worktree_id: target.worktree().id(),
+            open_contract: KnowledgeOpenContract::Production,
         };
         knowledge.verify().await?;
         Ok(knowledge)
@@ -203,13 +262,15 @@ impl KnowledgeDatabase {
                 found,
             });
         }
-        let verified = migrate_knowledge(
-            &self.connection,
-            self.repository_id.as_bytes(),
-            self.worktree_id.as_bytes(),
-        )
-        .await
-        .map_err(classify_migration_error)?;
+        let verified = self
+            .open_contract
+            .migrate(
+                &self.connection,
+                self.repository_id.as_bytes(),
+                self.worktree_id.as_bytes(),
+            )
+            .await
+            .map_err(classify_migration_error)?;
         if verified != self.schema_version {
             return Err(KnowledgeOpenError::UnexpectedSchemaVersion {
                 expected: self.schema_version,
@@ -309,6 +370,7 @@ impl KnowledgeVerification {
 async fn preflight_existing_knowledge(
     path: &Path,
     project: &ProjectIdentity,
+    open_contract: KnowledgeOpenContract,
 ) -> Result<(), KnowledgeOpenError> {
     let database = libsql::Builder::new_local(path)
         .flags(libsql::OpenFlags::SQLITE_OPEN_READ_ONLY)
@@ -316,8 +378,14 @@ async fn preflight_existing_knowledge(
         .await
         .map_err(classify_open_error)?;
     let connection = database.connect().map_err(classify_connect_error)?;
-    let version = reject_newer_schema(&connection).await?;
+    let version = validate_schema_for_contract(&connection, open_contract).await?;
     verify_integrity(&connection).await?;
+    #[cfg(test)]
+    if matches!(open_contract, KnowledgeOpenContract::Plan22Candidate48) {
+        crate::migration::verify_plan22_candidate_migration_history(&connection, version)
+            .await
+            .map_err(classify_migration_error)?;
+    }
     if version >= 1 {
         verify_legacy_identity(
             &connection,
@@ -337,14 +405,48 @@ async fn preflight_existing_knowledge(
     Ok(())
 }
 
+async fn validate_schema_for_contract(
+    connection: &Connection,
+    open_contract: KnowledgeOpenContract,
+) -> Result<u32, KnowledgeOpenError> {
+    let version = reject_newer_than(connection, open_contract.supported()).await?;
+    #[cfg(test)]
+    if matches!(open_contract, KnowledgeOpenContract::Plan22Candidate48)
+        && version != open_contract.supported().get()
+    {
+        let genuinely_empty = version == 0
+            && crate::migration::query_i64(
+                connection,
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema)",
+            )
+            .await
+            .map_err(classify_schema_inspection_error)?
+                == 0;
+        if !genuinely_empty {
+            return Err(KnowledgeOpenError::UnexpectedSchemaVersion {
+                expected: open_contract.supported(),
+                found: KnowledgeSchemaVersion::new(version),
+            });
+        }
+    }
+    Ok(version)
+}
+
 async fn reject_newer_schema(connection: &Connection) -> Result<u32, KnowledgeOpenError> {
+    reject_newer_than(connection, KnowledgeSchemaVersion::CURRENT).await
+}
+
+async fn reject_newer_than(
+    connection: &Connection,
+    supported: KnowledgeSchemaVersion,
+) -> Result<u32, KnowledgeOpenError> {
     let found = read_user_version(connection)
         .await
         .map_err(classify_schema_inspection_error)?;
-    if found > KnowledgeSchemaVersion::CURRENT.get() {
+    if found > supported.get() {
         return Err(KnowledgeOpenError::NewerSchema {
             found: KnowledgeSchemaVersion::new(found),
-            supported: KnowledgeSchemaVersion::CURRENT,
+            supported,
         });
     }
     Ok(found)

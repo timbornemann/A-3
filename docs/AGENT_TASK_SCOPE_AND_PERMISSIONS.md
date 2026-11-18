@@ -5,6 +5,28 @@ nach Annahme von [ADR-0117](adrs/0117-auftragsbezogene-tests-und-verifikation.md
 [ADR-0118](adrs/0118-appweite-agent-berechtigungsmodi.md). Historische ADRs und
 persistierte Verifikationsergebnisse behalten ihren ursprünglichen Vertrag.
 
+## Geltung und Übergang nach ADR-0119
+
+[ADR-0119](adrs/0119-kleinschrittiger-agentenkern-fuer-lokale-modelle.md) und
+[Kleiner Agentenkern](SMALL_LOCAL_MODEL_AGENT_CORE.md) ersetzen für neue Verträge nur
+die benannten Steuerungsformen: öffentliches Plan, obligatorische Markdown-/Recherche-
+handoffs, SourceGuided-Auswahlstufen und starre Read-Übergänge. Die Regeln zur
+Testerstellung und alle Berechtigungs-/Recoverygrenzen aus ADR-0117 und ADR-0118
+bleiben vollständig bestehen.
+
+Die beschriebenen bisherigen Implementierungen bleiben bis P11 von
+[Plan 22](plans/22-SMALL-LOCAL-MODEL-AGENT-CORE.md) ausgewählte Produktions-Altbaseline.
+P2 bis P10 komponieren neue Verträge ausschließlich in Kandidaten-Tests mit isolierten
+Datenkopien; P11 ist der einzige Produktionswechsel. Es entsteht weder eine zweite
+produktive Engine noch ein Flag für den unvollständigen Kern.
+
+Im neuen Vertrag benötigt Chat kein Projekt und keine Coding-JSON-Probe. Er erhält
+keine Index-, Datei-, Prozess-, Netzwerk- oder Mutationswerkzeuge.
+Ask erhält ausschließlich Reads des Core-gebundenen geöffneten Projekts, auch bei
+Full machine. Planung ist interne Agentenarbeit. Historische Plan-Sessions und ihre
+Markdownformen bleiben lesbar, erhalten aber keine Ausführungsautorität im neuen
+Vertrag; alte Planqueueeinträge werden nicht automatisch umgesetzt.
+
 ## Umsetzung und Prüfung
 
 Die Recherche entscheidet über vorhandene Prüfungen, kurze Funktionskontrollen oder
@@ -13,14 +35,14 @@ benötigen einen Auftrag oder ein konkretes Komplexitäts-, Regressions- oder
 Sicherheitsrisiko mit kurzer Begründung. Ein ausdrücklicher Testverzicht hat Vorrang.
 Der ursprüngliche Auftrag bleibt in Recherche, Ausführung und Replan erhalten.
 
-Der Plancompiler führt Umsetzung (`Change`) und Prüfausführung (`Check`) getrennt.
+Der Plancompiler der Altbaseline führt Umsetzung (`Change`) und Prüfausführung (`Check`) getrennt.
 Eine Prüfabsicht autorisiert keine Testimplementierung. Ein Plan darf nur Änderungen
 enthalten; Greenfield bündelt diese, ohne Testsuite oder Testabhängigkeiten anzuhängen.
 Die historische interne Phase `DesignTests` enthält jetzt diese Verifikationsentscheidung.
 Die historische Markdownüberschrift `Test Plan` und das Research-Feld `tests` bleiben
 für die Lesbarkeit bestehender Pläne erhalten; ihre Liste darf leer sein.
 
-Ohne passenden Prüfcommand erhält eine Änderung eine typisierte Diff-Invariante.
+In der Altbaseline erhält eine Änderung ohne passenden Prüfcommand eine typisierte Diff-Invariante.
 Ein eigenständiger Prüfschritt ohne ausführbaren Command bleibt offen und benötigt
 eine ehrliche neue Planung. Der Core erzeugt dafür keine Testdateien. Die feste
 Python-AST-Prüfung liest höchstens 16 belegte Python-Dateien mit `-I -B`, ohne ein
@@ -32,6 +54,19 @@ passende operationale Evidence. Eine reine Änderungsaufgabe kann mit dieser
 ausgewiesenen Grenze enden; eine geforderte Laufzeitprüfung wird dadurch nicht erfüllt.
 Die Regel zur Testerstellung ist eine semantische Auftragsregel. Sie ist keine
 Dateinamensperre, die jeden möglichen Testinhalt in einem Modellpatch erkennen kann.
+
+Neue Verträge ordnen jedem Ergebnis passende aktuelle Nachweise zu. Ein erster
+entdeckter Command oder ein nicht leerer Diff ersetzt keine verlangte Laufzeitprüfung.
+Fehlt ein geeignetes produktives Prüfrezept, bleibt der Nachweis offen; externe
+Eval-Orakel schließen ihn nicht. Eine ausdrücklich begrenzte manuelle Abnahme ist
+revisions-/snapshotgebundene UserConfirmationEvidence und keine Policyfreigabe.
+
+Für vorhandene Dateien liefert das Modell nur einen gebundenen Fensteralias und
+Ersatztext. Der Core erhält die tatsächlich gelieferten Ausgangsbytes, den vollständigen
+Dateihash, BOM/Encoding und alle Bytes außerhalb des Fensters und erzeugt daraus den
+bestehenden vollständigen PatchUpdate. Vorschau, Fingerprint, Policy, Lease,
+Live-Revalidierung, Publish und Unknown-Recovery bleiben dieselbe Grenze; es gibt
+keinen unscharfen Ersatz oder automatische Konfliktübernahme.
 
 ## Einstellungen und Zulassung
 
@@ -45,7 +80,8 @@ Repositorytexte haben keinen Settings-Command.
 Der Schalter bleibt außerhalb des austauschbaren Eingabe-/Freigabebereichs sichtbar.
 Appweite Events synchronisieren Ansichten; ältere Events werden verworfen. Bei einem
 CAS-Konflikt wird der aktuelle Stand geladen. Die Auswahl aktiviert den Modus sofort.
-Ask- und Plan-Chats erhalten dadurch keine ausführbaren Werkzeuge.
+Ask und historische Plan-Läufe erhalten dadurch keine ausführbaren Werkzeuge;
+die neuen Chat-/Ask-Capabilities werden durch den Berechtigungsmodus nicht erweitert.
 
 | Aktion | Ask permissions | Full machine |
 | --- | --- | --- |
@@ -172,7 +208,7 @@ Pack als unvollständig markiert. Dieselbe Fixture mit 32K liefert den aktuellen
 Quelltext. Die 8K-/16K-Fixtures mit Schema im Formatfeld behalten aktuelle Originale.
 Output-/Sicherheitsreserven und Tokenzählstrategie werden dafür nicht verkleinert.
 
-Die produktive SourceGuided-Ausführung verwendet kleine Phasenverträge statt dieses
+Die bis P11 produktiv ausgewählte SourceGuided-Altbaseline verwendet kleine Phasenverträge statt dieses
 vollständigen Wire-Schemas. ContextCompilerPolicyVersion V10 reserviert deshalb den
 größten möglichen tatsächlichen Phasenvertrag einschließlich Formatfeldschema und
 Schemawiederholung. Die Generation ist auch an Mutation-Folgekontexte und Digest gebunden;

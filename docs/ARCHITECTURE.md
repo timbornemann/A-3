@@ -1,7 +1,24 @@
 # A^3 Systemarchitektur
 
 Status: verbindliche Baseline  
-Stand: 2026-08-06
+Stand: 2026-11-06
+
+## Geltung und Übergang nach ADR-0119
+
+[ADR-0119](adrs/0119-kleinschrittiger-agentenkern-fuer-lokale-modelle.md) und
+[Kleiner Agentenkern](SMALL_LOCAL_MODEL_AGENT_CORE.md) sind die angenommenen
+Zielverträge für neue Modell-, Arbeits- und Gesprächsverträge. Die nachfolgend
+beschriebenen Implementierungen und historischen Schemafassungen bleiben bis P11
+von [Plan 22](plans/22-SMALL-LOCAL-MODEL-AGENT-CORE.md) die ausgewählte Altbaseline.
+P2 bis P10 verwenden ausschließlich Kandidaten-Testkomposition und isolierte
+Datenbestände. Nach [ADR-0119](adrs/0119-kleinschrittiger-agentenkern-fuer-lokale-modelle.md) entfällt die Übernahme alter Entwicklungsdaten.
+Erst P11 schaltet den einen Produktionspfad mit frisch initialisierten A^3-Daten um;
+eine zweite produktive Engine oder ein Flag für den unvollständigen Kern ist ausgeschlossen.
+
+Die Teilablösung betrifft das öffentliche Modustripel Ask/Plan/Agent, obligatorische Recherchehandoffs,
+Markdownplaneingänge, starre Read-Übergänge und die SourceGuided-Auswahlkaskade.
+Modularer Monolith, Schichten, sichere Adapter, Goal/Ledger/Journal, Schedulerbesitz,
+Mutationslease, Policy, Verification und Unknown-Recovery bleiben verbindlich.
 
 ## Architekturziele
 
@@ -167,7 +184,7 @@ HTTP-Body-Stream bereitstellt. Redirects und Umgebungsproxies sind für diese Cl
 3. Rust kanonisiert den ausgewählten Ordner. Ist er bereits ein Git-Worktree, ein Unterordner eines anderen Worktrees oder nicht leer, schlägt der Command fail-closed fehl.
 4. Isoliertes in-process `gix` erzeugt ein Worktree-Repository mit Unborn-HEAD `refs/heads/main`, ohne Commit, Remote oder Scaffold.
 5. Danach folgen Inspektion, Katalog und Aktivierung dem Öffnen-Pfad.
-6. Ein anschließend veröffentlichter Index ohne Dateien ist eine Core-Bestandsaufnahme: Plan und Agent schließen Q1 ohne Originale ab und gehen zum Entwurf über. Siehe [ADR-0111](adrs/0111-leerer-index-bestandsaufnahme.md).
+6. Ein anschließend veröffentlichter Index ohne Dateien ist eine Core-Bestandsaufnahme: Die Altbaseline lässt Plan und Agent Q1 ohne Originale abschließen und zum Entwurf übergehen. Neue Agentenverträge benötigen ebenfalls keine erfundenen Originale oder Pflichtrecherche für ein leeres Repository. Siehe [ADR-0111](adrs/0111-leerer-index-bestandsaufnahme.md).
 
 ### Projekt öffnen
 
@@ -550,7 +567,34 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
 5. Scheitert die Katalogtransaktion nach der Index-Deaktivierung, reaktiviert der Composition-Root
    den vorherigen Worktree und gibt nur einen stabilen, redigierten Fehler zurück.
 
-### Agentenlauf
+### Angenommener Zielablauf nach ADR-0119
+
+Chat ist ein begrenzter besessener Modelljob ohne Projektbindung, künstlichen Task
+oder Snapshot und ohne Coding-JSON-Probe. Er erhält keine Index-, Datei-, Prozess-,
+Netzwerk- oder Mutationswerkzeuge. Allgemeine Gesprächsdaten liegen getrennt
+von Katalog und worktree-lokalen Knowledge-Daten unter geprüftem AppData, mit dem
+bestehenden libSQL-Adapter. Ask liest ausschließlich das Core-gebundene geöffnete
+Projekt; Full machine erweitert diese Capability nicht. Agent benötigt einen
+dauerhaften Projektauftrag und verwendet denselben endlichen mutierenden Controller.
+Planung ist darin eine sichtbare Tätigkeit. Alte Entwicklungs-Plan-Sessions müssen
+im neuen Produkt nicht lesbar bleiben; ihre Aufgaben, Queues und Freigaben werden nicht übernommen.
+
+Im Agentenlauf bearbeitet ein Modellaufruf genau einen kleinen Core-Phasenauftrag. Der vollständige
+Originalauftrag bleibt mit Bereichsreferenzen im Goal-Store; die aktive Sicht enthält
+Teilziel, Kriterien, alle möglicherweise anwendbaren Constraints, relevante Fehler
+und eine begrenzte globale Abdeckungsprojektion. Der Core liefert aktuelle Quellen,
+bindet IDs und kompiliert Fensteralias plus Ersatztext zu einem vollständigen sicheren
+PatchUpdate. Die vorhandene Werkzeuggrenze bleibt unverändert.
+
+Nach passender aktueller Verifikation führen offene globale Kriterien im selben Run
+von Verify nach Plan. Ledger-/Journal-CAS hält den ausstehenden Horizont und den
+Verbrauch dauerhaft; weder neuer Run noch Budgetreset entstehen. Erst vollständige
+globale Abdeckung erlaubt Acceptance. Fachliche Replans müssen Ergebnisgrenzen oder
+Evidenzpflichten wirklich ändern und sämtliche ursprünglichen Kriterien erhalten.
+Modusauswahl und neue Nachrichten übernehmen keinen laufenden Besitzer; FIFO,
+Revisionen, Pause, Cancel und Recovery bleiben Core-erzwungen.
+
+### Agentenlauf der bis P11 ausgewählten Altbaseline
 
 Der Einstieg in einen Agentenlauf erfolgt gemäß ADR-0033 über eine projektlokale Conversation-
 Session. Diese Session gruppiert User Messages, Planrevisionen, sichere Aktivitätszusammenfassungen
@@ -600,7 +644,7 @@ Recherchebudget oder fachliche Autorität.
    behandelt. Der Desktopstandard `SourceGuided` wählt aus aktuellen Originalen zunächst nur
    Änderung, geplante Verifikation oder fehlende Evidence, danach den geschlossenen Aktionsarm und
    schließlich dessen variable Argumente. Der Core bindet alle bekannten Anker und dekodiert die
-   zusammengesetzte V5-Aktion erneut unabhängig.
+   vollständig zusammengesetzte Aktion erneut unabhängig.
 6. Jede typisierte Action durchläuft genau einmal den zentralen `EvaluateActionPolicy`-Use-Case.
    Aktionsklasse und Risiko werden aus der Action abgeleitet; die feste Systempolicy wird nur durch
    restriktivere Workspace-Regeln überlagert. Ergebnis ist eine begründete `PolicyDecision` mit
@@ -739,7 +783,7 @@ vom Composition Root injizierten `WorktreeMutationCoordinator`-Lease. Damit kann
 controllerweit nur eine Patch- oder Process-Mutation gleichzeitig laufen, ohne einen globalen
 Singleton oder einen Mutex-Guard über asynchrone Adapteraufrufe zu halten.
 
-Der Desktop-Composition-Root erzeugt diese V5-Aktion mit `SourceGuided`: SourceWork, geschlossene
+Der Desktop-Composition-Root der Altbaseline erzeugt die ausführbare AgentAction mit `SourceGuided`: SourceWork, geschlossene
 Aktionswahl und armspezifische Argumente sind einzeln nicht ausführbar. Bekannte Controlleranker
 werden vom Core ergänzt; Add/Update und erwartete Hashes werden nur gegen dieselbe aktuelle
 Indexrevision normalisiert. Erst die vollständig zusammengesetzte Aktion durchläuft erneut den
@@ -917,7 +961,7 @@ zusätzlich Text oder strukturierte Semantik.
 
 Der gemeinsame Recherchecontroller ist ein Application-Use-Case hinter Ports. Desktop verdrahtet
 Modell, Index, sichere Reader und V31-Persistenz, während Domain weder Tauri noch libSQL kennt.
-Ask und Plan führen ausschließlich gebundene Reads aus. Die Agent-Vorbereitung darf einen
+Ask und historisches Plan führen ausschließlich gebundene Reads aus. Die Agent-Vorbereitung der Altbaseline darf einen
 `ResearchHandoff` liefern, ersetzt aber niemals den ADR-0010-Controller: Im eigentlichen Agent-Run
 wird weiterhin pro Controllerturn höchstens eine typisierte Aktion geprüft und ausgeführt.
 
@@ -928,7 +972,7 @@ keine Berechtigung. Fünf zusätzliche Analyseaktionen bleiben aktuelle, begrenz
 Working-Changes-Adapter liest nur lokale Git-Metadaten mit Core-eigenem argv; Nutzertext kann weder
 Pfad noch Prozess bestimmen.
 
-Für einen mutierenden Command verlangt das Core-Profil jeden bestätigten, eigenständig änderbaren
+Für einen mutierenden Command verlangt das Core-Profil der Altbaseline jeden bestätigten, eigenständig änderbaren
 Fund als eigenen Top-Level-Punkt in `Implementation Changes`. Der Desktop-Materializer bildet
 diese begrenzten Punkte auf eine sequenzielle Ledger-Kette mit eindeutigen Step- und
 Verification-Spezifikationen ab. Ein Application-Use-Case startet nach erfolgreicher

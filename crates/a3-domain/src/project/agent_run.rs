@@ -52,7 +52,12 @@ impl AgentControllerState {
             ),
             Self::Verify => matches!(
                 next,
-                Self::Execute | Self::Replan | Self::Done | Self::Failed | Self::Cancelled
+                Self::Plan
+                    | Self::Execute
+                    | Self::Replan
+                    | Self::Done
+                    | Self::Failed
+                    | Self::Cancelled
             ),
             Self::Replan => matches!(next, Self::Localize | Self::Failed | Self::Cancelled),
             Self::AwaitApproval => {

@@ -1,8 +1,8 @@
 # IPC-Protokoll
 
-Status: verbindliche Baseline
+Status: angenommener Zielvertrag und getrennt dokumentierte implementierte Altbaseline
 
-Stand: 2026-08-29
+Stand: 2026-11-06
 
 ## Zweck und Grenze
 
@@ -13,6 +13,45 @@ besitzt keine Abhängigkeit auf Domain, Application, Tauri oder Adapter.
 Domain- und Protocol-Typen werden im Desktop-Composition-Root explizit gemappt. Ein Protocol-DTO darf
 niemals als Domänenobjekt verwendet werden. Die DTOs werden mit Serde als JSON gebunden; Feldnamen am
 WebView-Rand verwenden `camelCase`. Eingaben lehnen unbekannte Felder ab.
+
+## Angenommene Modus- und Scopegrenze nach ADR-0119
+
+[ADR-0119](adrs/0119-kleinschrittiger-agentenkern-fuer-lokale-modelle.md) und der
+[Zielvertrag](SMALL_LOCAL_MODEL_AGENT_CORE.md) legen für neue Verträge drei öffentliche
+Modi fest: Chat, Ask und Agent. Chat besitzt globalen Gesprächsscope ohne Projektanker;
+Ask und Agent sind im Core an ein geöffnetes Projekt gebunden. Ungültige Kombinationen aus
+Modus und Scope dürfen an der Grenze nicht darstellbar sein. Die WebView darf weder einen
+Worktree erfinden noch globale Chatnachrichten durch einen UI-Moduswechsel zu Projektwissen
+oder ausführbaren Aufgaben erklären.
+
+Chat erhält keine Projekt-, Datei-, Prozess-, Netzwerk- oder Mutationswerkzeuge, auch wenn
+ein Projekt geöffnet ist. Ask bleibt eine Projektlesefunktion ohne Mutation, freie Prozesse,
+Netzwerk oder Outside-Root-Zugriff. Full machine erweitert diese beiden Modi nicht.
+Agent verwendet den vorhandenen endlichen Controller und die zentrale Policygrenze;
+Planung ist ein interner sichtbarer Arbeitsschritt. Öffentliche Projektionen zeigen nur
+aktuelle Tätigkeit, benötigte Freigaben, Quellen-/Verifikationslage und Ergebnis, keine
+internen Phasenprompts oder Chain-of-Thought.
+
+Der Core bindet Nachrichten und Status an den aktuellen Gesprächs-/Projektscope und monotone
+UI-Generationen. Projekt-/Scopewechsel und verspätete Events dürfen keine fremde Antwort
+oder Ausführungsautorität übernehmen. Gewählte Folgemodi betreffen die nächste unabhängige
+Nachricht; FIFO, begrenzte dauerhafte Queue, Jobbesitz und Cancellation bleiben erhalten.
+Originalauftrag, strukturierter Planungshorizont, Kriterien, globale Abdeckung und
+Verifikationsstatus stammen aus Goal/Ledger/Journal; die WebView ist weiterhin keine
+Todo-, Evidence- oder Abschlussautorität.
+
+Dies definiert noch keine neuen Commandnamen, DTO-Felder oder Protokollversionen.
+Die folgenden konkreten V1-/V2-/Folgeverträge dokumentieren die implementierte Altbaseline,
+einschließlich Ask/Plan/Agent und historischer Planfreigaben. Neue inkompatible Grenzverträge
+werden mit ihrer Implementierung ausdrücklich versioniert und getestet. Nach
+[Plan 22](plans/22-SMALL-LOCAL-MODEL-AGENT-CORE.md) bleiben P2 bis P10 ausschließlich
+Kandidaten-Testkomposition; sie registrieren kein zusätzliches produktives Routing und kein
+Feature Flag. Erst P11 schaltet die geprüfte Implementierung mit frisch initialisierten
+Daten um. Nach [ADR-0119](adrs/0119-kleinschrittiger-agentenkern-fuer-lokale-modelle.md) sind alte Entwicklungs-Sessions und
+Freigaben weder zu importieren noch im neuen Produkt lesbar zu halten. Alte Ausführungsanker
+werden nicht übernommen; Decoderkompatibilität erlaubt keinen Start des alten Executors.
+
+## Implementierte IPC-Verträge der Altbaseline
 
 ## Versionierung
 
@@ -511,8 +550,10 @@ unterscheidet `noProject`, `taskNotFound`, `ledgerUnavailable`, `goalRevisionMis
 optionale positive `inspectionRevision`, die exakte bereits secret-geprüfte E3-Patchprojektion und
 content-freie abgeschlossene Prozesszeilen. Jede Patchdatei trägt verlustfreies `pathHex`, eine
 getrennte kontrollzeichenfreie Anzeige, Operation, vollständigen Hash und Bytezahl, Encoding,
-Line-Endings, Prefix-Trunkierung, verlässliche Provenienz und die vom Core berechneten gemeinsamen
-Hunkzeilen für Unified und Side-by-side. Die WebView berechnet keine Diffsemantik. Prozesszeilen
+Line-Endings, Trunkierung des E3-Ausschnitts, verlässliche Provenienz und die vom Core berechneten
+gemeinsamen Hunkzeilen für Unified und Side-by-side. Der isolierte Plan-22-Kandidat liefert
+absolute Hunkkoordinaten für Bereichsedits nach [ADR-0120](adrs/0120-positionsgebundene-patchvorschau.md).
+Die WebView berechnet keine Diffsemantik. Prozesszeilen
 tragen Test-, Build-, Diagnostic-, Lint-, Format- oder Command-Kategorie, Termination, Dauer sowie
 Digest, beobachtete/retained Bytes, Limit, Redaction und `sourceTruncated`, aber keinen Logtext.
 

@@ -143,6 +143,12 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 
 | [0117](0117-auftragsbezogene-tests-und-verifikation.md) | Auftragsbezogene Testerstellung und Verifikation |
 | [0118](0118-appweite-agent-berechtigungsmodi.md) | Appweite Agent-Berechtigungsmodi |
+| [0119](0119-kleinschrittiger-agentenkern-fuer-lokale-modelle.md) | Kleinschrittiger Agentenkern für lokale Modelle (Accepted) |
+| [0120](0120-positionsgebundene-patchvorschau.md) | Positionsgebundene Patchvorschau für Editfenster (Accepted) |
+| [0121](0121-revisionsgebundener-python-ganzzahlbeleg.md) | Revisionsgebundener Quellbeleg für Python-Ganzzahlfunktionen (Accepted) |
+| [0122](0122-besessener-windows-job-fuer-loopback-pruefungen.md) | Besessener Windows-Job für Loopback-Prüfungen (Accepted) |
+| [0123](0123-exklusive-loopback-bindung-fuer-startfehler.md) | Exklusive Loopback-Bindung für Startfehler (Accepted) |
+| [0124](0124-syntaktische-elternbindung-bei-bereichsedits.md) | Syntaktische Elternbindung bei Bereichsedits (Accepted) |
 
 ## Neue ADRs
 

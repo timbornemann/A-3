@@ -8,12 +8,16 @@ mod catalog;
 mod command_allowlist_repository;
 mod deep_map_journal_repository;
 mod deep_map_repository;
+mod edit_no_change_repository;
+mod edit_phase_reservation_repository;
 mod exact_search_projection;
 mod exact_search_repository;
 mod function_flow_codec;
 mod function_flow_repository;
 mod goal_contract_repository;
 mod graph_traversal_repository;
+mod http_context_intent_repository;
+mod http_correction_plan_repository;
 mod index_codec;
 mod index_invalidation_repository;
 mod index_publication;
@@ -24,6 +28,7 @@ mod layout;
 mod lexical_search_projection;
 mod lexical_search_repository;
 mod local_store;
+mod loopback_http_codec;
 mod migration;
 mod module_card_detail_repository;
 mod module_card_evidence_repository;
@@ -34,16 +39,20 @@ mod module_projection_codec;
 mod module_remap_queue_repository;
 mod module_runtime_repository;
 mod module_tree_repository;
+#[cfg(test)]
+mod plan22_goal_contract_tests;
 mod policy_repository;
 mod project_catalog;
 mod project_layout;
 mod project_map_atlas_insight_repository;
 mod project_map_scene_repository;
 mod project_map_search_repository;
+mod python_translation_codec;
 mod repository_tree_repository;
 mod run_journal_repository;
 mod semantic_embedding_repository;
 mod settings_repository;
+mod source_read_repository;
 mod task_ledger_repository;
 mod task_lens_claim_repository;
 mod task_lens_workspace_repository;
@@ -65,6 +74,25 @@ pub(crate) fn run_native_libsql_test<F>(future: F) -> Result<(), Box<dyn std::er
 where
     F: std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
 {
+    run_native_libsql_test_with_mode(future, false)
+}
+
+#[cfg(test)]
+pub(crate) fn run_native_libsql_live_test<F>(future: F) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
+{
+    run_native_libsql_test_with_mode(future, true)
+}
+
+#[cfg(test)]
+fn run_native_libsql_test_with_mode<F>(
+    future: F,
+    #[cfg_attr(not(windows), allow(unused_variables))] live: bool,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
+{
     let _guard = NATIVE_LIBSQL_TEST_LOCK.lock().map_err(|_| {
         Box::<dyn std::error::Error>::from(std::io::Error::other(
             "native libSQL unit-test lock was poisoned",
@@ -83,11 +111,17 @@ where
         let marker = native_libsql_success_marker(test_name);
         const MAX_NATIVE_ATTEMPTS: u8 = 3;
         const STATUS_ACCESS_VIOLATION: i32 = 0xC000_0005_u32 as i32;
-        for attempt in 1..=MAX_NATIVE_ATTEMPTS {
+        let max_attempts = if live { 1 } else { MAX_NATIVE_ATTEMPTS };
+        for attempt in 1..=max_attempts {
             remove_native_libsql_success_marker(&marker)?;
-            let status = std::process::Command::new(std::env::current_exe()?)
+            let mut child = std::process::Command::new(std::env::current_exe()?);
+            if live {
+                child.arg("--ignored");
+            }
+            let status = child
                 .arg(test_name)
                 .arg("--exact")
+                .arg("--nocapture")
                 .arg("--test-threads=1")
                 .env("A3_NATIVE_LIBSQL_UNIT_TEST", test_name)
                 .env("A3_NATIVE_LIBSQL_SUCCESS_MARKER", &marker)
@@ -97,7 +131,7 @@ where
             if completed {
                 return Ok(());
             }
-            if status.code() == Some(STATUS_ACCESS_VIOLATION) && attempt < MAX_NATIVE_ATTEMPTS {
+            if status.code() == Some(STATUS_ACCESS_VIOLATION) && attempt < max_attempts {
                 continue;
             }
             return Err(std::io::Error::other(format!(
@@ -130,20 +164,31 @@ where
 
 #[cfg(all(test, windows))]
 fn native_libsql_success_marker(test_name: &str) -> std::path::PathBuf {
-    let safe_name = test_name
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
+    let identity = blake3::hash(test_name.as_bytes()).to_hex();
     std::env::temp_dir().join(format!(
-        "a3-native-libsql-parent-{}-{safe_name}.complete",
+        "a3-native-libsql-parent-{}-{identity}.complete",
         std::process::id()
     ))
+}
+
+#[cfg(all(test, windows))]
+#[test]
+fn native_marker_accepts_deep_harness_names_without_collisions()
+-> Result<(), Box<dyn std::error::Error>> {
+    let prefix = "nested_contract_module::".repeat(32);
+    let first = native_libsql_success_marker(&format!("{prefix}first"));
+    let second = native_libsql_success_marker(&format!("{prefix}second"));
+    assert_ne!(first, second);
+    assert_eq!(first.parent(), Some(std::env::temp_dir().as_path()));
+    for marker in [first, second] {
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&marker)?;
+        drop(file);
+        std::fs::remove_file(marker)?;
+    }
+    Ok(())
 }
 
 #[cfg(all(test, windows))]

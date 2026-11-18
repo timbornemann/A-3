@@ -25,6 +25,7 @@ Diese Pläne zerlegen A^3 in überprüfbare vertikale Arbeitspakete. Sie sind f�
 19. [Kompakter, frei lesbarer Agentenverlauf](20-AGENT-CONVERSATION-INTERACTION.md)
 
 20. [Auftragsbezogene Umsetzung und Berechtigungsmodi](21-TASK-SCOPE-AND-PERMISSIONS.md)
+21. [Kleiner Agentenkern für zuverlässige lokale Modelle](22-SMALL-LOCAL-MODEL-AGENT-CORE.md) — Umsetzung begonnen mit P0, ADR-0119 angenommen
 
 ## Ausführungsregeln für Codex
 

@@ -18,6 +18,7 @@ mod semantic;
 mod settings;
 mod task_ledger;
 mod task_lens_workspace;
+mod task_step_criterion_roles;
 mod verification;
 
 use a3_application::{
@@ -289,6 +290,16 @@ pub enum KnowledgeStoreContractGroup {
     ReconciliationRepositoryMove,
     /// Explicitly separate opening of a remote-matched repository.
     ReconciliationSeparateOpen,
+}
+
+/// Runs the additional Addresses/Proves persistence contract for adapters selecting
+/// the new version-bound data store. Existing baseline groups remain unchanged.
+pub async fn verify_task_step_criterion_roles_contract<F>(factory: &F) -> ContractResult<()>
+where
+    F: KnowledgeStoreContractFactory,
+{
+    let workspace = fixture::ContractWorkspace::new()?;
+    task_step_criterion_roles::verify(factory, &workspace).await
 }
 
 /// Runs one shared group in a fresh contract-owned workspace.

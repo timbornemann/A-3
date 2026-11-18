@@ -3,12 +3,13 @@ use crate::secure_file::{SecureFileReadError, read_verified_text};
 use crate::{PathEntryKind, PathPolicy};
 use a3_application::{
     AuthorizedPatchAction, PatchApplyFailure, PatchApplyFuture, PatchConflictKind,
-    PatchPreviewFailure, PatchPreviewFuture, WorkspacePatchControl, WorkspacePatchTool,
+    PatchPreviewFailure, PatchPreviewFuture, PatchUpdateBaseFuture, WorkspacePatchControl,
+    WorkspacePatchTool,
 };
 use a3_domain::{
     FileRevision, PatchAction, PatchChange, PatchChangeSet, PatchContentPreview, PatchFileContent,
-    PatchOperation, PatchPreview, PatchPreviewEntry, PolicyDecisionId, Progress, ProjectIdentity,
-    PublishedIndex, RepositoryPath, WorktreeId,
+    PatchOperation, PatchPreview, PatchPreviewEntry, PatchPreviewError, PolicyDecisionId, Progress,
+    ProjectIdentity, PublishedIndex, RepositoryPath, WorktreeId,
 };
 use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions, Permissions};
@@ -20,10 +21,18 @@ const MAX_CONTENT_PREVIEW_BYTES: usize = 16 * 1_024;
 const MAX_TOTAL_PREVIEW_BYTES: usize = 64 * 1_024;
 const TEMPORARY_NAME_ATTEMPTS: u8 = 32;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum PreviewSelection {
+    #[default]
+    Prefix,
+    ChangeWindow,
+}
+
 /// Safe local full-file patch adapter with one in-process mutation lease per worktree.
 #[derive(Debug, Default)]
 pub struct WorkspacePatchAdapter {
     active_mutations: Mutex<BTreeSet<WorktreeId>>,
+    preview_selection: PreviewSelection,
 }
 
 impl WorkspacePatchAdapter {
@@ -32,6 +41,17 @@ impl WorkspacePatchAdapter {
     pub const fn new() -> Self {
         Self {
             active_mutations: Mutex::new(BTreeSet::new()),
+            preview_selection: PreviewSelection::Prefix,
+        }
+    }
+
+    /// Selects exact changed-line excerpts for isolated candidate Update previews.
+    /// The same adapter still applies the complete authorized PatchAction.
+    #[must_use]
+    pub const fn with_change_window_preview() -> Self {
+        Self {
+            active_mutations: Mutex::new(BTreeSet::new()),
+            preview_selection: PreviewSelection::ChangeWindow,
         }
     }
 
@@ -46,7 +66,7 @@ impl WorkspacePatchAdapter {
             .report_progress(Progress::Indeterminate)
             .map_err(|_| PatchPreviewFailure::ProgressUnavailable)?;
         let live = preflight(project, published, action, control).map_err(preview_failure)?;
-        let entries = build_preview_entries(action, &live)?;
+        let entries = build_preview_entries(action, &live, self.preview_selection)?;
         let preview =
             PatchPreview::new(action, entries).map_err(|_| PatchPreviewFailure::InvalidResult)?;
         let total = u64::try_from(action.operations().len())
@@ -79,27 +99,19 @@ impl WorkspacePatchAdapter {
         let first_live = preflight(project, published, &action, control).map_err(apply_failure)?;
         let root = project.worktree().root().as_path();
         let mut staged = StagedFiles::create(root, &action, &first_live, control)?;
+        drop(first_live);
 
-        // Staging can take time. Revalidate every expected hash and absent target immediately
-        // before the first visible mutation instead of trusting the preview or first preflight.
-        let live = preflight(project, published, &action, control).map_err(apply_failure)?;
-        if control.is_cancelled() {
-            return Err(PatchApplyFailure::Cancelled);
-        }
-
+        // Staging can take time. Recheck the whole batch before its first visible effect.
+        drop(preflight(project, published, &action, control).map_err(apply_failure)?);
+        let policy = PathPolicy::from_selected_root(root).map_err(|_| PatchApplyFailure::Denied)?;
+        let revisions = published.publication().graph().files();
         let mut changes = Vec::with_capacity(action.operations().len());
-        for (index, (operation, live_operation)) in
-            action.operations().iter().zip(&live).enumerate()
-        {
-            if control.is_cancelled() {
-                return Err(changed_or(
-                    &action,
-                    policy_decision_id,
-                    changes,
-                    PatchApplyFailure::Cancelled,
-                ));
-            }
-            let mutation = apply_operation(root, index, operation, live_operation, &mut staged);
+        for (index, operation) in action.operations().iter().enumerate() {
+            // A progress callback can run between operations. Confirm the current operation
+            // against the originally authorized revision and resolve its paths again.
+            let mutation = preflight_operation(root, &policy, revisions, operation, control)
+                .map_err(apply_failure)
+                .and_then(|live| apply_operation(root, index, operation, &live, &mut staged));
             let change = match mutation {
                 Ok(change) => change,
                 Err(failure) => {
@@ -155,6 +167,29 @@ impl WorkspacePatchAdapter {
 }
 
 impl WorkspacePatchTool for WorkspacePatchAdapter {
+    fn read_update_base<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        published: &'a PublishedIndex,
+        expected: &'a FileRevision,
+        control: &'a dyn WorkspacePatchControl,
+    ) -> PatchUpdateBaseFuture<'a> {
+        Box::pin(async move {
+            let result = (|| {
+                if control.is_cancelled() {
+                    return Err(PreflightFailure::Cancelled);
+                }
+                let root = project.worktree().root().as_path();
+                let policy =
+                    PathPolicy::from_selected_root(root).map_err(|_| PreflightFailure::Denied)?;
+                require_published_revision(published.publication().graph().files(), expected)?;
+                resolve_existing_file(root, &policy, expected.path())?;
+                read_before(root, expected, control)
+            })();
+            result.map_err(preview_failure)
+        })
+    }
+
     fn preview<'a>(
         &'a self,
         project: &'a ProjectIdentity,
@@ -227,55 +262,67 @@ fn preflight(
     let mut live = Vec::with_capacity(action.operations().len());
 
     for operation in action.operations() {
-        if control.is_cancelled() {
-            return Err(PreflightFailure::Cancelled);
-        }
-        let prepared = match operation {
-            PatchOperation::Add(add) => {
-                require_published_absence(revisions, add.path())?;
-                let target = resolve_absent_target(root, &policy, add.path())?;
-                LiveOperation {
-                    source: None,
-                    target: Some(target),
-                    before: None,
-                }
-            }
-            PatchOperation::Update(update) => {
-                require_published_revision(revisions, update.expected())?;
-                let source = resolve_existing_file(root, &policy, update.expected().path())?;
-                let before = read_before(root, update.expected(), control)?;
-                LiveOperation {
-                    source: Some(source.clone()),
-                    target: Some(source),
-                    before: Some(before),
-                }
-            }
-            PatchOperation::Move(movement) => {
-                require_published_revision(revisions, movement.expected())?;
-                require_published_absence(revisions, movement.destination())?;
-                let source = resolve_existing_file(root, &policy, movement.expected().path())?;
-                let target = resolve_absent_target(root, &policy, movement.destination())?;
-                let before = read_before(root, movement.expected(), control)?;
-                LiveOperation {
-                    source: Some(source),
-                    target: Some(target),
-                    before: Some(before),
-                }
-            }
-            PatchOperation::Delete(expected) => {
-                require_published_revision(revisions, expected)?;
-                let source = resolve_existing_file(root, &policy, expected.path())?;
-                let before = read_before(root, expected, control)?;
-                LiveOperation {
-                    source: Some(source),
-                    target: None,
-                    before: Some(before),
-                }
-            }
-        };
-        live.push(prepared);
+        live.push(preflight_operation(
+            root, &policy, revisions, operation, control,
+        )?);
     }
     Ok(live)
+}
+
+fn preflight_operation(
+    root: &Path,
+    policy: &PathPolicy,
+    revisions: &[FileRevision],
+    operation: &PatchOperation,
+    control: &dyn WorkspacePatchControl,
+) -> Result<LiveOperation, PreflightFailure> {
+    if control.is_cancelled() {
+        return Err(PreflightFailure::Cancelled);
+    }
+    let prepared = match operation {
+        PatchOperation::Add(add) => {
+            require_published_absence(revisions, add.path())?;
+            let target = resolve_absent_target(root, policy, add.path())?;
+            LiveOperation {
+                source: None,
+                target: Some(target),
+                before: None,
+            }
+        }
+        PatchOperation::Update(update) => {
+            require_published_revision(revisions, update.expected())?;
+            let source = resolve_existing_file(root, policy, update.expected().path())?;
+            let before = read_before(root, update.expected(), control)?;
+            LiveOperation {
+                source: Some(source.clone()),
+                target: Some(source),
+                before: Some(before),
+            }
+        }
+        PatchOperation::Move(movement) => {
+            require_published_revision(revisions, movement.expected())?;
+            require_published_absence(revisions, movement.destination())?;
+            let source = resolve_existing_file(root, policy, movement.expected().path())?;
+            let target = resolve_absent_target(root, policy, movement.destination())?;
+            let before = read_before(root, movement.expected(), control)?;
+            LiveOperation {
+                source: Some(source),
+                target: Some(target),
+                before: Some(before),
+            }
+        }
+        PatchOperation::Delete(expected) => {
+            require_published_revision(revisions, expected)?;
+            let source = resolve_existing_file(root, policy, expected.path())?;
+            let before = read_before(root, expected, control)?;
+            LiveOperation {
+                source: Some(source),
+                target: None,
+                before: Some(before),
+            }
+        }
+    };
+    Ok(prepared)
 }
 
 fn require_published_revision(
@@ -411,13 +458,50 @@ pub(crate) fn is_link_or_reparse(metadata: &fs::Metadata) -> bool {
 fn build_preview_entries(
     action: &PatchAction,
     live: &[LiveOperation],
+    selection: PreviewSelection,
 ) -> Result<Vec<PatchPreviewEntry>, PatchPreviewFailure> {
     let mut remaining = MAX_TOTAL_PREVIEW_BYTES;
+    // Reserve the complete changed lines before spending any bytes on prefix
+    // projections for other operations in the same canonical action.
+    let mut focused = if selection == PreviewSelection::ChangeWindow {
+        action
+            .operations()
+            .iter()
+            .zip(live)
+            .map(|(operation, live_operation)| {
+                let PatchOperation::Update(update) = operation else {
+                    return Ok(None);
+                };
+                let before = live_operation
+                    .before
+                    .as_ref()
+                    .ok_or(PatchPreviewFailure::InvalidResult)?;
+                let entry = PatchPreviewEntry::focused_update(update, before, remaining).map_err(
+                    |failure| match failure {
+                        PatchPreviewError::PreviewTooLarge => {
+                            PatchPreviewFailure::ChangeWindowTooLarge
+                        }
+                        PatchPreviewError::OperationMismatch => PatchPreviewFailure::InvalidResult,
+                    },
+                )?;
+                remaining = remaining
+                    .checked_sub(entry.retained_bytes())
+                    .ok_or(PatchPreviewFailure::ChangeWindowTooLarge)?;
+                Ok(Some(entry))
+            })
+            .collect::<Result<Vec<_>, PatchPreviewFailure>>()?
+    } else {
+        Vec::new()
+    };
     action
         .operations()
         .iter()
         .zip(live)
-        .map(|(operation, live_operation)| {
+        .enumerate()
+        .map(|(index, (operation, live_operation))| {
+            if let Some(entry) = focused.get_mut(index).and_then(Option::take) {
+                return Ok(entry);
+            }
             let before = live_operation
                 .before
                 .as_ref()

@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::process::Command;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = env::args().skip(1);
@@ -49,25 +49,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "spawn-child" => {
             let pid_file = arguments.next().ok_or("missing pid file")?;
             let executable = env::current_exe()?;
-            let _child = Command::new(executable).arg("child").arg(pid_file).spawn()?;
+            let child = Command::new(executable).arg("child").spawn()?;
+            write_pid(Path::new(&pid_file), child.id())?;
             loop {
                 thread::sleep(Duration::from_secs(1));
             }
         }
-        "child" => {
-            let pid_file = arguments.next().ok_or("missing pid file")?;
-            write_pid(Path::new(&pid_file))?;
+        "spawn-child-and-exit" => {
+            let pid_file = arguments.next().ok_or("missing child pid file")?;
+            let parent_pid_file = arguments.next().ok_or("missing parent pid file")?;
+            write_pid(Path::new(&parent_pid_file), std::process::id())?;
+            let mut child = Command::new(env::current_exe()?)
+                .arg("hold-inherited-pipes")
+                .arg(&pid_file)
+                .spawn()?;
+            let deadline = Instant::now() + Duration::from_secs(6);
             loop {
-                thread::sleep(Duration::from_secs(1));
+                if fs::read_to_string(&pid_file).ok()
+                    .and_then(|text| text.strip_suffix('\n')?.parse::<u32>().ok()) == Some(child.id())
+                {
+                    break;
+                }
+                if child.try_wait()?.is_some() || Instant::now() >= deadline {
+                    return Err("pipe-owning descendant did not become ready".into());
+                }
+                thread::sleep(Duration::from_millis(10));
             }
+            // Only exit after the descendant has actually flushed both pipe markers.
         }
+        "hold-inherited-pipes" => {
+            let pid_file = arguments.next().ok_or("missing child pid file")?;
+            let mut stdout = io::stdout().lock();
+            let mut stderr = io::stderr().lock();
+            stdout.write_all(b"pipe-held-stdout\n")?;
+            stderr.write_all(b"pipe-held-stderr\n")?;
+            stdout.flush()?;
+            stderr.flush()?;
+            write_pid(Path::new(&pid_file), std::process::id())?;
+            // Separate finite backstop, much later than the product deadline.
+            thread::sleep(Duration::from_secs(12));
+            drop(stderr);
+            drop(stdout);
+        }
+        "child" => loop {
+            thread::sleep(Duration::from_secs(1));
+        },
         _ => return Err("unknown fixture mode".into()),
     }
     Ok(())
 }
 
-fn write_pid(path: &Path) -> io::Result<()> {
+fn write_pid(path: &Path, pid: u32) -> io::Result<()> {
     let mut file = fs::File::create(path)?;
-    writeln!(file, "{}", std::process::id())?;
+    writeln!(file, "{pid}")?;
     file.sync_all()
 }

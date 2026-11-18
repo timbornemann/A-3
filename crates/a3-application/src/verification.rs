@@ -5,12 +5,12 @@ use crate::{
 };
 use a3_domain::{
     AcceptanceCriterionRequirement, AcceptanceCriterionVerification, AcceptanceVerificationReceipt,
-    AgentRunId, EvidenceFreshness, ProjectIdentity, PublishedIndex, StepVerification,
-    StepVerificationError, StepVerificationId, StepVerificationOutcome, TaskEvidenceId,
-    TaskLedgerTimestamp, TaskVerificationTextError, TestCaseSelector, VerificationEvidence,
-    VerificationEvidenceEvaluation, VerificationEvidenceFailure, VerificationFailureSummary,
-    VerificationMethod, VerificationScope, VerificationSpec, VerificationSpecId,
-    VerificationTarget,
+    AgentRunId, EvidenceFreshness, GoalOriginalCoverage, ProjectIdentity, PublishedIndex,
+    StepVerification, StepVerificationError, StepVerificationId, StepVerificationOutcome,
+    TaskEvidenceId, TaskLedgerTimestamp, TaskStepDefinition, TaskStepId, TaskVerificationTextError,
+    TestCaseSelector, VerificationEvidence, VerificationEvidenceEvaluation,
+    VerificationEvidenceFailure, VerificationFailureSummary, VerificationMethod, VerificationScope,
+    VerificationSpec, VerificationSpecId, VerificationTarget,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -78,6 +78,50 @@ impl EvaluateStepVerification {
         current: &PublishedIndex,
         verified_at: TaskLedgerTimestamp,
     ) -> Result<StepVerification, EvaluateStepVerificationError> {
+        if spec.method() == VerificationMethod::LoopbackHttp {
+            return Err(EvaluateStepVerificationError::EvidenceMismatch);
+        }
+        Self::evaluate(
+            verification_id,
+            spec,
+            run_id,
+            evidence,
+            current,
+            verified_at,
+        )
+    }
+
+    /// Derives the verdict with the owning step explicitly bound to composite HTTP evidence.
+    pub fn execute_for_step(
+        self,
+        verification_id: StepVerificationId,
+        step: &TaskStepDefinition,
+        run_id: AgentRunId,
+        evidence: &VerificationEvidence,
+        current: &PublishedIndex,
+        verified_at: TaskLedgerTimestamp,
+    ) -> Result<StepVerification, EvaluateStepVerificationError> {
+        if !evidence_matches_step(evidence, step.id()) {
+            return Err(EvaluateStepVerificationError::EvidenceMismatch);
+        }
+        Self::evaluate(
+            verification_id,
+            step.verification_spec(),
+            run_id,
+            evidence,
+            current,
+            verified_at,
+        )
+    }
+
+    fn evaluate(
+        verification_id: StepVerificationId,
+        spec: &VerificationSpec,
+        run_id: AgentRunId,
+        evidence: &VerificationEvidence,
+        current: &PublishedIndex,
+        verified_at: TaskLedgerTimestamp,
+    ) -> Result<StepVerification, EvaluateStepVerificationError> {
         if !spec.is_operational() {
             return Err(EvaluateStepVerificationError::LegacySpecification);
         }
@@ -108,6 +152,10 @@ impl EvaluateStepVerification {
         )
         .map_err(EvaluateStepVerificationError::InvalidVerification)
     }
+}
+
+pub(crate) fn evidence_matches_step(evidence: &VerificationEvidence, step_id: TaskStepId) -> bool {
+    !matches!(evidence, VerificationEvidence::LoopbackHttp(http) if http.context().step_id != step_id)
 }
 
 /// Typed verification evidence could not produce a valid Step Ledger result.
@@ -179,6 +227,12 @@ fn evidence_failure_message(failure: VerificationEvidenceFailure) -> &'static st
         VerificationEvidenceFailure::SelectedTestCaseFailed => {
             "a selected structured test case failed"
         }
+        VerificationEvidenceFailure::SourceProofMismatch => {
+            "the required current source proof is missing or does not match"
+        }
+        VerificationEvidenceFailure::LoopbackHttpMismatch => {
+            "the observed loopback recipe does not meet the required HTTP behavior"
+        }
         VerificationEvidenceFailure::IncompleteChangeSet => "the patch change set is incomplete",
         VerificationEvidenceFailure::DiffInvariantMismatch => {
             "actual changed paths violate the diff invariant"
@@ -208,6 +262,7 @@ fn verification_order_key(spec: &VerificationSpec) -> (u8, u8, usize, Verificati
         ),
         VerificationTarget::Diagnostic { scope, .. } => (scope_rank(*scope), 2, 0, spec.id()),
         VerificationTarget::Command { scope, .. } => (scope_rank(*scope), 3, 0, spec.id()),
+        VerificationTarget::LoopbackHttp(_) => (0, 4, 0, spec.id()),
         VerificationTarget::DeferredCommand(deferred) => (
             scope_rank(deferred.scope()),
             4,
@@ -235,6 +290,7 @@ const fn legacy_method_rank(method: VerificationMethod) -> u8 {
         VerificationMethod::Command => 3,
         VerificationMethod::UserConfirm => 4,
         VerificationMethod::DeferredCommand => 5,
+        VerificationMethod::LoopbackHttp => 6,
     }
 }
 
@@ -402,10 +458,13 @@ impl AcceptanceVerifier for DeterministicAcceptanceVerifier<'_> {
             if control.is_cancelled() {
                 return Err(AcceptanceVerifierFailure::Cancelled);
             }
+            if let Some(rejection) = original_acceptance_admission(request)? {
+                return Ok(AcceptanceVerifierOutcome::Rejected(rejection));
+            }
             let required = required_acceptance_evidence(request)?;
             let requested_ids = required
                 .iter()
-                .flat_map(|(_, steps)| steps.iter().map(|(_, _, evidence_id)| *evidence_id))
+                .flat_map(|(_, steps)| steps.iter().map(|(_, _, _, evidence_id)| *evidence_id))
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect::<Vec<_>>();
@@ -470,13 +529,23 @@ impl AcceptanceVerifier for DeterministicAcceptanceVerifier<'_> {
             let mut criteria = Vec::with_capacity(required.len());
             for (criterion_id, steps) in required {
                 let mut criterion_evidence = Vec::with_capacity(steps.len());
-                for (spec, expected_run_id, evidence_id) in steps {
+                for (spec, expected_step_id, expected_run_id, evidence_id) in steps {
                     let evidence = evidence_by_id
                         .get(&evidence_id)
                         .copied()
                         .ok_or(AcceptanceVerifierFailure::InvalidResult)?;
-                    if evidence.spec_id() != spec.id() || evidence.run_id() != expected_run_id {
+                    if evidence.spec_id() != spec.id()
+                        || evidence.run_id() != expected_run_id
+                        || !evidence_matches_step(evidence, expected_step_id)
+                    {
                         return Err(AcceptanceVerifierFailure::InvalidResult);
+                    }
+                    if request.goal_contract().original().is_some()
+                        && evidence.snapshot_id() != request.snapshot_id()
+                    {
+                        return Ok(AcceptanceVerifierOutcome::Rejected(
+                            AcceptanceRejection::StaleEvidence,
+                        ));
                     }
                     if VerificationEvidenceEvaluation::evaluate(spec, evidence)
                         != VerificationEvidenceEvaluation::Passed
@@ -512,9 +581,51 @@ impl AcceptanceVerifier for DeterministicAcceptanceVerifier<'_> {
     }
 }
 
+/// Admission of the new original-bound contract at the existing sole verifier entry.
+/// Clean legacy goals keep their previous path. This neither selects an executor
+/// nor migrates a schema; normal production CURRENT V42 still has only legacy goals.
+fn original_acceptance_admission(
+    request: &AcceptanceVerificationRequest,
+) -> Result<Option<AcceptanceRejection>, AcceptanceVerifierFailure> {
+    let goal = request.goal_contract();
+    goal.validate_original_binding()
+        .map_err(|_| AcceptanceVerifierFailure::InvalidResult)?;
+    if goal.original().is_none() {
+        return Ok(None);
+    }
+    let coverage = GoalOriginalCoverage::derive_from(goal)
+        .map_err(|_| AcceptanceVerifierFailure::InvalidResult)?;
+    if !coverage.is_complete() {
+        return Ok(Some(AcceptanceRejection::InsufficientEvidence));
+    }
+    for step in request
+        .task_ledger()
+        .steps()
+        .filter(|step| step.is_active_plan_step())
+    {
+        match crate::AdmitSourceTaskStep.execute(goal, step.definition()) {
+            Ok(()) => {}
+            Err(
+                crate::SourceTaskStepAdmissionFailure::ProofMismatch { .. }
+                | crate::SourceTaskStepAdmissionFailure::NonOperationalVerification,
+            ) => {
+                return Ok(Some(AcceptanceRejection::CriterionFailed));
+            }
+            Err(crate::SourceTaskStepAdmissionFailure::MissingCriterionMapping) => {
+                return Ok(Some(AcceptanceRejection::InsufficientEvidence));
+            }
+            Err(_) => return Err(AcceptanceVerifierFailure::InvalidResult),
+        }
+    }
+    // Structural coverage and admitted specs do not prove execution or semantics.
+    // The existing verifier must still check evidence, freshness and hypotheses.
+    Ok(None)
+}
+
+type RequiredStepEvidence<'a> = (&'a VerificationSpec, TaskStepId, AgentRunId, TaskEvidenceId);
 type RequiredAcceptanceEvidence<'a> = Vec<(
     a3_domain::AcceptanceCriterionId,
-    Vec<(&'a VerificationSpec, AgentRunId, TaskEvidenceId)>,
+    Vec<RequiredStepEvidence<'a>>,
 )>;
 
 fn required_acceptance_evidence(
@@ -527,7 +638,7 @@ fn required_acceptance_evidence(
         .iter()
         .filter(|criterion| criterion.requirement() == AcceptanceCriterionRequirement::Must)
         .map(|criterion| (criterion.id(), Vec::new()))
-        .collect::<BTreeMap<_, Vec<(&VerificationSpec, AgentRunId, TaskEvidenceId)>>>();
+        .collect::<BTreeMap<_, Vec<RequiredStepEvidence<'_>>>>();
     for step in request
         .task_ledger()
         .steps()
@@ -550,6 +661,7 @@ fn required_acceptance_evidence(
             }
             steps.push((
                 step.definition().verification_spec(),
+                step.definition().id(),
                 verification.run_id(),
                 verification.evidence_ids()[0],
             ));
@@ -600,6 +712,847 @@ mod tests {
         ToolRunId, VerificationDependencies, VerificationRequirement, VerificationRunId,
         WorktreeAnchorId, WorktreeId, WorktreeIdentity,
     };
+    use a3_domain::{
+        CriterionEvidenceRequirement, CriterionOrigin, DiagnosticCount, DiagnosticEvidence,
+        DiffEvidence, GoalConstraint, GoalOriginalRequest, MinimumTestCaseCount, NonGoal,
+        TestCaseEvidence, TestCaseName, TestCaseOutcome, UserDecision,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn loopback_http_verdict_requires_the_exact_step_even_with_matching_spec_and_run()
+    -> Result<(), Box<dyn Error>> {
+        use a3_domain::{
+            ContentHash, FileRevision, LoopbackExpectedBody, LoopbackHeaderChecks,
+            LoopbackHttpCheck, LoopbackHttpEvidence, LoopbackHttpEvidenceContext,
+            LoopbackHttpObservation, LoopbackHttpProcess, LoopbackHttpRecipe, LoopbackMethod,
+            LoopbackProbe, LoopbackProcessSettings, LoopbackStart, ProcessOutputLimit,
+            ProcessTimeout, RepositoryPath,
+        };
+        let path = RepositoryPath::try_from_bytes(b"server.py".to_vec())?;
+        let recipe = LoopbackHttpRecipe::new(
+            path.clone(),
+            LoopbackStart::Explicit,
+            std::num::NonZeroU16::new(18_765).ok_or("invalid fixture port")?,
+            vec![LoopbackHttpCheck::new(
+                LoopbackProbe::new(LoopbackMethod::Get, "/".to_owned())?,
+                200,
+                LoopbackExpectedBody::AnyBounded,
+                LoopbackHeaderChecks::default(),
+            )?],
+        )?;
+        let recipe_id = recipe.id();
+        let spec = VerificationSpec::loopback_http(
+            spec_id(151),
+            VerificationRequirement::try_from_string("Verify the owned HTTP service".to_owned())?,
+            recipe,
+        );
+        let snapshot = SnapshotId::from_bytes([152; 32]);
+        let run = AgentRunId::from_bytes([153; 32]);
+        let step = TaskStepDefinition::new(
+            TaskStepId::from_bytes([154; 32]),
+            None,
+            TaskStepOutcome::try_from_string("Verify the selected endpoint".to_owned())?,
+            TaskStepRationale::try_from_string("Observe the actual response".to_owned())?,
+            Vec::new(),
+            vec![ExpectedTaskEvidence::try_from_string(
+                "Owned HTTP response".to_owned(),
+            )?],
+            spec.clone(),
+        )?;
+        let evidence = VerificationEvidence::LoopbackHttp(LoopbackHttpEvidence::new(
+            LoopbackHttpEvidenceContext {
+                verification_run_id: VerificationRunId::from_bytes([155; 32]),
+                spec_id: spec.id(),
+                run_id: run,
+                tool_run_id: ToolRunId::from_bytes([156; 32]),
+                step_id: TaskStepId::from_bytes([157; 32]),
+                snapshot_id: snapshot,
+            },
+            recipe_id,
+            FileRevision::new(path, ContentHash::from_bytes([158; 32])),
+            LoopbackHttpProcess::new(
+                PolicyResourceId::from_bytes([159; 32]),
+                LoopbackProcessSettings {
+                    timeout: ProcessTimeout::from_millis(10_000)?,
+                    stdout_limit: ProcessOutputLimit::new(512)?,
+                    stderr_limit: ProcessOutputLimit::new(512)?,
+                    system_root: false,
+                },
+            ),
+            PolicyDecisionId::from_bytes([160; 32]),
+            vec![LoopbackHttpObservation::new(
+                PolicyDecisionId::from_bytes([161; 32]),
+                200,
+                ContentHash::from_bytes([162; 32]),
+                0,
+                LoopbackHeaderChecks::default(),
+            )?],
+        )?);
+        assert_eq!(
+            VerificationEvidenceEvaluation::evaluate(&spec, &evidence),
+            VerificationEvidenceEvaluation::Passed
+        );
+        let current = empty_index(snapshot)?;
+        let id = StepVerificationId::from_bytes([163; 32]);
+        let at = TaskLedgerTimestamp::from_unix_millis(5)?;
+        assert!(matches!(
+            EvaluateStepVerification.execute(id, &spec, run, &evidence, &current, at),
+            Err(EvaluateStepVerificationError::EvidenceMismatch)
+        ));
+        assert!(matches!(
+            EvaluateStepVerification.execute_for_step(id, &step, run, &evidence, &current, at),
+            Err(EvaluateStepVerificationError::EvidenceMismatch)
+        ));
+        Ok(())
+    }
+
+    #[derive(Clone, Copy)]
+    enum SourceCase {
+        Complete,
+        ProgressOnly,
+        Gap,
+        Constraint,
+        NonGoal,
+        Decision,
+        Orphan,
+        MissingRecipe,
+        Optional,
+    }
+
+    /// Controlled state fixture, not a model or real-process correctness claim.
+    fn original_fixture(
+        case: SourceCase,
+        spec: VerificationSpec,
+        cases: Vec<TestCaseEvidence>,
+        progress: Option<VerificationSpec>,
+    ) -> Result<(AcceptanceVerificationRequest, CountingVerificationStore), Box<dyn Error>> {
+        let task_id = TaskId::from_bytes([101; 32]);
+        let criterion_id = AcceptanceCriterionId::from_bytes([102; 32]);
+        let kind = if matches!(case, SourceCase::Optional) {
+            AcceptanceCriterionRequirement::Should
+        } else {
+            AcceptanceCriterionRequirement::Must
+        };
+        let plain = AcceptanceCriterion::with_requirement(
+            criterion_id,
+            AcceptanceCriterionStatement::try_from_string("the selected check passes".to_owned())?,
+            kind,
+        );
+        let draft = |criterion| -> Result<GoalContractDraft, Box<dyn Error>> {
+            Ok(GoalContractDraft::new(
+                GoalObjective::try_from_string(
+                    "preserve the complete original obligation".to_owned(),
+                )?,
+                vec![criterion],
+                if matches!(case, SourceCase::Constraint) {
+                    vec![GoalConstraint::try_from_string(
+                        "keep the protected notes unchanged".to_owned(),
+                    )?]
+                } else {
+                    Vec::new()
+                },
+                if matches!(case, SourceCase::NonGoal) {
+                    vec![NonGoal::try_from_string(
+                        "do not extend the feature scope".to_owned(),
+                    )?]
+                } else {
+                    Vec::new()
+                },
+                if matches!(case, SourceCase::Decision) {
+                    vec![UserDecision::try_from_string(
+                        "the user selected the existing interface".to_owned(),
+                    )?]
+                } else {
+                    Vec::new()
+                },
+                SuccessVerification::try_from_string("use current matching evidence".to_owned())?,
+            )?)
+        };
+        let at = GoalContractTimestamp::from_unix_millis(1)?;
+        let provisional = GoalContract::initial(task_id, draft(plain.clone())?, at);
+        let first = "The selected behavioral check must pass.\n";
+        let text = if matches!(case, SourceCase::Gap) {
+            format!("{first}A late global requirement must remain open.\n")
+        } else {
+            first.to_owned()
+        };
+        let original =
+            GoalOriginalRequest::try_from_bytes(provisional.reference(), text.into_bytes())?;
+        let end = if matches!(case, SourceCase::Gap) {
+            first.len()
+        } else {
+            original.as_bytes().len()
+        };
+        let proof = if matches!(case, SourceCase::MissingRecipe) {
+            CriterionEvidenceRequirement::RuntimeNeedsRecipe
+        } else {
+            CriterionEvidenceRequirement::ExistingTest {
+                command: DiscoveredCommandId::from_bytes([103; 32]),
+                selector: TestCaseSelector::All,
+                minimum_cases: MinimumTestCaseCount::new(1)?,
+                scope: VerificationScope::Targeted,
+                python_integer_translation: None,
+            }
+        };
+        let criterion = plain.with_origin(CriterionOrigin::new(original.range(0, end)?, proof));
+        let base = GoalContract::initial(task_id, draft(criterion)?, at);
+        let goal = if matches!(case, SourceCase::Orphan) {
+            base
+        } else {
+            base.with_original(original)?
+        };
+        let run_id = AgentRunId::from_bytes([104; 32]);
+        let snapshot = SnapshotId::from_bytes([105; 32]);
+        let index = empty_index(snapshot)?;
+        let publication = if matches!(case, SourceCase::ProgressOnly) {
+            let graph = LinkedGraph::new(
+                snapshot,
+                vec![a3_domain::FileRevision::new(
+                    a3_domain::RepositoryPath::try_from_bytes(b"scaffold.py".to_vec())?,
+                    a3_domain::ContentHash::from_bytes([115; 32]),
+                )],
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )?;
+            let policy = ModulePolicyVersion::v1();
+            let card = RepositoryCard::new(
+                snapshot,
+                policy,
+                Vec::new(),
+                Vec::new(),
+                ModuleSymbolSet::empty(),
+                1,
+                0,
+            )?;
+            IndexPublication::new(
+                graph,
+                index.publication().ranking().clone(),
+                Vec::new(),
+                ModuleProjection::new(snapshot, policy, Vec::new(), Vec::new(), card)?,
+            )?
+        } else {
+            index.publication().clone()
+        };
+        let current = PublishedIndex::new(
+            IndexRunRecord::new(
+                IndexRunId::from_bytes([106; 32]),
+                snapshot,
+                RankingPolicyVersion::v1(),
+                IndexRunSequence::new(2)?,
+                IndexRunStatus::Published,
+            ),
+            publication,
+        )?;
+        let command_id = match spec.target() {
+            VerificationTarget::Command { command_id, .. }
+            | VerificationTarget::Test { command_id, .. }
+            | VerificationTarget::Diagnostic { command_id, .. } => *command_id,
+            _ => DiscoveredCommandId::from_bytes([103; 32]),
+        };
+        let command = CommandEvidence::new(
+            CommandEvidenceContext::new(
+                VerificationRunId::from_bytes([107; 32]),
+                spec.id(),
+                run_id,
+                ToolRunId::from_bytes([108; 32]),
+                command_id,
+                snapshot,
+            ),
+            VerificationDependencies::new(Vec::new())?,
+            &successful_process()?,
+        );
+        let evidence = match spec.target() {
+            VerificationTarget::Diagnostic { .. } => VerificationEvidence::Diagnostic(
+                DiagnosticEvidence::new(command, DiagnosticCount::new(0), DiagnosticCount::new(0)),
+            ),
+            VerificationTarget::Command { .. } => VerificationEvidence::Command(command),
+            VerificationTarget::DiffInvariant(_) => {
+                VerificationEvidence::Diff(DiffEvidence::from_published_indexes(
+                    VerificationRunId::from_bytes([107; 32]),
+                    spec.id(),
+                    run_id,
+                    &empty_index(SnapshotId::from_bytes([109; 32]))?,
+                    &current,
+                )?)
+            }
+            _ => VerificationEvidence::Test(TestEvidence::new(command, cases)?),
+        };
+        let main = TaskStepId::from_bytes([110; 32]);
+        let definition = |id, spec| -> Result<TaskStepDefinition, Box<dyn Error>> {
+            Ok(TaskStepDefinition::new(
+                id,
+                None,
+                TaskStepOutcome::try_from_string("complete the bounded work".to_owned())?,
+                TaskStepRationale::try_from_string("the goal requires this result".to_owned())?,
+                Vec::new(),
+                vec![ExpectedTaskEvidence::try_from_string(
+                    "current proof".to_owned(),
+                )?],
+                spec,
+            )?)
+        };
+        let main_definition = definition(main, spec.clone())?;
+        let main_definition = if matches!(case, SourceCase::ProgressOnly) {
+            main_definition.with_criterion_coverage(vec![criterion_id], Vec::new())?
+        } else {
+            main_definition.with_acceptance_criteria(vec![criterion_id])?
+        };
+        let mut definitions = vec![main_definition];
+        if let Some(progress) = progress {
+            definitions.push(
+                definition(TaskStepId::from_bytes([111; 32]), progress)?
+                    .with_criterion_coverage(vec![criterion_id], Vec::new())?,
+            );
+        }
+        let mut ledger = TaskLedger::new(
+            goal.reference(),
+            definitions,
+            TaskLedgerTimestamp::from_unix_millis(2)?,
+        )?;
+        let mut timestamp = 3;
+        let steps = ledger
+            .steps()
+            .map(|step| {
+                (
+                    step.definition().id(),
+                    step.definition().verification_spec().id(),
+                )
+            })
+            .collect::<Vec<_>>();
+        for (step, verification_spec) in steps {
+            // Pre-existing Passed fixture state deliberately tests acceptance's
+            // independent checks instead of trusting the stored success marker.
+            ledger.start_step(
+                step,
+                run_id,
+                TaskLedgerTimestamp::from_unix_millis(timestamp)?,
+            )?;
+            ledger.begin_step_verification(
+                step,
+                run_id,
+                None,
+                vec![evidence.id()],
+                TaskLedgerTimestamp::from_unix_millis(timestamp + 1)?,
+            )?;
+            ledger.finish_step_verification(
+                step,
+                StepVerification::new(
+                    StepVerificationId::from_bytes([timestamp as u8; 32]),
+                    verification_spec,
+                    run_id,
+                    StepVerificationOutcome::Passed,
+                    vec![evidence.id()],
+                    TaskLedgerTimestamp::from_unix_millis(timestamp + 2)?,
+                )?,
+            )?;
+            timestamp += 3;
+        }
+        let now = AgentRunTimestamp::from_unix_millis(timestamp)?;
+        let run = AgentRun::reconstruct(
+            AgentRunIdentity::new(run_id, goal.reference(), ledger.revision(), None),
+            AgentRunMaterializedState::new(
+                a3_domain::AgentControllerState::Verify,
+                RunEventSequence::FIRST,
+                snapshot,
+            ),
+            AgentRunTiming::new(now, now),
+        )?;
+        let memory =
+            a3_domain::RunMemoryCheckpoint::compile(&goal, &ledger, &run, &current, Vec::new())?;
+        let request =
+            AcceptanceVerificationRequest::new(test_project()?, &run, goal, ledger, memory)?;
+        Ok((
+            request,
+            CountingVerificationStore {
+                state: StoredVerificationState::new(current, vec![evidence])?,
+                reads: AtomicUsize::new(0),
+            },
+        ))
+    }
+
+    #[derive(Debug)]
+    struct CountingVerificationStore {
+        state: StoredVerificationState,
+        reads: AtomicUsize,
+    }
+
+    impl VerificationEvidenceStore for CountingVerificationStore {
+        fn append_verification_evidence<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _evidence: &'a VerificationEvidence,
+            _timeout: Duration,
+            _control: &'a dyn AgentControllerControl,
+        ) -> VerificationEvidenceStoreFuture<'a, ()> {
+            Box::pin(async { Err(VerificationEvidenceStoreFailure::Unavailable) })
+        }
+        fn load_verification_state<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _task: TaskId,
+            _ids: &'a [TaskEvidenceId],
+            _snapshot: SnapshotId,
+            _timeout: Duration,
+            _control: &'a dyn AgentControllerControl,
+        ) -> VerificationEvidenceStoreFuture<'a, StoredVerificationState> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move { Ok(self.state.clone()) })
+        }
+        fn load_verification_inspection_state<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _task: TaskId,
+            _ids: &'a [TaskEvidenceId],
+            _timeout: Duration,
+            _control: &'a dyn AgentControllerControl,
+        ) -> VerificationEvidenceStoreFuture<'a, StoredVerificationState> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move { Ok(self.state.clone()) })
+        }
+    }
+
+    fn original_test_spec() -> Result<VerificationSpec, Box<dyn Error>> {
+        Ok(VerificationSpec::test(
+            spec_id(112),
+            requirement()?,
+            DiscoveredCommandId::from_bytes([103; 32]),
+            TestCaseSelector::All,
+            MinimumTestCaseCount::new(1)?,
+            VerificationScope::Targeted,
+        ))
+    }
+
+    fn passing_original_case() -> Result<Vec<TestCaseEvidence>, Box<dyn Error>> {
+        Ok(vec![TestCaseEvidence::new(
+            TestCaseName::try_from_string("behavior::selected".to_owned())?,
+            TestCaseOutcome::Passed,
+        )])
+    }
+
+    #[test]
+    fn original_gap_and_unbound_text_rules_reject_before_state_reads() -> Result<(), Box<dyn Error>>
+    {
+        for case in [
+            SourceCase::Gap,
+            SourceCase::Constraint,
+            SourceCase::NonGoal,
+            SourceCase::Decision,
+        ] {
+            let (request, store) =
+                original_fixture(case, original_test_spec()?, passing_original_case()?, None)?;
+            let outcome = futures::executor::block_on(AcceptanceVerifier::verify(
+                &DeterministicAcceptanceVerifier::new(&store),
+                &request,
+                AcceptanceVerifierTimeout::DEFAULT,
+                &ActiveControl,
+            ))?;
+            assert_eq!(
+                outcome,
+                AcceptanceVerifierOutcome::Rejected(AcceptanceRejection::InsufficientEvidence)
+            );
+            assert_eq!(store.reads.load(Ordering::SeqCst), 0);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn original_orphan_cannot_fall_back_to_the_legacy_trait_path() -> Result<(), Box<dyn Error>> {
+        let (request, store) = original_fixture(
+            SourceCase::Orphan,
+            original_test_spec()?,
+            passing_original_case()?,
+            None,
+        )?;
+        let result = futures::executor::block_on(AcceptanceVerifier::verify(
+            &DeterministicAcceptanceVerifier::new(&store),
+            &request,
+            AcceptanceVerifierTimeout::DEFAULT,
+            &ActiveControl,
+        ));
+        assert_eq!(result, Err(AcceptanceVerifierFailure::InvalidResult));
+        assert_eq!(store.reads.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn original_trait_path_rejects_otherwise_green_lint_command_and_diff_specs()
+    -> Result<(), Box<dyn Error>> {
+        let command = DiscoveredCommandId::from_bytes([103; 32]);
+        for spec in [
+            VerificationSpec::command(
+                spec_id(112),
+                requirement()?,
+                command,
+                VerificationScope::Targeted,
+            ),
+            VerificationSpec::diagnostic(
+                spec_id(112),
+                requirement()?,
+                command,
+                a3_domain::DiagnosticPolicy::NoWarnings,
+                VerificationScope::Targeted,
+            ),
+            VerificationSpec::diff_invariant(
+                spec_id(112),
+                requirement()?,
+                DiffInvariantVerification::new(DiffInvariantMode::NoChanges, Vec::new())?,
+            ),
+        ] {
+            let (request, store) = original_fixture(
+                SourceCase::Complete,
+                spec.clone(),
+                passing_original_case()?,
+                None,
+            )?;
+            let artifact = store
+                .state
+                .evidence()
+                .first()
+                .ok_or_else(|| std::io::Error::other("missing fixture evidence"))?;
+            assert_eq!(
+                VerificationEvidenceEvaluation::evaluate(&spec, artifact),
+                VerificationEvidenceEvaluation::Passed
+            );
+            assert_eq!(
+                EvidenceFreshness::evaluate(artifact, store.state.published_index()),
+                EvidenceFreshness::Fresh
+            );
+            let outcome = futures::executor::block_on(AcceptanceVerifier::verify(
+                &DeterministicAcceptanceVerifier::new(&store),
+                &request,
+                AcceptanceVerifierTimeout::DEFAULT,
+                &ActiveControl,
+            ))?;
+            assert_eq!(
+                outcome,
+                AcceptanceVerifierOutcome::Rejected(AcceptanceRejection::CriterionFailed)
+            );
+            assert_eq!(store.reads.load(Ordering::SeqCst), 0);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn original_guard_checks_optional_mapped_criteria_too() -> Result<(), Box<dyn Error>> {
+        let spec = VerificationSpec::command(
+            spec_id(112),
+            requirement()?,
+            DiscoveredCommandId::from_bytes([103; 32]),
+            VerificationScope::Targeted,
+        );
+        let (request, store) =
+            original_fixture(SourceCase::Optional, spec, passing_original_case()?, None)?;
+        let outcome = futures::executor::block_on(AcceptanceVerifier::verify(
+            &DeterministicAcceptanceVerifier::new(&store),
+            &request,
+            AcceptanceVerifierTimeout::DEFAULT,
+            &ActiveControl,
+        ))?;
+        assert_eq!(
+            outcome,
+            AcceptanceVerifierOutcome::Rejected(AcceptanceRejection::CriterionFailed)
+        );
+        assert_eq!(store.reads.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn original_runtime_without_recipe_stays_open_before_state_reads() -> Result<(), Box<dyn Error>>
+    {
+        let (request, store) = original_fixture(
+            SourceCase::MissingRecipe,
+            original_test_spec()?,
+            passing_original_case()?,
+            None,
+        )?;
+        let outcome = futures::executor::block_on(AcceptanceVerifier::verify(
+            &DeterministicAcceptanceVerifier::new(&store),
+            &request,
+            AcceptanceVerifierTimeout::DEFAULT,
+            &ActiveControl,
+        ))?;
+        assert_eq!(
+            outcome,
+            AcceptanceVerifierOutcome::Rejected(AcceptanceRejection::CriterionFailed)
+        );
+        assert_eq!(store.reads.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn original_structural_coverage_does_not_turn_zero_cases_into_success()
+    -> Result<(), Box<dyn Error>> {
+        let (request, store) = original_fixture(
+            SourceCase::Complete,
+            original_test_spec()?,
+            Vec::new(),
+            None,
+        )?;
+        assert!(GoalOriginalCoverage::derive_from(request.goal_contract())?.is_complete());
+        let outcome = futures::executor::block_on(AcceptanceVerifier::verify(
+            &DeterministicAcceptanceVerifier::new(&store),
+            &request,
+            AcceptanceVerifierTimeout::DEFAULT,
+            &ActiveControl,
+        ))?;
+        assert_eq!(
+            outcome,
+            AcceptanceVerifierOutcome::Rejected(AcceptanceRejection::CriterionFailed)
+        );
+        assert_eq!(store.reads.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn original_matching_evidence_still_passes_without_inventing_progress_obligations()
+    -> Result<(), Box<dyn Error>> {
+        let progress = VerificationSpec::diff_invariant(
+            spec_id(113),
+            requirement()?,
+            DiffInvariantVerification::new(DiffInvariantMode::NoChanges, Vec::new())?,
+        );
+        let (request, store) = original_fixture(
+            SourceCase::Complete,
+            original_test_spec()?,
+            passing_original_case()?,
+            Some(progress),
+        )?;
+        let outcome = futures::executor::block_on(AcceptanceVerifier::verify(
+            &DeterministicAcceptanceVerifier::new(&store),
+            &request,
+            AcceptanceVerifierTimeout::DEFAULT,
+            &ActiveControl,
+        ))?;
+        assert!(matches!(outcome, AcceptanceVerifierOutcome::Accepted(_)));
+        assert_eq!(store.reads.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn clean_legacy_goal_keeps_its_existing_trait_behavior() -> Result<(), Box<dyn Error>> {
+        let (request, original_store) = should_only_fixture(false)?;
+        let store = CountingVerificationStore {
+            state: original_store.state,
+            reads: AtomicUsize::new(0),
+        };
+        assert!(request.goal_contract().original().is_none());
+        let outcome = futures::executor::block_on(AcceptanceVerifier::verify(
+            &DeterministicAcceptanceVerifier::new(&store),
+            &request,
+            AcceptanceVerifierTimeout::DEFAULT,
+            &ActiveControl,
+        ))?;
+        assert!(matches!(outcome, AcceptanceVerifierOutcome::Accepted(_)));
+        assert_eq!(store.reads.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    /// Controlled stored-state counterexample, not a real-process correctness claim.
+    fn snapshot_transition_fixture(
+        source: bool,
+        current_evidence: bool,
+    ) -> Result<(AcceptanceVerificationRequest, CountingVerificationStore), Box<dyn Error>> {
+        let spec = original_test_spec()?;
+        let (template, _) = original_fixture(
+            SourceCase::Complete,
+            spec.clone(),
+            passing_original_case()?,
+            None,
+        )?;
+        let source_goal = template.goal_contract();
+        let criterion = &source_goal.draft().acceptance_criteria()[0];
+        let criterion_id = criterion.id();
+        let goal = if source {
+            source_goal.clone()
+        } else {
+            GoalContract::initial(
+                source_goal.task_id(),
+                GoalContractDraft::new(
+                    source_goal.draft().objective().clone(),
+                    vec![AcceptanceCriterion::with_requirement(
+                        criterion.id(),
+                        criterion.statement().clone(),
+                        criterion.requirement(),
+                    )],
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    source_goal.draft().success_verification().clone(),
+                )?,
+                source_goal.created_at(),
+            )
+        };
+        let test = a3_domain::FileRevision::new(
+            a3_domain::RepositoryPath::try_from_bytes(b"tests/test_behavior.py".to_vec())?,
+            a3_domain::ContentHash::from_bytes([203; 32]),
+        );
+        let index = |snapshot, subject_hash| -> Result<PublishedIndex, Box<dyn Error>> {
+            let empty = empty_index(snapshot)?;
+            let graph = LinkedGraph::new(
+                snapshot,
+                vec![
+                    a3_domain::FileRevision::new(
+                        a3_domain::RepositoryPath::try_from_bytes(b"subject.py".to_vec())?,
+                        a3_domain::ContentHash::from_bytes([subject_hash; 32]),
+                    ),
+                    test.clone(),
+                ],
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )?;
+            let policy = ModulePolicyVersion::v1();
+            let card = RepositoryCard::new(
+                snapshot,
+                policy,
+                Vec::new(),
+                Vec::new(),
+                ModuleSymbolSet::empty(),
+                2,
+                0,
+            )?;
+            let modules = ModuleProjection::new(snapshot, policy, Vec::new(), Vec::new(), card)?;
+            Ok(PublishedIndex::new(
+                empty.run(),
+                IndexPublication::new(
+                    graph,
+                    empty.publication().ranking().clone(),
+                    Vec::new(),
+                    modules,
+                )?,
+            )?)
+        };
+        let before = index(SnapshotId::from_bytes([201; 32]), 201)?;
+        let current = index(SnapshotId::from_bytes([202; 32]), 202)?;
+        let observed = if current_evidence { &current } else { &before };
+        let run_id = template.run_id();
+        let command = CommandEvidence::new(
+            CommandEvidenceContext::new(
+                VerificationRunId::from_bytes([204; 32]),
+                spec.id(),
+                run_id,
+                ToolRunId::from_bytes([205; 32]),
+                DiscoveredCommandId::from_bytes([103; 32]),
+                observed.run().snapshot_id(),
+            ),
+            VerificationDependencies::new(vec![a3_domain::EvidenceDependency::Present(test)])?,
+            &successful_process()?,
+        );
+        let evidence =
+            VerificationEvidence::Test(TestEvidence::new(command, passing_original_case()?)?);
+        // The previous dependency rule really does keep this artifact fresh despite
+        // a changed subject.py. The Source-only guard must supply the missing check.
+        assert_eq!(
+            EvidenceFreshness::evaluate(&evidence, &current),
+            EvidenceFreshness::Fresh
+        );
+        assert_eq!(
+            VerificationEvidenceEvaluation::evaluate(&spec, &evidence),
+            VerificationEvidenceEvaluation::Passed
+        );
+        let step_id = TaskStepId::from_bytes([206; 32]);
+        let definition = TaskStepDefinition::new(
+            step_id,
+            None,
+            TaskStepOutcome::try_from_string("verify the existing behavior".to_owned())?,
+            TaskStepRationale::try_from_string("run the bound existing check".to_owned())?,
+            Vec::new(),
+            vec![ExpectedTaskEvidence::try_from_string(
+                "current executed cases".to_owned(),
+            )?],
+            spec.clone(),
+        )?
+        .with_acceptance_criteria(vec![criterion_id])?;
+        let mut ledger = TaskLedger::new(
+            goal.reference(),
+            vec![definition],
+            TaskLedgerTimestamp::from_unix_millis(2)?,
+        )?;
+        ledger.start_step(step_id, run_id, TaskLedgerTimestamp::from_unix_millis(3)?)?;
+        ledger.begin_step_verification(
+            step_id,
+            run_id,
+            None,
+            vec![evidence.id()],
+            TaskLedgerTimestamp::from_unix_millis(4)?,
+        )?;
+        let verification = EvaluateStepVerification.execute(
+            StepVerificationId::from_bytes([207; 32]),
+            &spec,
+            run_id,
+            &evidence,
+            observed,
+            TaskLedgerTimestamp::from_unix_millis(5)?,
+        )?;
+        assert!(verification.passed());
+        ledger.finish_step_verification(step_id, verification)?;
+        let now = AgentRunTimestamp::from_unix_millis(6)?;
+        let run = AgentRun::reconstruct(
+            AgentRunIdentity::new(run_id, goal.reference(), ledger.revision(), None),
+            AgentRunMaterializedState::new(
+                a3_domain::AgentControllerState::Verify,
+                RunEventSequence::FIRST,
+                current.run().snapshot_id(),
+            ),
+            AgentRunTiming::new(now, now),
+        )?;
+        let memory =
+            a3_domain::RunMemoryCheckpoint::compile(&goal, &ledger, &run, &current, Vec::new())?;
+        Ok((
+            AcceptanceVerificationRequest::new(test_project()?, &run, goal, ledger, memory)?,
+            CountingVerificationStore {
+                state: StoredVerificationState::new(current, vec![evidence])?,
+                reads: AtomicUsize::new(0),
+            },
+        ))
+    }
+
+    #[test]
+    fn source_subject_edit_rejects_old_green_evidence_despite_unchanged_test_dependencies()
+    -> Result<(), Box<dyn Error>> {
+        let (request, store) = snapshot_transition_fixture(true, false)?;
+        let outcome = futures::executor::block_on(AcceptanceVerifier::verify(
+            &DeterministicAcceptanceVerifier::new(&store),
+            &request,
+            AcceptanceVerifierTimeout::DEFAULT,
+            &ActiveControl,
+        ))?;
+        assert_eq!(
+            outcome,
+            AcceptanceVerifierOutcome::Rejected(AcceptanceRejection::StaleEvidence)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn source_current_snapshot_matching_check_still_passes() -> Result<(), Box<dyn Error>> {
+        let (request, store) = snapshot_transition_fixture(true, true)?;
+        let outcome = futures::executor::block_on(AcceptanceVerifier::verify(
+            &DeterministicAcceptanceVerifier::new(&store),
+            &request,
+            AcceptanceVerifierTimeout::DEFAULT,
+            &ActiveControl,
+        ))?;
+        assert!(matches!(outcome, AcceptanceVerifierOutcome::Accepted(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_subject_edit_keeps_the_previous_dependency_freshness_behavior()
+    -> Result<(), Box<dyn Error>> {
+        let (request, store) = snapshot_transition_fixture(false, false)?;
+        let outcome = futures::executor::block_on(AcceptanceVerifier::verify(
+            &DeterministicAcceptanceVerifier::new(&store),
+            &request,
+            AcceptanceVerifierTimeout::DEFAULT,
+            &ActiveControl,
+        ))?;
+        assert!(request.goal_contract().original().is_none());
+        assert!(matches!(outcome, AcceptanceVerifierOutcome::Accepted(_)));
+        Ok(())
+    }
 
     #[test]
     fn relevant_specs_are_ordered_by_breadth_then_specialized_semantics()
@@ -1100,4 +2053,5 @@ mod tests {
             },
         )?)
     }
+    mod criterion_roles;
 }

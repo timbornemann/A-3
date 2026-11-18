@@ -45,8 +45,9 @@ use a3_application::{
     DeepMapJournalEvent, DeepMapPublicationStateFuture, DeepMapPublicationStateStore,
     DeepMapRunCursor, DeepMapRunJournalFuture, DeepMapRunJournalStore, DeepMapRunPage,
     DeepMapRunStart, DesktopSettingsStore, DesktopSettingsStoreFuture, DesktopSettingsStoreVersion,
-    EmbeddingOperationControl, EvaluatedPolicyAction, GoalContractStore, GoalContractStoreFailure,
-    GoalContractStoreFuture, IndexPersistenceControl, IndexTraceCheckpoint, IndexTraceFilePage,
+    EditNoChangeReceipt, EmbeddingOperationControl, EvaluatedPolicyAction, GoalContractStore,
+    GoalContractStoreFailure, GoalContractStoreFuture, GoalIntakeLoadResult,
+    GoalIntakeStoreVersion, IndexPersistenceControl, IndexTraceCheckpoint, IndexTraceFilePage,
     IndexTraceFileQuery, IndexTraceSnapshot, IndexTraceStore, IndexTraceStoreFailure,
     IndexTraceStoreFuture, KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore,
     KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
@@ -118,6 +119,12 @@ const MAX_MUTATION_DATABASES: usize = 4;
 const MAX_PUBLISHED_INDEX_CACHE_ENTRIES: usize = 1;
 const MAX_PROJECT_MAP_ATLAS_READ_DURATION: Duration = Duration::from_secs(2);
 
+#[cfg(test)]
+enum Plan22CandidateSchema {
+    Production,
+    Candidate47,
+}
+
 /// Local libSQL implementation of the application knowledge-store boundary.
 ///
 /// A project is recorded in the global catalog only after its identity-bound
@@ -129,6 +136,8 @@ pub struct LibsqlKnowledgeStore {
     mutation_databases: Mutex<Vec<Arc<KnowledgeDatabase>>>,
     search_databases: Mutex<Vec<Arc<KnowledgeDatabase>>>,
     published_indexes: Mutex<Vec<CachedPublishedIndex>>,
+    #[cfg(test)]
+    plan22_candidate_schema: Plan22CandidateSchema,
 }
 
 impl LibsqlKnowledgeStore {
@@ -327,7 +336,33 @@ impl LibsqlKnowledgeStore {
             mutation_databases: Mutex::new(Vec::new()),
             search_databases: Mutex::new(Vec::new()),
             published_indexes: Mutex::new(Vec::new()),
+            #[cfg(test)]
+            plan22_candidate_schema: Plan22CandidateSchema::Production,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn open_plan22_candidate(
+        layout: &StorageLayout,
+    ) -> Result<Self, CatalogOpenError> {
+        let mut store = Self::open(layout).await?;
+        store.plan22_candidate_schema = Plan22CandidateSchema::Candidate47;
+        Ok(store)
+    }
+
+    async fn open_knowledge_for_contract(
+        &self,
+        layout: &crate::ProjectStorageLayout,
+        project: &ProjectIdentity,
+    ) -> Result<KnowledgeDatabase, KnowledgeOpenError> {
+        #[cfg(test)]
+        if matches!(
+            self.plan22_candidate_schema,
+            Plan22CandidateSchema::Candidate47
+        ) {
+            return KnowledgeDatabase::open_plan22_candidate(layout, project).await;
+        }
+        KnowledgeDatabase::open(layout, project).await
     }
 }
 
@@ -1166,7 +1201,7 @@ impl KnowledgeStore for LibsqlKnowledgeStore {
                 .prepare_project(project.worktree())
                 .map_err(classify_project_layout_error)?;
             let knowledge = Arc::new(
-                KnowledgeDatabase::open(&project_layout, project)
+                self.open_knowledge_for_contract(&project_layout, project)
                     .await
                     .map_err(classify_knowledge_open_error)?,
             );
@@ -1330,6 +1365,146 @@ impl ProjectStorageStore for LibsqlKnowledgeStore {
 }
 
 impl GoalContractStore for LibsqlKnowledgeStore {
+    fn load_goal_intake_review<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        task_id: TaskId,
+    ) -> GoalContractStoreFuture<'a, Option<a3_domain::GoalIntakeReview>> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_goal_contract(project)
+                .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| GoalContractStoreFailure::Unavailable)?;
+            goal_contract_repository::intake_review::load(
+                &connection,
+                project.worktree().id(),
+                task_id,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn append_goal_intake_review<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        task_id: TaskId,
+        expected_capture_version: GoalIntakeStoreVersion,
+        expected_review_revision: Option<a3_domain::GoalIntakeReviewRevision>,
+        review: &'a a3_domain::GoalIntakeReview,
+    ) -> GoalContractStoreFuture<'a, a3_domain::GoalIntakeReviewRevision> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_goal_contract(project)
+                .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| GoalContractStoreFailure::Unavailable)?;
+            goal_contract_repository::intake_review::append(
+                &connection,
+                project.worktree().id(),
+                task_id,
+                expected_capture_version,
+                expected_review_revision,
+                review,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn list_pending_goal_intakes<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        after: Option<TaskId>,
+    ) -> GoalContractStoreFuture<'a, a3_application::PendingGoalIntakePage> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_goal_contract(project)
+                .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| GoalContractStoreFailure::Unavailable)?;
+            goal_contract_repository::intake::list_pending(
+                &connection,
+                project.worktree().id(),
+                after,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn capture_goal_intake<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        pending: &'a a3_domain::PendingGoalIntake,
+    ) -> GoalContractStoreFuture<'a, GoalIntakeStoreVersion> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_goal_contract(project)
+                .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| GoalContractStoreFailure::Unavailable)?;
+            goal_contract_repository::intake::capture(&connection, project.worktree().id(), pending)
+                .await
+                .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_goal_intake<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        task_id: TaskId,
+    ) -> GoalContractStoreFuture<'a, Option<GoalIntakeLoadResult>> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_goal_contract(project)
+                .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| GoalContractStoreFailure::Unavailable)?;
+            goal_contract_repository::intake::load(&connection, project.worktree().id(), task_id)
+                .await
+                .map_err(|error| error.classify())
+        })
+    }
+
+    fn promote_goal_intake<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        task_id: TaskId,
+        expected_version: GoalIntakeStoreVersion,
+        goal: &'a GoalContract,
+    ) -> GoalContractStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_goal_contract(project)
+                .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| GoalContractStoreFailure::Unavailable)?;
+            goal_contract_repository::intake::promote(
+                &connection,
+                project.worktree().id(),
+                task_id,
+                expected_version,
+                goal,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
     fn create_goal_contract<'a>(
         &'a self,
         project: &'a ProjectIdentity,
@@ -1661,6 +1836,7 @@ impl RunJournalStore for LibsqlKnowledgeStore {
                 expected_last_sequence,
                 run,
                 read,
+                database.schema_version().get(),
             )
             .await
             .map_err(|error| error.classify())
@@ -2198,6 +2374,123 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
         })
     }
 
+    fn complete_loopback_mutation<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+        attempt: AgentToolAttemptNumber,
+        receipt: &'a a3_domain::LoopbackHttpEvidence,
+        timeout: Duration,
+        control: &'a dyn AgentControllerControl,
+    ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
+        Box::pin(async move {
+            let operation = VerificationIndexControl::new(control, timeout);
+            operation
+                .checkpoint()
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            let schema = database.schema_version().get();
+            if schema < crate::loopback_http_codec::SCHEMA_VERSION {
+                return Err(AgentRecoveryStoreFailure::UnsupportedSchema);
+            }
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
+            let remaining = timeout
+                .checked_sub(operation.elapsed())
+                .filter(|remaining| !remaining.is_zero())
+                .ok_or(AgentRecoveryStoreFailure::Unavailable)?;
+            agent_recovery_repository::complete_loopback_mutation(
+                &connection,
+                schema,
+                project.worktree().id(),
+                expected_last_sequence,
+                run,
+                event,
+                attempt,
+                receipt,
+                remaining,
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn complete_loopback_mismatch<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+        diagnostic: &'a a3_domain::LoopbackHttpMismatchDiagnostic,
+        timeout: Duration,
+        control: &'a dyn AgentControllerControl,
+    ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
+        Box::pin(async move {
+            let operation = VerificationIndexControl::new(control, timeout);
+            operation
+                .checkpoint()
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            if database.schema_version().get() < 60 {
+                return Err(AgentRecoveryStoreFailure::UnsupportedSchema);
+            }
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
+            let remaining = timeout
+                .checked_sub(operation.elapsed())
+                .filter(|time| !time.is_zero())
+                .ok_or(AgentRecoveryStoreFailure::Unavailable)?;
+            agent_recovery_repository::mismatch::complete(
+                &connection,
+                database.schema_version().get(),
+                project.worktree().id(),
+                expected_last_sequence,
+                run,
+                event,
+                diagnostic,
+                remaining,
+                control,
+            )
+            .await
+            .map_err(|e| e.classify())
+        })
+    }
+
+    fn load_loopback_mismatch<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+    ) -> AgentRecoveryStoreFuture<'a, Option<a3_domain::LoopbackHttpMismatchDiagnostic>> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            if database.schema_version().get() < 60 {
+                return Err(AgentRecoveryStoreFailure::UnsupportedSchema);
+            }
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
+            agent_recovery_repository::mismatch::load(
+                &connection,
+                project.worktree().id(),
+                run_id,
+                tool_run_id,
+                attempt,
+            )
+            .await
+            .map_err(|e| e.classify())
+        })
+    }
+
     fn interrupt_agent_tool_attempts<'a>(
         &'a self,
         project: &'a ProjectIdentity,
@@ -2233,6 +2526,58 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
                 .await
                 .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
             agent_recovery_repository::load_mutation_attempts(
+                &connection,
+                project.worktree().id(),
+                run_id,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_settled_loopback_evidence_id<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+    ) -> AgentRecoveryStoreFuture<'a, Option<TaskEvidenceId>> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            if database.schema_version().get() < crate::loopback_http_codec::SCHEMA_VERSION {
+                return Err(AgentRecoveryStoreFailure::UnsupportedSchema);
+            }
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
+            agent_recovery_repository::load_settled_loopback_evidence_id(
+                &connection,
+                project.worktree().id(),
+                run_id,
+                tool_run_id,
+                attempt,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn has_pending_loopback_resume<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+    ) -> AgentRecoveryStoreFuture<'a, bool> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            if database.schema_version().get() < crate::loopback_http_codec::SCHEMA_VERSION {
+                return Err(AgentRecoveryStoreFailure::UnsupportedSchema);
+            }
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
+            agent_recovery_repository::has_pending_loopback_resume(
                 &connection,
                 project.worktree().id(),
                 run_id,
@@ -2294,6 +2639,106 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
         })
     }
 
+    fn load_completed_loopback_evidence<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        task_id: TaskId,
+        evidence_ids: &'a [TaskEvidenceId],
+        timeout: Duration,
+        control: &'a dyn AgentControllerControl,
+    ) -> AgentRecoveryStoreFuture<'a, Vec<VerificationEvidence>> {
+        Box::pin(async move {
+            let operation = VerificationIndexControl::new(control, timeout);
+            operation
+                .checkpoint()
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            let schema = database.schema_version().get();
+            if schema < crate::loopback_http_codec::SCHEMA_VERSION {
+                return Err(AgentRecoveryStoreFailure::UnsupportedSchema);
+            }
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
+            let remaining = timeout
+                .checked_sub(operation.elapsed())
+                .filter(|remaining| !remaining.is_zero())
+                .ok_or(AgentRecoveryStoreFailure::Unavailable)?;
+            verification_evidence_repository::load_loopback_recovery_evidence(
+                &connection,
+                project.worktree().id(),
+                task_id,
+                evidence_ids,
+                schema,
+                remaining,
+                control,
+            )
+            .await
+            .map_err(|error| {
+                agent_recovery_repository::AgentRecoveryRepositoryError::Verification(error)
+                    .classify()
+            })
+        })
+    }
+
+    fn load_completed_diff_evidence<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        task_id: TaskId,
+        evidence_ids: &'a [TaskEvidenceId],
+        timeout: Duration,
+        control: &'a dyn AgentControllerControl,
+    ) -> AgentRecoveryStoreFuture<'a, a3_application::CompletedDiffRecoveryEvidence> {
+        use a3_application::CompletedDiffRecoveryEvidence;
+        // P2-P10 keep typed candidate recovery in tests. Production V42's original
+        // locator path remains frozen; P11 removes this baseline capability branch.
+        #[cfg(test)]
+        let candidate = matches!(
+            self.plan22_candidate_schema,
+            Plan22CandidateSchema::Candidate47
+        );
+        #[cfg(not(test))]
+        let candidate = false;
+        Box::pin(async move {
+            if !candidate {
+                return Ok(CompletedDiffRecoveryEvidence::LegacyToolLocators);
+            }
+            let operation = VerificationIndexControl::new(control, timeout);
+            operation
+                .checkpoint()
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            let schema = database.schema_version().get();
+            if schema < 47 {
+                return Err(AgentRecoveryStoreFailure::UnsupportedSchema);
+            }
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
+            let remaining = timeout
+                .checked_sub(operation.elapsed())
+                .filter(|remaining| !remaining.is_zero())
+                .ok_or(AgentRecoveryStoreFailure::Unavailable)?;
+            let diffs = verification_evidence_repository::load_diff_recovery_evidence(
+                &connection,
+                project.worktree().id(),
+                task_id,
+                evidence_ids,
+                schema,
+                remaining,
+                control,
+            )
+            .await
+            .map_err(|error| {
+                agent_recovery_repository::AgentRecoveryRepositoryError::Verification(error)
+                    .classify()
+            })?;
+            Ok(CompletedDiffRecoveryEvidence::Typed(diffs))
+        })
+    }
+
     fn commit_agent_recovery<'a>(
         &'a self,
         project: &'a ProjectIdentity,
@@ -2313,6 +2758,7 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
                 .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
             agent_recovery_repository::commit_recovery(
                 &connection,
+                database.schema_version().get(),
                 project.worktree().id(),
                 choice,
                 expected_published_snapshot,
@@ -2329,6 +2775,29 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
 }
 
 impl AgentActionStore for LibsqlKnowledgeStore {
+    fn commit_http_no_change_window_plan_action<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        version: TaskLedgerStoreVersion,
+        sequence: RunEventSequence,
+        index: IndexRunId,
+        ledger: &'a TaskLedger,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+        proof: &'a a3_application::HttpNoChangeWindowMaterialProof,
+    ) -> AgentActionStoreFuture<'a> {
+        Box::pin(self.commit_agent_ledger_action(
+            project,
+            version,
+            sequence,
+            ledger,
+            run,
+            event,
+            true,
+            Some(index),
+            run_journal_repository::LedgerActionProof::HttpNoChangeWindow { project, proof },
+        ))
+    }
     fn commit_ledger_action<'a>(
         &'a self,
         project: &'a ProjectIdentity,
@@ -2338,27 +2807,86 @@ impl AgentActionStore for LibsqlKnowledgeStore {
         run: &'a AgentRun,
         event: &'a RunEvent,
     ) -> AgentActionStoreFuture<'a> {
-        Box::pin(async move {
-            let database = self
-                .open_project_knowledge_for_run_journal(project)
-                .await
-                .map_err(classify_run_journal_for_agent_action)?;
-            let connection = database
-                .connection_for_operation()
-                .await
-                .map_err(|_| AgentActionStoreFailure::Unavailable)?;
-            run_journal_repository::append_ledger_action(
-                &connection,
-                project.worktree().id(),
-                expected_ledger_version,
-                expected_last_sequence,
-                ledger,
-                run,
-                event,
-            )
-            .await
-            .map_err(|error| error.classify_agent_action())
-        })
+        Box::pin(self.commit_agent_ledger_action(
+            project,
+            expected_ledger_version,
+            expected_last_sequence,
+            ledger,
+            run,
+            event,
+            false,
+            None,
+            run_journal_repository::LedgerActionProof::Ordinary,
+        ))
+    }
+
+    fn commit_current_ledger_action<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_ledger_version: TaskLedgerStoreVersion,
+        expected_last_sequence: RunEventSequence,
+        ledger: &'a TaskLedger,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+    ) -> AgentActionStoreFuture<'a> {
+        Box::pin(self.commit_agent_ledger_action(
+            project,
+            expected_ledger_version,
+            expected_last_sequence,
+            ledger,
+            run,
+            event,
+            true,
+            None,
+            run_journal_repository::LedgerActionProof::Ordinary,
+        ))
+    }
+
+    fn commit_current_index_ledger_action<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_ledger_version: TaskLedgerStoreVersion,
+        expected_last_sequence: RunEventSequence,
+        expected_index_run: IndexRunId,
+        ledger: &'a TaskLedger,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+    ) -> AgentActionStoreFuture<'a> {
+        Box::pin(self.commit_agent_ledger_action(
+            project,
+            expected_ledger_version,
+            expected_last_sequence,
+            ledger,
+            run,
+            event,
+            true,
+            Some(expected_index_run),
+            run_journal_repository::LedgerActionProof::Ordinary,
+        ))
+    }
+
+    fn commit_edit_no_change_action<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        version: TaskLedgerStoreVersion,
+        sequence: RunEventSequence,
+        index: IndexRunId,
+        ledger: &'a TaskLedger,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+        receipt: &'a EditNoChangeReceipt,
+    ) -> AgentActionStoreFuture<'a> {
+        Box::pin(self.commit_agent_ledger_action(
+            project,
+            version,
+            sequence,
+            ledger,
+            run,
+            event,
+            true,
+            Some(index),
+            run_journal_repository::LedgerActionProof::EditNoChange(receipt),
+        ))
     }
 }
 
@@ -2791,6 +3319,7 @@ impl VerificationEvidenceStore for LibsqlKnowledgeStore {
                 &connection,
                 project.worktree().id(),
                 evidence,
+                knowledge.schema_version().get(),
                 remaining,
                 control,
             )
@@ -2847,6 +3376,7 @@ impl VerificationEvidenceStore for LibsqlKnowledgeStore {
                     published,
                     remaining,
                 ),
+                knowledge.schema_version().get(),
                 control,
             )
             .await
@@ -2900,6 +3430,7 @@ impl VerificationEvidenceStore for LibsqlKnowledgeStore {
                     published,
                     remaining,
                 ),
+                knowledge.schema_version().get(),
                 control,
             )
             .await
@@ -3972,7 +4503,7 @@ impl LibsqlKnowledgeStore {
             .map_err(classify_project_layout_error)
             .map_err(classify_goal_contract_storage_failure)?;
         let database = Arc::new(
-            KnowledgeDatabase::open(&project_layout, project)
+            self.open_knowledge_for_contract(&project_layout, project)
                 .await
                 .map_err(classify_knowledge_open_error)
                 .map_err(classify_goal_contract_storage_failure)?,
@@ -4016,7 +4547,7 @@ impl LibsqlKnowledgeStore {
             .map_err(classify_project_layout_error)
             .map_err(classify_task_ledger_storage_failure)?;
         let database = Arc::new(
-            KnowledgeDatabase::open(&project_layout, project)
+            self.open_knowledge_for_contract(&project_layout, project)
                 .await
                 .map_err(classify_knowledge_open_error)
                 .map_err(classify_task_ledger_storage_failure)?,
@@ -4047,7 +4578,7 @@ impl LibsqlKnowledgeStore {
         Ok(self.cache_search_database(database))
     }
 
-    async fn open_project_knowledge_for_run_journal(
+    pub(crate) async fn open_project_knowledge_for_run_journal(
         &self,
         project: &ProjectIdentity,
     ) -> Result<Arc<KnowledgeDatabase>, RunJournalStoreFailure> {
@@ -4062,12 +4593,54 @@ impl LibsqlKnowledgeStore {
             .map_err(classify_project_layout_error)
             .map_err(classify_run_journal_storage_failure)?;
         let database = Arc::new(
-            KnowledgeDatabase::open(&project_layout, project)
+            self.open_knowledge_for_contract(&project_layout, project)
                 .await
                 .map_err(classify_knowledge_open_error)
                 .map_err(classify_run_journal_storage_failure)?,
         );
         Ok(self.cache_mutation_database(database))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn commit_agent_ledger_action(
+        &self,
+        project: &ProjectIdentity,
+        expected_ledger_version: TaskLedgerStoreVersion,
+        expected_last_sequence: RunEventSequence,
+        ledger: &TaskLedger,
+        run: &AgentRun,
+        event: &RunEvent,
+        require_current_snapshot: bool,
+        expected_index_run: Option<IndexRunId>,
+        proof: run_journal_repository::LedgerActionProof<'_>,
+    ) -> Result<TaskLedgerStoreVersion, AgentActionStoreFailure> {
+        let database = self
+            .open_project_knowledge_for_run_journal(project)
+            .await
+            .map_err(classify_run_journal_for_agent_action)?;
+        if (require_current_snapshot || expected_index_run.is_some())
+            && database.schema_version().get() < crate::loopback_http_codec::SCHEMA_VERSION
+        {
+            return Err(AgentActionStoreFailure::UnsupportedSchema);
+        }
+        let connection = database
+            .connection_for_operation()
+            .await
+            .map_err(|_| AgentActionStoreFailure::Unavailable)?;
+        run_journal_repository::append_ledger_action(
+            &connection,
+            project.worktree().id(),
+            expected_ledger_version,
+            expected_last_sequence,
+            ledger,
+            run,
+            event,
+            require_current_snapshot,
+            expected_index_run,
+            proof,
+        )
+        .await
+        .map_err(|error| error.classify_agent_action())
     }
 
     async fn open_project_knowledge_for_policy(
@@ -4085,7 +4658,7 @@ impl LibsqlKnowledgeStore {
             .map_err(classify_project_layout_error)
             .map_err(classify_policy_storage_failure)?;
         let database = Arc::new(
-            KnowledgeDatabase::open(&project_layout, project)
+            self.open_knowledge_for_contract(&project_layout, project)
                 .await
                 .map_err(classify_knowledge_open_error)
                 .map_err(classify_policy_storage_failure)?,
@@ -4108,7 +4681,7 @@ impl LibsqlKnowledgeStore {
             .map_err(classify_project_layout_error)
             .map_err(classify_command_allowlist_storage_failure)?;
         let database = Arc::new(
-            KnowledgeDatabase::open(&project_layout, project)
+            self.open_knowledge_for_contract(&project_layout, project)
                 .await
                 .map_err(classify_knowledge_open_error)
                 .map_err(classify_command_allowlist_storage_failure)?,
@@ -4131,7 +4704,7 @@ impl LibsqlKnowledgeStore {
             .map_err(classify_project_layout_error)
             .map_err(classify_agent_recovery_storage_failure)?;
         let database = Arc::new(
-            KnowledgeDatabase::open(&project_layout, project)
+            self.open_knowledge_for_contract(&project_layout, project)
                 .await
                 .map_err(classify_knowledge_open_error)
                 .map_err(classify_agent_recovery_storage_failure)?,
@@ -4163,7 +4736,7 @@ impl LibsqlKnowledgeStore {
             .map_err(classify_project_layout_error)
             .map_err(KnowledgeIndexFailure::Storage)?;
         let database = Arc::new(
-            KnowledgeDatabase::open(&project_layout, project)
+            self.open_knowledge_for_contract(&project_layout, project)
                 .await
                 .map_err(classify_knowledge_open_error)
                 .map_err(KnowledgeIndexFailure::Storage)?,
@@ -4186,7 +4759,7 @@ impl LibsqlKnowledgeStore {
             .map_err(classify_project_layout_error)
             .map_err(KnowledgeSearchFailure::Storage)?;
         let database = Arc::new(
-            KnowledgeDatabase::open(&project_layout, project)
+            self.open_knowledge_for_contract(&project_layout, project)
                 .await
                 .map_err(classify_knowledge_open_error)
                 .map_err(KnowledgeSearchFailure::Storage)?,
@@ -4232,7 +4805,7 @@ impl LibsqlKnowledgeStore {
             .map_err(classify_project_layout_error)
             .map_err(TaskLensClaimStoreFailure::Storage)?;
         let database = Arc::new(
-            KnowledgeDatabase::open(&project_layout, project)
+            self.open_knowledge_for_contract(&project_layout, project)
                 .await
                 .map_err(classify_knowledge_open_error)
                 .map_err(TaskLensClaimStoreFailure::Storage)?,
@@ -4462,7 +5035,7 @@ impl LibsqlKnowledgeStore {
             .map_err(classify_project_layout_error)
             .map_err(KnowledgeIndexFailure::Storage)?;
         let database = Arc::new(
-            KnowledgeDatabase::open(&project_layout, project)
+            self.open_knowledge_for_contract(&project_layout, project)
                 .await
                 .map_err(classify_knowledge_open_error)
                 .map_err(KnowledgeIndexFailure::Storage)?,

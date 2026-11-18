@@ -4,10 +4,11 @@ use crate::{
 };
 use a3_domain::{
     AgentControllerState, AgentFinishAction, AgentLedgerUpdate, AgentRun, AgentRunTimestamp,
-    AgentToolEvidenceSet, AgentUpdateLedgerAction, DiscoveredCommandId, ProjectCommandCatalog,
-    ProjectIdentity, RunEvent, RunEventCode, RunEventId, RunEventOutcome, RunEventPayload,
-    RunEventSequence, SnapshotId, TaskLedger, TaskLedgerError, TaskLedgerTimestamp,
-    TaskReplanReason, TaskStepDefinition, TaskStepId, TaskStepStatus, VerificationTarget,
+    AgentToolEvidenceSet, AgentUpdateLedgerAction, DiscoveredCommandId, IndexRunId,
+    ProjectCommandCatalog, ProjectIdentity, RunEvent, RunEventCode, RunEventId, RunEventOutcome,
+    RunEventPayload, RunEventSequence, SnapshotId, TaskLedger, TaskLedgerError,
+    TaskLedgerTimestamp, TaskReplanReason, TaskStepDefinition, TaskStepId, TaskStepStatus,
+    VerificationTarget,
 };
 use std::error::Error;
 use std::fmt;
@@ -34,6 +35,89 @@ pub trait AgentActionStore: fmt::Debug + Send + Sync {
         run: &'a AgentRun,
         event: &'a RunEvent,
     ) -> AgentActionStoreFuture<'a>;
+
+    /// Commits a candidate verification only while the event snapshot is still published.
+    fn commit_current_ledger_action<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_ledger_version: TaskLedgerStoreVersion,
+        expected_last_sequence: RunEventSequence,
+        ledger: &'a TaskLedger,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+    ) -> AgentActionStoreFuture<'a> {
+        let _ = (
+            project,
+            expected_ledger_version,
+            expected_last_sequence,
+            ledger,
+            run,
+            event,
+        );
+        Box::pin(async { Err(AgentActionStoreFailure::UnsupportedSchema) })
+    }
+
+    /// Commits only while the exact required index run and the event snapshot are published.
+    /// Implementations must compare this index inside the same Ledger/Run CAS transaction.
+    /// The default fails closed; a snapshot-only implementation cannot satisfy this contract.
+    #[allow(clippy::too_many_arguments)]
+    fn commit_current_index_ledger_action<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_ledger_version: TaskLedgerStoreVersion,
+        expected_last_sequence: RunEventSequence,
+        expected_index_run: IndexRunId,
+        ledger: &'a TaskLedger,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+    ) -> AgentActionStoreFuture<'a> {
+        let _ = (
+            project,
+            expected_ledger_version,
+            expected_last_sequence,
+            expected_index_run,
+            ledger,
+            run,
+            event,
+        );
+        Box::pin(async { Err(AgentActionStoreFailure::UnsupportedSchema) })
+    }
+
+    /// Authenticates the exact current NoChange receipt and closes its old
+    /// source acquisition without delivery credit in the same Ledger/Run/index
+    /// CAS transaction. The additional receipt is necessary, not text control.
+    #[allow(clippy::too_many_arguments)]
+    fn commit_edit_no_change_action<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+        _expected_ledger_version: TaskLedgerStoreVersion,
+        _expected_last_sequence: RunEventSequence,
+        _expected_index_run: IndexRunId,
+        _ledger: &'a TaskLedger,
+        _run: &'a AgentRun,
+        _event: &'a RunEvent,
+        _receipt: &'a crate::EditNoChangeReceipt,
+    ) -> AgentActionStoreFuture<'a> {
+        Box::pin(async { Err(AgentActionStoreFailure::UnsupportedSchema) })
+    }
+
+    /// Authenticates exactly one accepted V5 proper-subset call and commits its
+    /// two-step material revision in the existing current-index Ledger/Journal CAS.
+    /// A descriptive material proof alone never authorizes the durable update.
+    #[allow(clippy::too_many_arguments)]
+    fn commit_http_no_change_window_plan_action<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+        _expected_ledger_version: TaskLedgerStoreVersion,
+        _expected_last_sequence: RunEventSequence,
+        _expected_index_run: IndexRunId,
+        _ledger: &'a TaskLedger,
+        _run: &'a AgentRun,
+        _event: &'a RunEvent,
+        _proof: &'a crate::HttpNoChangeWindowMaterialProof,
+    ) -> AgentActionStoreFuture<'a> {
+        Box::pin(async { Err(AgentActionStoreFailure::UnsupportedSchema) })
+    }
 }
 
 /// Stable failure of an atomic Ledger/run action commit.
@@ -55,6 +139,8 @@ pub enum AgentActionStoreFailure {
     LedgerVersionConflict,
     /// Another writer already appended the next run event.
     RunSequenceConflict,
+    /// The published snapshot or required exact index run no longer matches the action.
+    SnapshotConflict,
 }
 
 impl fmt::Display for AgentActionStoreFailure {
@@ -68,6 +154,7 @@ impl fmt::Display for AgentActionStoreFailure {
             Self::RunNotFound => "agent action run anchor was not found",
             Self::LedgerVersionConflict => "agent action Ledger version changed concurrently",
             Self::RunSequenceConflict => "agent action run sequence changed concurrently",
+            Self::SnapshotConflict => "agent action verification publication changed concurrently",
         })
     }
 }
@@ -648,6 +735,7 @@ impl<'a> BindDeferredAgentVerification<'a> {
             || !additions.iter().any(|definition| {
                 definition.intended_outcome() == next.definition().intended_outcome()
                     && definition.acceptance_criteria() == next.definition().acceptance_criteria()
+                    && definition.addressed_criteria() == next.definition().addressed_criteria()
                     && matches!(
                         definition.verification_spec().target(),
                         VerificationTarget::Command {
@@ -993,6 +1081,41 @@ mod tests {
                     .map_err(|_| AgentActionStoreFailure::Unavailable)
             })
         }
+    }
+
+    #[test]
+    fn index_bound_commit_default_does_not_fall_back_to_unpinned_writer()
+    -> Result<(), Box<dyn Error>> {
+        let store = RecordingActionStore::default();
+        let (mut run, ledger, _) = fixture()?;
+        let expected = run.last_event_sequence();
+        let advance = RequestAgentFinish.execute(
+            &mut run,
+            AgentFinishAction,
+            event_id(6),
+            snapshot(),
+            timestamp(6)?,
+            &Active,
+        )?;
+        let project = project()?;
+        let result = block_on(store.commit_current_index_ledger_action(
+            &project,
+            TaskLedgerStoreVersion::new(1)?,
+            expected,
+            IndexRunId::from_bytes([91; 32]),
+            &ledger,
+            &run,
+            advance.event(),
+        ));
+        assert_eq!(result, Err(AgentActionStoreFailure::UnsupportedSchema));
+        assert_eq!(
+            *store
+                .commits
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            0
+        );
+        Ok(())
     }
 
     #[test]

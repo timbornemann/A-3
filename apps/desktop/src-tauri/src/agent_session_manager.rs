@@ -3037,6 +3037,9 @@ impl AskResearchResult {
 }
 
 #[cfg(test)]
+#[path = "plan22_baseline.rs"]
+mod plan22_baseline;
+#[cfg(test)]
 #[path = "agent_research_followup_tests.rs"]
 mod research_followup_tests;
 #[cfg(test)]

@@ -9,13 +9,16 @@ use crate::{
 use std::error::Error;
 use std::fmt;
 
+mod focused_update;
+
 const MAX_PATCH_CONTENT_PREVIEW_BYTES: usize = 16 * 1_024;
 const MAX_PATCH_PREVIEW_BYTES: usize = 64 * 1_024;
 
-/// Bounded exact prefix plus full-content metadata for one side of a patch preview.
+/// Bounded exact excerpt plus full-content metadata for one side of a patch preview.
 #[derive(Clone, PartialEq, Eq)]
 pub struct PatchContentPreview {
     bytes: Vec<u8>,
+    first_line: u32,
     total_bytes: u64,
     content_hash: ContentHash,
     encoding: PatchTextEncoding,
@@ -33,8 +36,17 @@ impl PatchContentPreview {
             return Err(PatchPreviewError::PreviewTooLarge);
         }
         let retained = utf8_prefix(content.as_bytes(), maximum_bytes);
+        Self::from_retained(content, retained, 1)
+    }
+
+    fn from_retained(
+        content: &PatchFileContent,
+        retained: &[u8],
+        first_line: u32,
+    ) -> Result<Self, PatchPreviewError> {
         Ok(Self {
             bytes: retained.to_vec(),
+            first_line,
             total_bytes: u64::try_from(content.as_bytes().len())
                 .map_err(|_| PatchPreviewError::PreviewTooLarge)?,
             content_hash: content.content_hash(),
@@ -48,6 +60,12 @@ impl PatchContentPreview {
     #[must_use]
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
+    }
+
+    /// Returns the one-based absolute start line or empty insertion coordinate.
+    #[must_use]
+    pub const fn first_line(&self) -> u32 {
+        self.first_line
     }
 
     /// Returns the full untruncated byte count.
@@ -74,7 +92,7 @@ impl PatchContentPreview {
         self.line_endings
     }
 
-    /// Returns whether the retained prefix omits a tail.
+    /// Returns whether the excerpt omits any bytes of the full content.
     #[must_use]
     pub const fn truncated(&self) -> bool {
         self.truncated
@@ -86,6 +104,7 @@ impl fmt::Debug for PatchContentPreview {
         formatter
             .debug_struct("PatchContentPreview")
             .field("retained_bytes", &self.bytes.len())
+            .field("first_line", &self.first_line)
             .field("total_bytes", &self.total_bytes)
             .field("content_hash", &self.content_hash)
             .field("encoding", &self.encoding)
@@ -133,13 +152,20 @@ impl PatchPreviewEntry {
         self.target_path.as_ref()
     }
 
-    /// Returns the bounded exact prior-content prefix.
+    /// Returns the bounded exact prior-content excerpt.
     #[must_use]
     pub const fn before(&self) -> Option<&PatchContentPreview> {
         self.before.as_ref()
     }
 
-    /// Returns the bounded exact resulting-content prefix.
+    /// Returns the bytes retained on both sides of this entry.
+    #[must_use]
+    pub fn retained_bytes(&self) -> usize {
+        self.before().map_or(0, |preview| preview.bytes().len())
+            + self.after().map_or(0, |preview| preview.bytes().len())
+    }
+
+    /// Returns the bounded exact resulting-content excerpt.
     #[must_use]
     pub const fn after(&self) -> Option<&PatchContentPreview> {
         self.after.as_ref()
@@ -177,10 +203,8 @@ impl PatchPreview {
             return Err(PatchPreviewError::OperationMismatch);
         }
         let retained_bytes = entries.iter().try_fold(0usize, |total, entry| {
-            let bytes = entry.before().map_or(0, |preview| preview.bytes().len())
-                + entry.after().map_or(0, |preview| preview.bytes().len());
             total
-                .checked_add(bytes)
+                .checked_add(entry.retained_bytes())
                 .ok_or(PatchPreviewError::PreviewTooLarge)
         })?;
         if retained_bytes > MAX_PATCH_PREVIEW_BYTES

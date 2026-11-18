@@ -1,7 +1,8 @@
 use crate::{JobContext, ProgressReportError};
 use a3_domain::{
-    PatchAction, PatchChangeSet, PatchPreview, PolicyDecision, PolicyDecisionId,
-    PolicyDecisionOutcome, PolicyDecisionReason, Progress, ProjectIdentity, PublishedIndex,
+    FileRevision, PatchAction, PatchChangeSet, PatchFileContent, PatchPreview, PolicyDecision,
+    PolicyDecisionId, PolicyDecisionOutcome, PolicyDecisionReason, Progress, ProjectIdentity,
+    PublishedIndex,
 };
 use std::error::Error;
 use std::fmt;
@@ -15,6 +16,10 @@ pub type PatchPreviewFuture<'a> =
 /// Future returned by the object-safe mutating patch-apply port.
 pub type PatchApplyFuture<'a> =
     Pin<Box<dyn Future<Output = Result<PatchChangeSet, PatchApplyFailure>> + Send + 'a>>;
+
+/// Future for the internal safe reread used to assemble a complete window edit.
+pub type PatchUpdateBaseFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<PatchFileContent, PatchPreviewFailure>> + Send + 'a>>;
 
 /// Cooperative cancellation and bounded progress for preview and application.
 pub trait WorkspacePatchControl: fmt::Debug + Send + Sync {
@@ -140,6 +145,17 @@ impl Error for PatchAuthorizationError {}
 
 /// Narrow workspace capability for safe preview and one-shot patch application.
 pub trait WorkspacePatchTool: fmt::Debug + Send + Sync {
+    /// Rereads the exact published update revision. Full content stays inside the Core.
+    fn read_update_base<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+        _published: &'a PublishedIndex,
+        _expected: &'a FileRevision,
+        _control: &'a dyn WorkspacePatchControl,
+    ) -> PatchUpdateBaseFuture<'a> {
+        Box::pin(std::future::ready(Err(PatchPreviewFailure::Unavailable)))
+    }
+
     /// Revalidates the published snapshot and live filesystem, then returns a bounded preview.
     fn preview<'a>(
         &'a self,
@@ -191,6 +207,8 @@ impl PatchConflictKind {
 /// Stable preview failure without paths, file content, or OS diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PatchPreviewFailure {
+    /// The exact changed lines cannot fit the bounded pre-approval display.
+    ChangeWindowTooLarge,
     /// Worktree, path class, or canonical root policy denied the action.
     Denied,
     /// Action no longer targets the current published snapshot.
@@ -210,6 +228,7 @@ pub enum PatchPreviewFailure {
 impl fmt::Display for PatchPreviewFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::ChangeWindowTooLarge => "patch change window exceeds the preview boundary",
             Self::Denied => "workspace patch preview was denied",
             Self::StaleSnapshot => "workspace patch snapshot is stale",
             Self::Conflict(_) => "workspace patch preview conflicts with the current source state",

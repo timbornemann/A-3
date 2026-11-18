@@ -1,7 +1,18 @@
 # Architektur- und Code-Regeln
 
 Status: verbindlich  
-Stand: 2026-08-03
+Stand: 2026-11-06
+
+[ADR-0119](adrs/0119-kleinschrittiger-agentenkern-fuer-lokale-modelle.md) ist
+angenommen. Diese Regeln gelten für die neuen Verträge aus
+[Plan 22](plans/22-SMALL-LOCAL-MODEL-AGENT-CORE.md). Die heutige SourceGuided-
+Produktkomposition bleibt bis P11 als eingefrorene Altbaseline ausgewählt;
+P2–P10 verwenden ausschließlich eine Kandidaten-Testkomposition und isolierte
+Daten. Historische Implementierungsbeschreibungen begründen keinen zweiten
+produktiven Steuerungspfad. Sicherheits- und Recoveryregeln bleiben verbindlich.
+Für den Entwicklungsneustart gilt zusätzlich [ADR-0119](adrs/0119-kleinschrittiger-agentenkern-fuer-lokale-modelle.md): keine Übernahme
+oder Produktlesbarkeit alter Entwicklungsdaten; frischer Datenbestand in P11.
+Die eingefrorene P0-Reproduktion und Recovery neuer Runs bleiben erhalten.
 
 ## 1. Verantwortung und Kohäsion
 
@@ -80,12 +91,26 @@ Stand: 2026-08-03
 
 1. Provider-Payloads bleiben im Provider-Adapter.
 2. Modellfähigkeiten werden über ein ModelProfile beschrieben und nicht aus dem Modellnamen erraten.
-3. Werkzeugauswahl und Deep-Map-Ausgaben verwenden versionierte JSON-Schemas.
+3. Werkzeugeingaben, strukturierte Phasenaufträge und Deep-Map-Ausgaben verwenden versionierte
+   Schemas und strikte Decoder. Freier Chat benötigt keine Coding-JSON-Fähigkeit;
+   Streamvalidierung, Outputlimit, Timeout und Cancellation bleiben erforderlich.
 4. Jede Ausgabe wird vor Ausführung validiert.
 5. Eine Reparaturanfrage ist maximal einmal zulässig.
 6. Temperatur, Kontextlimit, Outputreserve und Stopbedingungen sind Teil eines versionierten Laufprofils.
 7. Prompts enthalten keine vollständigen, unkontrollierten Werkzeugausgaben.
 8. Der LLM-Aufruf darf keinen eigenen Sicherheitsstatus oder Claim-Faktstatus setzen.
+9. Der Core bestimmt pro Aufruf genau einen kleinen Phasenauftrag. Bekannte IDs, Hashes und
+   deterministische Zustandskanten bleiben Core-Aufgaben. Plan-/Editphasen dürfen regulär
+   begrenztes NeedEvidence oder TooLarge zurückgeben, ohne Mutation oder Strukturrepair.
+10. Der vollständige Originalauftrag bleibt unveränderlich im Goal-Store, initial höchstens
+    64 KiB UTF-8. Jeder Agentturn erhält eine revisionsgebundene aktive Teilsicht mit seinen
+    Kriterien, sämtlichen möglicherweise geltenden Constraints, relevanten offenen Fehlern
+    und begrenzter Gesamtabdeckung. Ausgelassene Anforderungen bleiben dauerhaft offen.
+11. Mindestens 22 Prozent Kontext oder das höhere konfigurierte Outputlimit bleiben reserviert.
+    Tatsächlich gesendetes Schema, Wiederholungen, Protokoll und Thinking zählen mit.
+    Nicht passende Pflichtteile führen zu Zerlegung oder erklärtem Kapazitätshalt.
+12. Readanzahl ersetzt keine aktuelle Quellabdeckung. Quellenfortschritt wird über tatsächlich
+    gelieferte neue relevante Bereiche erfasst; erschöpfte Suche erzwingt keine Änderung.
 
 ## 9. Workspace-Werkzeuge
 
@@ -98,6 +123,10 @@ Stand: 2026-08-03
 7. Mutationen erzeugen vor dem nächsten Modellturn ein aktualisiertes Change Set.
 8. Add- und Move-Patches dürfen fehlende Elternverzeichnisse nur innerhalb der kanonischen Root
    erzeugen; vorhandene Link-/Reparse-Komponenten bleiben gesperrt und Ziele werden nie ersetzt.
+9. Modellseitige Bereichsedits binden ausschließlich tatsächlich gelieferte aktuelle Bytes.
+   Der Core erhält alle übrigen Bytes und BOM/EOL und kompiliert denselben vollständigen
+   PatchUpdate vor der bestehenden Vorschau-, Policy-, Lease-, Hash- und Recoverygrenze.
+   Fremde Aliase, Überlappung, stale Bytes und unscharfer Ersatz bleiben ausgeschlossen.
 
 ## 10. Frontend und IPC
 
@@ -141,25 +170,28 @@ Stand: 2026-08-03
 15. Frontend-Performanceclaims benötigen getrennte deterministische Verträge, einen realen
     Browserprofil-Lauf und eine native App-Prozessmessung. Synthetische DOM-Zeit allein ist kein
     Beleg für Interaktionslatenz oder Idle-RAM.
-16. Die Auswahl eines Conversation-Modus gilt nur für das nächste unabhängige Work Item und DARF
-    keinen laufenden Besitzer umschalten. Dauerhafte Folgenachrichten MÜSSEN begrenzt, FIFO-geordnet
-    und vor Persistenz sowie Start Core-validiert sein. Ein Wechsel aus Agent zu Ask oder Plan
-    verwirft die Ausführbarkeit des früheren Plans. Plan-Mutation benötigt eine neue exakte
-    Planfreigabe. Der Zielmodus Agent erzeugt einen neuen Core-validierten Arbeitsplan und
-    materialisiert ihn ohne Nutzer-Planfreigabe.
-17. Ein Core-validierter Conversation-Plan MUSS vor der Task-Materialisierung in einen begrenzten,
-    einzeln verifizierbaren Arbeitsplan übersetzt werden, ob er aus Planfreigabe oder autonomem
-    Agent-Einstieg stammt. Neue Evidence darf ausschließlich über eine append-only Ledger-Revision
-    weitere Schritte einfügen oder offene Schritte ersetzen; abgeschlossene Schritte werden weder
-    umgeschrieben noch stillschweigend entwertet. Automatische Replans bleiben endlich und genau
-    eine Mutation darf weiterhin den Worktree besitzen.
-18. Eine Conversation-Antwort DARF bei einer ausdrücklich als unvollständig ausgewiesenen
-    Evidence-Lage nicht abgeschlossen werden, solange das feste Rechercheprofil einen weiteren
-    Schritt zulässt. Eindeutig genannte aktuelle Indexdateien bilden eine Core-geprüfte
-    Mindestabdeckung. Ein veröffentlichter Index ohne Dateien ist eine abgeschlossene
-    Core-Bestandsaufnahme, keine unvollständige Evidence-Lage. Transiente Read- und Modell-Retries
-    MÜSSEN innerhalb der bestehenden Entscheidungs-, Zeit- und Aktionsgrenzen bleiben; sie dürfen
-    weder Cancellation noch eine Source-, Policy- oder Capability-Ablehnung umgehen.
+16. Die Modi Chat, Ask und Agent sind Core-erzwungene Capability-Envelopes. Chat arbeitet ohne
+    Projekt und ohne Projektwerkzeuge; Ask liest ausschließlich das gebundene Projekt und besitzt
+    keine Mutation oder allgemeinen Prozess-/Netzwerktools. Modusauswahl gilt nur für das nächste
+    unabhängige Work Item und DARF keinen laufenden Besitzer umschalten. Folgenachrichten bleiben
+    begrenzt, FIFO-geordnet und vor Persistenz sowie Start Core-validiert. Frühere Ausführungsanker
+    werden nicht übernommen. Alte Entwicklungs-Plan-Sessions müssen gemäß ADR-0119 nicht im neuen
+    Produkt lesbar bleiben; alte Freigaben erzeugen keine neue Ausführungsautorität.
+17. Agentplanung MUSS strukturierte kleine Umsetzungsschritte an Originalanforderungen und passende
+    Verifikation binden. Initial gelten höchstens fünf Ergebnisgruppen und drei konkret vorbereitete
+    Schritte; nur der nächste Schritt erhält ausführbare Ressourcen. Neue Evidence darf über
+    append-only Ledgerrevisionen weitere Schritte einfügen oder offene Schritte ersetzen.
+    Replans ändern den Arbeitszuschnitt oder die Evidenzpflichten tatsächlich und erhalten die
+    Abdeckung sowie abgeschlossene History. Eine Bitte, zunächst nur zu planen, bleibt ein
+    Mutationsverbot bis zur ausdrücklichen Umsetzungsauswahl. Automatische Replans bleiben endlich;
+    genau eine Mutation darf den Worktree besitzen.
+18. Quellengebundene Antworten müssen aktuelle Belege und offene Grenzen unterscheiden. Eine
+    ausdrücklich unvollständige Evidenzlage wird innerhalb des verbleibenden Budgets gezielt
+    weiterbearbeitet oder als begründeter Halt/Teilstand gezeigt, niemals als richtige vollständige
+    Antwort. Aktuelle explizite Indexziele bilden eine Core-geprüfte Mindestabdeckung; ein leerer
+    veröffentlichter Index ist eine abgeschlossene Bestandsaufnahme. Transiente Read-/Modell-Retries
+    bleiben innerhalb bestehender Entscheidungs-, Zeit- und Aktionsgrenzen und dürfen Cancellation,
+    Source-, Policy- oder Capability-Ablehnung sowie den Einzelrepair nicht umgehen.
 19. Der flüchtige Conversation-Recherchekontext MUSS aktuelle explizite Repositoryziele vor
     allgemeiner Task-Lens-Auswahl und historischem Sessionwissen priorisieren. Spätere adaptive
     Reads MÜSSEN nutzbaren Kontextplatz erhalten. Revalidierte alte Evidence darf eine aktuelle
@@ -177,6 +209,10 @@ Stand: 2026-08-03
     Testerstellung. Prüfabsichten dürfen keine Testartefakte implizieren; ein fehlender Command
     erzwingt kein Scaffolding. Diff-Evidence darf keine Laufzeitbehauptung verifizieren.
     Siehe [ADR-0117](adrs/0117-auftragsbezogene-tests-und-verifikation.md).
+22. Nach Abschluss des aktuellen Planungshorizonts führen offene globale Kriterien im selben Run
+    über dauerhafte Ledger-/Journal-CAS von Verify zu Plan. Verbrauch und ausstehende Planung bleiben
+    crashsicher; kein neuer Run und kein Budgetreset. Done verlangt vollständige Originalabdeckung
+    und passende aktuelle Ergebnisnachweise. Ein externer Evaluator ersetzt kein produktives Rezept.
 
 ## 11. Tests
 
@@ -213,10 +249,12 @@ Vor Abschluss MUSS Codex beantworten können:
 - Der chatbasierte Agent Workspace ist ausschließlich eine begrenzte Präsentationsprojektion.
   Sessiontext, Modus und UI-Status ersetzen niemals Goal Contract, Task Ledger, Agent Run,
   Journal, Evidence, Policy oder Verification.
-- `Ask`, `Plan` und `Agent` sind Core-erzwungene Capability-Envelopes. Eine Beschriftung oder
+- `Chat`, `Ask` und `Agent` sind Core-erzwungene Capability-Envelopes. Eine Beschriftung oder
   deaktivierte Schaltfläche im Frontend gilt nicht als Sicherheitsgrenze.
-- Eine Planumsetzung bindet immer die exakte sichtbare Session- und Planrevision; Pfade, Befehle,
-  Approval-IDs und Providerdaten werden nicht aus freiem Chattext übernommen.
+- Planung ist interne Agentenarbeit; Umsetzung bindet die aktuelle Goal-/Ledgerrevision und den
+  tatsächlichen Projektscope. Ein Plan-only-Constraint wird ausdrücklich aufgehoben, bevor Mutation
+  zulässig ist. Pfade, Befehle, Approval-IDs und Providerdaten werden nicht aus freiem Chattext
+  als Autorität übernommen. Legacy-Planfreigaben werden niemals automatisch migriert.
 - Slash Commands sind geschlossene Core-Arbeitsprofile. Sie DÜRFEN Recherchefokus, Ergebnisform
   und Verification präzisieren, aber weder Modusgrenzen noch Tool-, Prozess-, Netzwerk-, Datei-
   oder Mutationsberechtigungen erweitern. Die WebView ist für Parsing und Modusprüfung niemals

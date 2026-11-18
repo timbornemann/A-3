@@ -229,12 +229,13 @@ fn timeout_kills_the_spawned_child_process() -> Result<(), Box<dyn Error>> {
         vec!["spawn-child", pid_argument],
         WorkspaceDirectory::Root,
         Vec::new(),
-        1_000,
+        // Leave time for both fixture processes to start under workspace test load.
+        5_000,
         1_024,
         &ActiveControl,
     )?;
     assert_eq!(result.termination(), ProcessTermination::TimedOut);
-    let pid: u32 = fs::read_to_string(&pid_file)?.trim().parse()?;
+    let pid = read_ready_pid(&pid_file).ok_or("timeout fixture did not spawn the child")?;
     assert_process_stopped(pid)?;
     assert_event_contract(
         &events,
@@ -308,7 +309,7 @@ fn cancellation_kills_the_spawned_child_process() -> Result<(), Box<dyn Error>> 
         .name("a3-process-contract-canceller".to_owned())
         .spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(5);
-            while !observed_pid_file.exists() && Instant::now() < deadline {
+            while read_ready_pid(&observed_pid_file).is_none() && Instant::now() < deadline {
                 thread::sleep(Duration::from_millis(10));
             }
             cancellation.cancel();
@@ -327,7 +328,7 @@ fn cancellation_kills_the_spawned_child_process() -> Result<(), Box<dyn Error>> 
         return Err("cancellation helper panicked".into());
     }
     assert_eq!(result.termination(), ProcessTermination::Cancelled);
-    let pid: u32 = fs::read_to_string(&pid_file)?.trim().parse()?;
+    let pid = read_ready_pid(&pid_file).ok_or("cancellation fixture did not spawn the child")?;
     assert_process_stopped(pid)?;
     assert_event_contract(
         &events,
@@ -372,6 +373,144 @@ fn output_overflow_is_drained_without_blocking_the_process() -> Result<(), Box<d
         1
     );
     Ok(())
+}
+
+#[test]
+fn early_parent_exit_does_not_disable_timeout_while_descendant_holds_output()
+-> Result<(), Box<dyn Error>> {
+    run_ready_pipe_hold(false)
+}
+
+#[test]
+fn early_parent_exit_does_not_disable_cancellation_while_descendant_holds_output()
+-> Result<(), Box<dyn Error>> {
+    run_ready_pipe_hold(true)
+}
+
+fn run_ready_pipe_hold(cancel_on_output: bool) -> Result<(), Box<dyn Error>> {
+    let fixture = ProcessFixture::new()?;
+    let runner = WorkspaceProcessRunner::new(fixture.environment()?);
+    let child_pid_file = fixture.root().join("pipe-child.pid");
+    let parent_pid_file = fixture.root().join("early-parent.pid");
+    let control = CancellableControl::default();
+    let started = Instant::now();
+    let events = ReadyPipeEvents {
+        inner: RecordingEvents::default(),
+        child_pid_file: child_pid_file.clone(),
+        parent_pid_file: parent_pid_file.clone(),
+        started,
+        proof: Mutex::new(None),
+        cancel_on_output: cancel_on_output.then(|| control.clone()),
+    };
+    let executable = fixture
+        .executable
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .ok_or("fixture executable name is not UTF-8")?;
+    let specification = fixture.specification(
+        ProcessExecutable::try_from_string(executable.to_owned())?,
+        vec![
+            "spawn-child-and-exit",
+            child_pid_file
+                .to_str()
+                .ok_or("child PID path is not UTF-8")?,
+            parent_pid_file
+                .to_str()
+                .ok_or("parent PID path is not UTF-8")?,
+        ],
+        WorkspaceDirectory::Root,
+        Vec::new(),
+        5_000,
+        1_024,
+    )?;
+    let decision = automatic_decision(&specification)?;
+    let result = futures::executor::block_on(runner.run(
+        &fixture.project,
+        AuthorizedProcessSpec::new(specification, &decision)?,
+        &control,
+        &events,
+    ));
+    let elapsed = started.elapsed();
+    // Report an explicit setup failure before inspecting the operational result.
+    // Missing PID readiness must never be misreported as a runner timeout defect.
+    let (parent_pid, child_pid, ready_at) = (*lock_recovering_poison(&events.proof))
+        .ok_or("fixture did not prove parent exit and live pipe-owning child before deadline")?;
+    let result = result?;
+    assert!(ready_at < Duration::from_millis(3_500));
+    assert_eq!(
+        result.termination(),
+        if cancel_on_output {
+            ProcessTermination::Cancelled
+        } else {
+            ProcessTermination::TimedOut
+        }
+    );
+    assert!(elapsed < Duration::from_secs(8));
+    assert_eq!(
+        result.stdout().content().as_text(),
+        Some("pipe-held-stdout\n")
+    );
+    assert_eq!(
+        result.stderr().content().as_text(),
+        Some("pipe-held-stderr\n")
+    );
+    assert_process_stopped(parent_pid)?;
+    assert_process_stopped(child_pid)?;
+    assert_event_contract(
+        &events.inner.take(),
+        result.specification_id(),
+        if cancel_on_output {
+            ProcessTerminationKind::Cancelled
+        } else {
+            ProcessTerminationKind::TimedOut
+        },
+    )?;
+    Ok(())
+}
+
+#[derive(Debug)]
+struct ReadyPipeEvents {
+    inner: RecordingEvents,
+    child_pid_file: PathBuf,
+    parent_pid_file: PathBuf,
+    started: Instant,
+    proof: Mutex<Option<(u32, u32, Duration)>>,
+    cancel_on_output: Option<CancellableControl>,
+}
+
+impl ProcessEventSink for ReadyPipeEvents {
+    fn emit(&self, event: ProcessEvent) -> Result<(), ProcessEventSinkError> {
+        if matches!(event.kind(), ProcessEventKind::Started) {
+            // The real child publishes readiness only after flushing both pipe markers.
+            // The parent waits for that readiness, then actually exits. The Started
+            // callback waits only within a separate bounded setup allowance.
+            loop {
+                if self.started.elapsed() >= Duration::from_millis(3_500) {
+                    return Err(ProcessEventSinkError);
+                }
+                if let (Some(parent), Some(child)) = (
+                    read_ready_pid(&self.parent_pid_file),
+                    read_ready_pid(&self.child_pid_file),
+                ) && process_exists(parent).is_ok_and(|alive| !alive)
+                    && process_exists(child).is_ok_and(|alive| alive)
+                    && self.started.elapsed() < Duration::from_millis(3_500)
+                {
+                    *lock_recovering_poison(&self.proof) =
+                        Some((parent, child, self.started.elapsed()));
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+        if matches!(event.kind(), ProcessEventKind::Output { .. })
+            && let Some(control) = &self.cancel_on_output
+        {
+            // Deliberately after the first loop's control checks, before try_wait.
+            // The old early-exit path now deterministically misses this request.
+            control.cancel();
+        }
+        self.inner.emit(event)
+    }
 }
 
 #[test]
@@ -717,6 +856,11 @@ fn lock_recovering_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     }
+}
+
+fn read_ready_pid(path: &Path) -> Option<u32> {
+    let text = fs::read_to_string(path).ok()?;
+    text.strip_suffix('\n')?.parse().ok()
 }
 
 fn assert_process_stopped(pid: u32) -> Result<(), Box<dyn Error>> {

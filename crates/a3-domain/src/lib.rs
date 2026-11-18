@@ -1,4 +1,11 @@
 //! Framework-independent domain model and invariants for A^3.
+pub use project::{
+    GoalIntakeFinding, GoalIntakeFindingKind, GoalIntakeOpenQuestion, GoalIntakeQuestionDraft,
+    GoalIntakeQuestionId, GoalIntakeQuestionKind, GoalIntakeReview, GoalIntakeReviewBatch,
+    GoalIntakeReviewBatchProposal, GoalIntakeReviewError, GoalIntakeReviewRevision,
+    MAX_GOAL_INTAKE_BATCH_FINDINGS, MAX_GOAL_INTAKE_BATCH_QUESTIONS, MAX_GOAL_INTAKE_QUESTIONS,
+    MAX_GOAL_INTAKE_REVIEW_BATCHES, MAX_GOAL_INTAKE_REVIEW_PATH_BYTES,
+};
 
 mod health;
 mod job;
@@ -13,6 +20,32 @@ pub use project::{
     MachineFileAction, MachineFileActionError, MachineFileOperation, MachineFilePath,
 };
 mod version;
+
+pub use project::GoalOriginalBindingError;
+pub use project::{CriterionEvidenceRequirement, CriterionOrigin, CriterionVerificationMismatch};
+pub use project::{GoalIntakeError, PendingGoalIntake};
+pub use project::{
+    GoalOriginalCoverage, GoalOriginalCoverageError, GoalOriginalEntry, GoalOriginalEntryKind,
+    GoalOriginalEntryOrdinal,
+};
+pub use project::{
+    LOOPBACK_CLEANUP_RESERVE_MILLIS, LOOPBACK_DEFAULT_PORT, LoopbackExpectedBody,
+    LoopbackFailureExitCode, LoopbackHeaderChecks, LoopbackHttpCheck, LoopbackHttpError,
+    LoopbackHttpEvidence, LoopbackHttpEvidenceContext, LoopbackHttpMismatch,
+    LoopbackHttpMismatchDiagnostic, LoopbackHttpObservation, LoopbackHttpProcess,
+    LoopbackHttpRecipe, LoopbackMethod, LoopbackProbe, LoopbackProcessSettings, LoopbackStart,
+    LoopbackStartupEvidence, LoopbackStartupPhase, MAX_LOOPBACK_BODY_BYTES, MAX_LOOPBACK_PROBES,
+    MAX_LOOPBACK_PROCESS_MILLIS, loopback_script_path,
+};
+pub use project::{
+    MAX_PYTHON_TRANSLATION_SOURCE_BYTES, PythonIntegerTranslation, PythonIntegerTranslationError,
+    PythonIntegerTranslationWitness,
+};
+
+pub use project::{
+    GoalOriginalDigest, GoalOriginalError, GoalOriginalRange, GoalOriginalRequest,
+    MAX_GOAL_ORIGINAL_BYTES, MAX_GOAL_ORIGINAL_PART_BYTES, MAX_GOAL_ORIGINAL_PARTS,
+};
 
 pub use project::{
     MAX_RESEARCH_QUESTIONS, ResearchAccessAttempt, ResearchAccessKind, ResearchAccessOutcome,
@@ -149,14 +182,14 @@ pub use project::{
     PatchFileContent, PatchFileContentError, PatchLineEndings, PatchMove, PatchOperation,
     PatchOperationError, PatchPolicyAction, PatchPreview, PatchPreviewEntry, PatchPreviewError,
     PatchRationale, PatchRationaleError, PatchScopeDigest, PatchTextEncoding, PatchUpdate,
-    PathPolicyOperation, PathScopeCoverage, PolicyAction, PolicyActionFingerprint, PolicyDecision,
-    PolicyDecisionError, PolicyDecisionId, PolicyDecisionOutcome, PolicyDecisionReason,
-    PolicyDisposition, PolicyEvaluationTiming, PolicyEvaluationTimingError, PolicyPathScope,
-    PolicyResourceId, PolicyScopeDigest, PreparedDiscoveredCommandApproval, ProcessArgument,
-    ProcessArgumentError, ProcessDuration, ProcessEnvironmentVariable,
-    ProcessEnvironmentVariableError, ProcessEvent, ProcessEventKind, ProcessEventSequence,
-    ProcessEventSequenceError, ProcessExecutable, ProcessExecutableError, ProcessExecutionMode,
-    ProcessExit, ProcessExitError, ProcessNetworkScope, ProcessOutputCapture,
+    PathPolicyOperation, PathScopeCoverage, PlannedFileAddition, PolicyAction,
+    PolicyActionFingerprint, PolicyDecision, PolicyDecisionError, PolicyDecisionId,
+    PolicyDecisionOutcome, PolicyDecisionReason, PolicyDisposition, PolicyEvaluationTiming,
+    PolicyEvaluationTimingError, PolicyPathScope, PolicyResourceId, PolicyScopeDigest,
+    PreparedDiscoveredCommandApproval, ProcessArgument, ProcessArgumentError, ProcessDuration,
+    ProcessEnvironmentVariable, ProcessEnvironmentVariableError, ProcessEvent, ProcessEventKind,
+    ProcessEventSequence, ProcessEventSequenceError, ProcessExecutable, ProcessExecutableError,
+    ProcessExecutionMode, ProcessExit, ProcessExitError, ProcessNetworkScope, ProcessOutputCapture,
     ProcessOutputCaptureError, ProcessOutputChunk, ProcessOutputChunkError, ProcessOutputContent,
     ProcessOutputContentError, ProcessOutputDigest, ProcessOutputLimit, ProcessOutputLimitError,
     ProcessOutputRedaction, ProcessPlanBinding, ProcessPolicyAction, ProcessRunResult,
@@ -231,3 +264,5 @@ pub use project::{
 };
 pub use project::{MachineProcessAction, MachineProcessActionError, MachineProcessEffect};
 pub use version::{ApplicationVersion, ApplicationVersionError};
+
+pub use project::{PendingPlanning, PendingPlanningStage, TaskLedgerReplanCause};

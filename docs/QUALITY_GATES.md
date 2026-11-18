@@ -690,6 +690,14 @@ offengelegt werden, nicht als isolierter Prosaeffekt erscheinen.
 
 ### Persistenz
 
+Für den Entwicklungsneustart in [Plan 22](plans/22-SMALL-LOCAL-MODEL-AGENT-CORE.md)
+gilt [ADR-0119](adrs/0119-kleinschrittiger-agentenkern-fuer-lokale-modelle.md): Neue Verträge
+benötigen Neuinitialisierung, Versions-/Identitätsprüfung, CAS, Reopen, atomaren
+Rollback und Recovery des neuen Datenbestands. Eine Upgrade-Matrix oder Lesbarkeit
+alter Entwicklungsdaten ist dafür kein Gate. Die nachstehenden historischen
+Upgradeverträge bleiben Teil der eingefrorenen Baseline, erzeugen aber keine neue
+Altübernahmeverpflichtung. `connection_lifecycle` bleibt verbindlich.
+
 - Migration von leerer DB
 - Upgrade aus jeder unterstützten Vorgängerversion
 - Rollback des Appstarts bei fehlgeschlagener Migration ohne Datenverlust

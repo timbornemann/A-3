@@ -1,5 +1,8 @@
 //! Offline HTTP contract for the Ollama-compatible streaming adapter.
 
+#[path = "ollama_contract/projected_wire.rs"]
+mod projected_wire;
+
 use a3_application::{
     DiscoverProviderModels, EmbeddingCapabilityProbeRequest, EmbeddingOperationControl,
     EmbeddingProvider, EmbeddingRequestTimeout, ModelCancellationFuture,

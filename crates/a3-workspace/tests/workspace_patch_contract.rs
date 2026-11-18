@@ -2,6 +2,9 @@
 
 mod support;
 
+#[path = "workspace_patch_contract/change_window_preview.rs"]
+mod change_window_preview;
+
 use a3_application::{
     AuthorizedPatchAction, PatchApplyFailure, PatchConflictKind, PatchPreviewFailure,
     WorkspacePatchControl, WorkspacePatchProgressError, WorkspacePatchTool,
@@ -44,19 +47,19 @@ impl WorkspacePatchControl for Active {
 }
 
 #[derive(Debug)]
-struct ConflictAfterFirstChange {
-    conflicting_path: PathBuf,
+struct ForeignWriteAfterFirstChange {
+    path: PathBuf,
+    bytes: &'static [u8],
 }
 
-impl WorkspacePatchControl for ConflictAfterFirstChange {
+impl WorkspacePatchControl for ForeignWriteAfterFirstChange {
     fn is_cancelled(&self) -> bool {
         false
     }
 
     fn report_progress(&self, progress: Progress) -> Result<(), WorkspacePatchProgressError> {
-        if progress.completed() == Some(1) && !self.conflicting_path.exists() {
-            fs::write(&self.conflicting_path, b"user content\n")
-                .map_err(|_| WorkspacePatchProgressError)?;
+        if progress.completed() == Some(1) {
+            fs::write(&self.path, self.bytes).map_err(|_| WorkspacePatchProgressError)?;
         }
         Ok(())
     }
@@ -426,8 +429,9 @@ fn a_late_conflict_returns_the_exact_partial_change_set() -> Result<(), Box<dyn 
             )),
         ],
     )?;
-    let control = ConflictAfterFirstChange {
-        conflicting_path: root.join("z-second.txt"),
+    let control = ForeignWriteAfterFirstChange {
+        path: root.join("z-second.txt"),
+        bytes: b"user content\n",
     };
     let result = futures::executor::block_on(WorkspacePatchAdapter::new().apply(
         &project,
@@ -444,6 +448,64 @@ fn a_late_conflict_returns_the_exact_partial_change_set() -> Result<(), Box<dyn 
     assert_eq!(changes.action_digest(), action.digest());
     assert_eq!(fs::read(root.join("a-first.txt"))?, b"first\n");
     assert_eq!(fs::read(root.join("z-second.txt"))?, b"user content\n");
+    Ok(())
+}
+
+#[test]
+fn later_update_rechecks_its_hash_and_preserves_a_progress_hook_edit() -> Result<(), Box<dyn Error>>
+{
+    const SECOND_BEFORE: &[u8; 14] = b"second before\n";
+    const FOREIGN_BYTES: &[u8; 14] = b"second editor\n";
+    let fixture = TempDirectory::new()?;
+    let root = fixture.path().join("selected");
+    fs::create_dir(&root)?;
+    let first = write_revision(&root, b"a-first.txt", b"first before\n")?;
+    let second = write_revision(&root, b"z-second.txt", SECOND_BEFORE)?;
+    let first_after = PatchFileContent::try_from_bytes(b"first agent\n".to_vec())?;
+    let snapshot_id = SnapshotId::from_bytes([22; 32]);
+    let project = project(&root)?;
+    let published = published_index(snapshot_id, vec![first.clone(), second.clone()])?;
+    let action = patch_action(
+        project.worktree().id(),
+        snapshot_id,
+        vec![
+            PatchOperation::Update(PatchUpdate::new(first.clone(), first_after.clone())?),
+            PatchOperation::Update(PatchUpdate::new(
+                second,
+                PatchFileContent::try_from_bytes(b"second agent\n".to_vec())?,
+            )?),
+        ],
+    )?;
+    let control = ForeignWriteAfterFirstChange {
+        path: root.join("z-second.txt"),
+        bytes: FOREIGN_BYTES,
+    };
+    let result = futures::executor::block_on(WorkspacePatchAdapter::new().apply(
+        &project,
+        &published,
+        authorize(action.clone())?,
+        &control,
+    ));
+
+    let Err(PatchApplyFailure::Changed(changes)) = result else {
+        return Err("late update conflict did not retain the applied prefix".into());
+    };
+    assert!(!changes.complete());
+    assert_eq!(changes.action_digest(), action.digest());
+    assert_eq!(
+        changes.changes(),
+        &[PatchChange::Updated {
+            previous: first.clone(),
+            current: FileRevision::new(first.path().clone(), first_after.content_hash()),
+        }],
+    );
+    assert_eq!(fs::read(root.join("a-first.txt"))?, first_after.as_bytes());
+    assert_eq!(fs::read(root.join("z-second.txt"))?, FOREIGN_BYTES);
+    assert_eq!(
+        fs::read_dir(&root)?.count(),
+        2,
+        "unconsumed staging file remains"
+    );
     Ok(())
 }
 

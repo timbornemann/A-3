@@ -2,20 +2,22 @@ use crate::{
     AdvanceAgentController, AgentActionStore, AgentActionStoreFailure, AgentActivity,
     AgentActivityLoadResult, AgentControllerSignal, AgentInspectionContext,
     AgentProcessInspectionKind, GetAgentActivity, GetAgentActivityFailure, GrantPolicyApproval,
-    GrantPolicyApprovalError, PolicyStore, PolicyStoreFailure, RevokePolicyApproval,
-    RevokePolicyApprovalError, RunJournalStore, TaskLedgerStoreVersion, TaskLensWorkspaceControl,
-    TaskLensWorkspaceStore,
+    GrantPolicyApprovalError, PolicyStore, PolicyStoreFailure, PreparedLoopbackStartupCoverage,
+    PreparedLoopbackVerification, RevokePolicyApproval, RevokePolicyApprovalError, RunJournalStore,
+    TaskLedgerStoreVersion, TaskLensWorkspaceControl, TaskLensWorkspaceStore,
 };
 use a3_domain::{
     ActionClass, AgentControllerState, AgentRun, AgentRunTimestamp, ApprovalGrant, ApprovalId,
-    ApprovalRequest, ApprovalRequestId, ApprovalStatus, PatchAction, PatchOperation, PolicyAction,
-    PolicyActionFingerprint, PolicyDecisionReason, PolicyResourceId, PolicyScopeDigest,
-    ProcessExecutionMode, ProcessNetworkScope, ProcessPlanBinding, ProcessSpec, ProjectIdentity,
-    RepositoryPath, RiskLevel, RunEventId, TaskId, TaskLedger, TaskLedgerTimestamp,
-    TaskStepBlockingReason, TaskStepStatus, WorkspaceDirectory, WorktreeId,
+    ApprovalRequest, ApprovalRequestId, ApprovalStatus, LoopbackMethod, LoopbackStartupPhase,
+    PatchAction, PatchOperation, PolicyAction, PolicyActionFingerprint, PolicyDecisionReason,
+    PolicyResourceId, PolicyScopeDigest, ProcessExecutionMode, ProcessNetworkScope,
+    ProcessPlanBinding, ProcessSpec, ProjectIdentity, RepositoryPath, RiskLevel, RunEventId,
+    TaskId, TaskLedger, TaskLedgerTimestamp, TaskStepBlockingReason, TaskStepStatus,
+    WorkspaceDirectory, WorktreeId,
 };
 use std::error::Error;
 use std::fmt;
+use std::num::NonZeroU16;
 use std::sync::{Mutex, MutexGuard};
 
 const USER_DENIAL_REASON: &str = "user denied the exact mutation approval";
@@ -323,6 +325,38 @@ pub enum AgentApprovalAction {
         /// Complete-file operation or HTTP read.
         operation: a3_domain::PathPolicyOperation,
     },
+    /// Exact start for a closed HTTP recipe on literal IPv4 loopback.
+    LoopbackStart {
+        /// Complete approved argv, CWD, environment names, and process bounds.
+        process: AgentApprovalProcess,
+        /// Port on `127.0.0.1`, including when the argv relies on script defaults.
+        port: NonZeroU16,
+    },
+    /// One exact owned phase of the complete closed startup recipe.
+    LoopbackStartup {
+        /// Endpoint reservation, held/free start, default start, or invalid-port start.
+        phase: LoopbackStartupPhase,
+        /// Exact argv and process limits; absent only for the bound-only reservation.
+        process: Option<AgentApprovalProcess>,
+        /// Port on literal `127.0.0.1` involved in this phase.
+        port: NonZeroU16,
+    },
+    /// One exact HTTP request of the closed recipe.
+    LoopbackProbe {
+        /// Actual HTTP method, including methods whose expected result is rejection.
+        method: LoopbackMethod,
+        /// Literal credential-free URL derived from the prepared recipe.
+        url: String,
+    },
+}
+
+impl AgentApprovalAction {
+    fn is_loopback(&self) -> bool {
+        matches!(
+            self,
+            Self::LoopbackStart { .. } | Self::LoopbackStartup { .. } | Self::LoopbackProbe { .. }
+        )
+    }
 }
 
 /// Volatile lifecycle marker; durable grant state remains authoritative in `PolicyStore`.
@@ -414,7 +448,7 @@ impl AgentApprovalPresentation {
         self.expires_at
     }
 
-    /// Returns exact patch paths or exact process specification.
+    /// Returns the exact action presented for this request.
     #[must_use]
     pub const fn action(&self) -> &AgentApprovalAction {
         &self.action
@@ -461,6 +495,68 @@ pub trait AgentApprovalSink: fmt::Debug + Send + Sync {
     ) -> Result<AgentApprovalRevision, AgentApprovalSinkFailure> {
         let _ = (project, context, request, reason, action, scope);
         Err(AgentApprovalSinkFailure::AnchorMismatch)
+    }
+
+    /// Retains one durable start or ordered probe of a closed HTTP recipe.
+    ///
+    /// `probe` is `None` for the initial start. A probe replaces only the immediately preceding
+    /// granted presentation with the same anchors. The caller revalidates the durable grant.
+    #[allow(clippy::too_many_arguments)]
+    fn record_loopback_request(
+        &self,
+        project: &ProjectIdentity,
+        context: AgentInspectionContext,
+        request: &ApprovalRequest,
+        reason: PolicyDecisionReason,
+        prepared: &PreparedLoopbackVerification,
+        probe: Option<usize>,
+        previous: Option<(AgentApprovalRevision, ApprovalId)>,
+    ) -> Result<AgentApprovalRevision, AgentApprovalSinkFailure> {
+        let _ = (project, context, request, reason, prepared, probe, previous);
+        Err(AgentApprovalSinkFailure::AnchorMismatch)
+    }
+
+    /// Retains one exact ordered effect of the complete startup recipe.
+    ///
+    /// Only stage zero may start without a predecessor. Every later stage replaces the
+    /// immediately preceding exact granted presentation. Durable grant revalidation remains
+    /// the leased controller's responsibility before issuing this Core-only continuation.
+    #[allow(clippy::too_many_arguments)]
+    fn record_startup_request(
+        &self,
+        project: &ProjectIdentity,
+        context: AgentInspectionContext,
+        request: &ApprovalRequest,
+        reason: PolicyDecisionReason,
+        prepared: &PreparedLoopbackStartupCoverage,
+        stage: usize,
+        previous: Option<(AgentApprovalRevision, ApprovalId)>,
+    ) -> Result<AgentApprovalRevision, AgentApprovalSinkFailure> {
+        let _ = (project, context, request, reason, prepared, stage, previous);
+        Err(AgentApprovalSinkFailure::AnchorMismatch)
+    }
+
+    /// Checks that a Core-only Continue still selects the exact current loopback presentation.
+    ///
+    /// The controller must also reload and validate the durable grant under its worktree lease.
+    fn validate_loopback_continuation(
+        &self,
+        project: &ProjectIdentity,
+        continuation: &LoopbackApprovalContinuation,
+    ) -> Result<(), AgentApprovalSinkFailure> {
+        let _ = (project, continuation);
+        Err(AgentApprovalSinkFailure::AnchorMismatch)
+    }
+
+    /// Removes only an exact still-pending loopback presentation after failed admission.
+    fn discard_loopback_request(
+        &self,
+        project: &ProjectIdentity,
+        context: AgentInspectionContext,
+        request_id: ApprovalRequestId,
+        revision: AgentApprovalRevision,
+    ) {
+        let _ = (project, context, request_id, revision);
     }
 }
 
@@ -576,24 +672,7 @@ impl AgentApprovalBuffer {
         validate_request(project, context, request, reason, policy_action)?;
         let mut state = lock_recovering_poison(&self.state);
         state.ensure_active_project(project)?;
-        let revision = state
-            .next_revision()
-            .map_err(|_| AgentApprovalSinkFailure::RevisionExhausted)?;
-        state.presentation = Some(AgentApprovalPresentation {
-            revision,
-            context,
-            request_id: request.id(),
-            action_fingerprint: request.action_fingerprint(),
-            scope_digest: request.scope_digest(),
-            action_class: request.action_class(),
-            risk_level: request.risk_level(),
-            reason,
-            requested_at: request.requested_at(),
-            expires_at: request.expires_at(),
-            action,
-            state: AgentApprovalPresentationState::Pending,
-        });
-        Ok(revision)
+        state.record_presentation(context, request, reason, action)
     }
 }
 
@@ -698,6 +777,152 @@ impl AgentApprovalSink for AgentApprovalBuffer {
             },
         )
     }
+
+    fn record_loopback_request(
+        &self,
+        project: &ProjectIdentity,
+        context: AgentInspectionContext,
+        request: &ApprovalRequest,
+        reason: PolicyDecisionReason,
+        prepared: &PreparedLoopbackVerification,
+        probe: Option<usize>,
+        previous: Option<(AgentApprovalRevision, ApprovalId)>,
+    ) -> Result<AgentApprovalRevision, AgentApprovalSinkFailure> {
+        use AgentApprovalSinkFailure::AnchorMismatch;
+
+        let start = prepared.start();
+        if context.run_id() != start.run_id()
+            || context.snapshot_id() != prepared.snapshot()
+            || start.plan_binding() != ProcessPlanBinding::Validated(context.step_id())
+        {
+            return Err(AnchorMismatch);
+        }
+        let (policy_action, action) = if let Some(index) = probe {
+            let check = prepared
+                .recipe()
+                .checks()
+                .get(index)
+                .ok_or(AnchorMismatch)?;
+            (
+                prepared.probe_policy_action(index).ok_or(AnchorMismatch)?,
+                AgentApprovalAction::LoopbackProbe {
+                    method: check.probe().method(),
+                    url: format!(
+                        "http://127.0.0.1:{}{}",
+                        prepared.port(),
+                        check.probe().path()
+                    ),
+                },
+            )
+        } else {
+            (
+                start.policy_action(),
+                AgentApprovalAction::LoopbackStart {
+                    process: AgentApprovalProcess::from_spec(
+                        AgentProcessInspectionKind::Command,
+                        start,
+                    ),
+                    port: prepared.port(),
+                },
+            )
+        };
+        validate_request(project, context, request, reason, &policy_action)?;
+        let mut state = lock_recovering_poison(&self.state);
+        state.ensure_active_project(project)?;
+        match (probe, previous) {
+            (None, None) => {
+                if state.presentation.as_ref().is_some_and(|current| {
+                    current.context() == context
+                        && current.state() != AgentApprovalPresentationState::Denied
+                }) {
+                    return Err(AnchorMismatch);
+                }
+            }
+            (Some(index), Some((revision, approval))) => {
+                let predecessor = match index.checked_sub(1) {
+                    Some(prior) => prepared.probe_policy_action(prior).ok_or(AnchorMismatch)?,
+                    None => start.policy_action(),
+                };
+                let current = state.presentation.as_ref().ok_or(AnchorMismatch)?;
+                let matching_kind = match current.action() {
+                    AgentApprovalAction::LoopbackStart { .. } => index == 0,
+                    AgentApprovalAction::LoopbackProbe { .. } => index > 0,
+                    _ => false,
+                };
+                if !matching_kind
+                    || current.context() != context
+                    || current.revision() != revision
+                    || current.state() != AgentApprovalPresentationState::Granted(approval)
+                    || current.request_id() == request.id()
+                    || current.action_fingerprint() != predecessor.fingerprint()
+                    || current.scope_digest() != predecessor.scope_digest()
+                {
+                    return Err(AnchorMismatch);
+                }
+            }
+            _ => return Err(AnchorMismatch),
+        }
+        state.record_presentation(context, request, reason, action)
+    }
+
+    fn record_startup_request(
+        &self,
+        project: &ProjectIdentity,
+        context: AgentInspectionContext,
+        request: &ApprovalRequest,
+        reason: PolicyDecisionReason,
+        prepared: &PreparedLoopbackStartupCoverage,
+        stage: usize,
+        previous: Option<(AgentApprovalRevision, ApprovalId)>,
+    ) -> Result<AgentApprovalRevision, AgentApprovalSinkFailure> {
+        self.record_startup_presentation(
+            project, context, request, reason, prepared, stage, previous,
+        )
+    }
+
+    fn validate_loopback_continuation(
+        &self,
+        project: &ProjectIdentity,
+        continuation: &LoopbackApprovalContinuation,
+    ) -> Result<(), AgentApprovalSinkFailure> {
+        use AgentApprovalSinkFailure::AnchorMismatch;
+
+        let state = lock_recovering_poison(&self.state);
+        state.ensure_active_project(project)?;
+        let current = state.presentation.as_ref().ok_or(AnchorMismatch)?;
+        if continuation.worktree_id != project.worktree().id()
+            || !current.action().is_loopback()
+            || current.context() != continuation.context()
+            || current.request_id() != continuation.request_id()
+            || current.revision() != continuation.revision()
+            || current.state()
+                != AgentApprovalPresentationState::Granted(continuation.approval_id())
+        {
+            return Err(AnchorMismatch);
+        }
+        Ok(())
+    }
+
+    fn discard_loopback_request(
+        &self,
+        project: &ProjectIdentity,
+        context: AgentInspectionContext,
+        request_id: ApprovalRequestId,
+        revision: AgentApprovalRevision,
+    ) {
+        let mut state = lock_recovering_poison(&self.state);
+        if state.active_worktree_id == Some(project.worktree().id())
+            && state.presentation.as_ref().is_some_and(|current| {
+                current.action().is_loopback()
+                    && current.context() == context
+                    && current.request_id() == request_id
+                    && current.revision() == revision
+                    && current.state() == AgentApprovalPresentationState::Pending
+            })
+        {
+            state.presentation = None;
+        }
+    }
 }
 
 #[derive(Default)]
@@ -708,6 +933,33 @@ struct AgentApprovalBufferState {
 }
 
 impl AgentApprovalBufferState {
+    fn record_presentation(
+        &mut self,
+        context: AgentInspectionContext,
+        request: &ApprovalRequest,
+        reason: PolicyDecisionReason,
+        action: AgentApprovalAction,
+    ) -> Result<AgentApprovalRevision, AgentApprovalSinkFailure> {
+        let revision = self
+            .next_revision()
+            .map_err(|_| AgentApprovalSinkFailure::RevisionExhausted)?;
+        self.presentation = Some(AgentApprovalPresentation {
+            revision,
+            context,
+            request_id: request.id(),
+            action_fingerprint: request.action_fingerprint(),
+            scope_digest: request.scope_digest(),
+            action_class: request.action_class(),
+            risk_level: request.risk_level(),
+            reason,
+            requested_at: request.requested_at(),
+            expires_at: request.expires_at(),
+            action,
+            state: AgentApprovalPresentationState::Pending,
+        });
+        Ok(revision)
+    }
+
     fn ensure_active_project(
         &self,
         project: &ProjectIdentity,
@@ -776,7 +1028,9 @@ fn action_worktree(action: &PolicyAction) -> Option<WorktreeId> {
         }
         PolicyAction::Network { .. } => None,
         PolicyAction::MachineFile { worktree_id, .. }
-        | PolicyAction::MachineHttpGet { worktree_id, .. } => Some(*worktree_id),
+        | PolicyAction::MachineHttpGet { worktree_id, .. }
+        | PolicyAction::LoopbackStartup { worktree_id, .. }
+        | PolicyAction::LoopbackHttpProbe { worktree_id, .. } => Some(*worktree_id),
     }
 }
 
@@ -1024,6 +1278,8 @@ impl GetAgentApprovalCenter {
             || context.run_id() != selected.run().id()
             || context.step_id() != selected.step_id()
             || context.snapshot_id() != selected.run().current_snapshot_id()
+            || (presentation.action().is_loopback()
+                && context.verification_spec_id() != step.definition().verification_spec().id())
         {
             return Ok(None);
         }
@@ -1217,8 +1473,60 @@ impl AgentApprovalControlMetadata {
     }
 }
 
+/// One explicit Continue for the current loopback request, owned by the candidate controller.
+///
+/// It identifies the checked user action. Execution still requires a current durable grant.
+#[derive(Debug, PartialEq, Eq)]
+pub struct LoopbackApprovalContinuation {
+    worktree_id: WorktreeId,
+    revision: AgentApprovalRevision,
+    context: Box<AgentInspectionContext>,
+    request_id: ApprovalRequestId,
+    approval_id: ApprovalId,
+    ledger_revision: u32,
+    ledger_store_version: TaskLedgerStoreVersion,
+}
+
+impl LoopbackApprovalContinuation {
+    /// Returns the exact visible revision of the granted action.
+    #[must_use]
+    pub const fn revision(&self) -> AgentApprovalRevision {
+        self.revision
+    }
+
+    /// Returns the exact task, run, step, verification and snapshot anchors.
+    #[must_use]
+    pub fn context(&self) -> AgentInspectionContext {
+        *self.context
+    }
+
+    /// Returns the Core-owned request selected by Continue.
+    #[must_use]
+    pub const fn request_id(&self) -> ApprovalRequestId {
+        self.request_id
+    }
+
+    /// Returns the internal durable grant selected by Continue.
+    #[must_use]
+    pub const fn approval_id(&self) -> ApprovalId {
+        self.approval_id
+    }
+
+    /// Returns the plan revision validated by the explicit Continue.
+    #[must_use]
+    pub const fn ledger_revision(&self) -> u32 {
+        self.ledger_revision
+    }
+
+    /// Returns the exact Ledger store version validated by the explicit Continue.
+    #[must_use]
+    pub const fn ledger_store_version(&self) -> TaskLedgerStoreVersion {
+        self.ledger_store_version
+    }
+}
+
 /// Applied effect of one exact Approval Center decision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum AgentApprovalControlOutcome {
     /// The exact grant is durable but no Agent attempt has been started.
     GrantStored {
@@ -1242,10 +1550,15 @@ pub enum AgentApprovalControlOutcome {
         /// Internal identity that must never be mapped to WebView output.
         approval_id: ApprovalId,
     },
+    /// The candidate Core may advance this exact visible start or probe approval.
+    LoopbackContinueReady {
+        /// Core-only selection, never accepted from or serialized to IPC.
+        continuation: LoopbackApprovalContinuation,
+    },
 }
 
 /// Expected result of one task-bound Approval Center control.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum AgentApprovalControlResult {
     /// No current Goal Contract exists for the task.
     TaskNotFound,
@@ -1341,7 +1654,7 @@ impl ControlAgentApproval {
                 self.allow_once(project, task_id, center, metadata).await
             }
             AgentApprovalControlAction::Deny => self.deny(project, task_id, center, metadata).await,
-            AgentApprovalControlAction::Continue => Self::continue_with(center),
+            AgentApprovalControlAction::Continue => Self::continue_with(project, center),
             AgentApprovalControlAction::Revoke => {
                 self.revoke(project, task_id, center, metadata).await
             }
@@ -1455,6 +1768,7 @@ impl ControlAgentApproval {
     }
 
     fn continue_with(
+        project: &ProjectIdentity,
         center: Box<AgentApprovalCenter>,
     ) -> Result<AgentApprovalControlResult, ControlAgentApprovalFailure> {
         if !center.can_continue() {
@@ -1464,9 +1778,26 @@ impl ControlAgentApproval {
             .approval()
             .map(ApprovalGrant::id)
             .ok_or(ControlAgentApprovalFailure::InvalidLifecycle)?;
-        Ok(AgentApprovalControlResult::Applied(
-            AgentApprovalControlOutcome::ContinueReady { approval_id },
-        ))
+        let presentation = center.presentation();
+        let outcome = if presentation.action().is_loopback() {
+            if presentation.state() != AgentApprovalPresentationState::Granted(approval_id) {
+                return Ok(AgentApprovalControlResult::ActivityChanged);
+            }
+            AgentApprovalControlOutcome::LoopbackContinueReady {
+                continuation: LoopbackApprovalContinuation {
+                    worktree_id: project.worktree().id(),
+                    revision: presentation.revision(),
+                    context: Box::new(presentation.context()),
+                    request_id: presentation.request_id(),
+                    approval_id,
+                    ledger_revision: center.ledger_revision(),
+                    ledger_store_version: center.ledger_store_version(),
+                },
+            }
+        } else {
+            AgentApprovalControlOutcome::ContinueReady { approval_id }
+        };
+        Ok(AgentApprovalControlResult::Applied(outcome))
     }
 
     async fn revoke(
@@ -1687,3 +2018,7 @@ fn lock_recovering_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
+
+#[cfg(test)]
+mod loopback_tests;
+mod startup;

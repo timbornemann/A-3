@@ -1,6 +1,7 @@
 use super::{
-    AcceptanceCriterionId, AgentRunId, ExpectedTaskEvidence, StepVerification, TaskEvidenceId,
-    TaskLedgerRevision, TaskLedgerTimestamp, TaskReplanReason, TaskStepId, VerificationSpec,
+    AcceptanceCriterionId, AgentRunId, ContentHash, DiffInvariantMode, ExpectedTaskEvidence,
+    RepositoryPath, StepVerification, TaskEvidenceId, TaskLedgerRevision, TaskLedgerTimestamp,
+    TaskReplanReason, TaskStepId, VerificationSpec, VerificationTarget,
 };
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -203,6 +204,35 @@ impl StepDependency {
     }
 }
 
+/// One explicitly selected file addition; it grants no mutation authority by itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedFileAddition {
+    target: RepositoryPath,
+}
+
+impl PlannedFileAddition {
+    /// Binds the already validated relative target path.
+    #[must_use]
+    pub const fn new(target: RepositoryPath) -> Self {
+        Self { target }
+    }
+
+    /// Returns the exact file to add.
+    #[must_use]
+    pub const fn target(&self) -> &RepositoryPath {
+        &self.target
+    }
+
+    /// Stable exact Add scope for phase anchors and persistence admission.
+    #[must_use]
+    pub fn scope_digest(&self) -> ContentHash {
+        ContentHash::from_bytes(blake3::derive_key(
+            "a3 planned file addition scope v1",
+            self.target.as_bytes(),
+        ))
+    }
+}
+
 /// Immutable definition retained across attempts and replans.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskStepDefinition {
@@ -214,6 +244,8 @@ pub struct TaskStepDefinition {
     expected_evidence: Vec<ExpectedTaskEvidence>,
     verification_spec: VerificationSpec,
     acceptance_criteria: Vec<AcceptanceCriterionId>,
+    addressed_criteria: Vec<AcceptanceCriterionId>,
+    planned_file_addition: Option<PlannedFileAddition>,
 }
 
 impl TaskStepDefinition {
@@ -262,7 +294,30 @@ impl TaskStepDefinition {
             expected_evidence,
             verification_spec,
             acceptance_criteria: Vec::new(),
+            addressed_criteria: Vec::new(),
+            planned_file_addition: None,
         })
+    }
+
+    /// Attaches an Add only when its exact target is the sole exact-path diff obligation.
+    pub fn with_planned_file_addition(
+        mut self,
+        addition: PlannedFileAddition,
+    ) -> Result<Self, TaskStepDefinitionError> {
+        if !matches!(self.verification_spec.target(), VerificationTarget::DiffInvariant(diff)
+            if diff.mode() == DiffInvariantMode::ExactPaths
+                && diff.paths() == std::slice::from_ref(addition.target()))
+        {
+            return Err(TaskStepDefinitionError::InvalidPlannedFileAdditionScope);
+        }
+        self.planned_file_addition = Some(addition);
+        Ok(self)
+    }
+
+    /// Returns the explicit machine-readable Add binding, if this step has one.
+    #[must_use]
+    pub const fn planned_file_addition(&self) -> Option<&PlannedFileAddition> {
+        self.planned_file_addition.as_ref()
     }
 
     /// Attaches canonical Goal Contract criteria that this step's verification proves.
@@ -284,7 +339,36 @@ impl TaskStepDefinition {
         {
             return Err(TaskStepDefinitionError::DuplicateAcceptanceCriterion);
         }
+        validate_criterion_roles(&self.addressed_criteria, &acceptance_criteria)?;
         self.acceptance_criteria = acceptance_criteria;
+        Ok(self)
+    }
+
+    /// Attaches distinct progress-only and proof roles; neither role changes criterion truth.
+    ///
+    /// Each list is canonical, unique and disjoint, with one through 64 total IDs.
+    /// A progress-only step retains its own verification but proves no global criterion.
+    pub fn with_criterion_coverage(
+        mut self,
+        mut addresses: Vec<AcceptanceCriterionId>,
+        mut proves: Vec<AcceptanceCriterionId>,
+    ) -> Result<Self, TaskStepDefinitionError> {
+        let count = addresses.len().saturating_add(proves.len());
+        if count == 0 || count > MAX_STEP_ACCEPTANCE_CRITERIA {
+            return Err(TaskStepDefinitionError::InvalidCriterionCoverageCount(
+                count,
+            ));
+        }
+        addresses.sort_unstable();
+        proves.sort_unstable();
+        if addresses.windows(2).any(|pair| pair[0] == pair[1])
+            || proves.windows(2).any(|pair| pair[0] == pair[1])
+        {
+            return Err(TaskStepDefinitionError::DuplicateAcceptanceCriterion);
+        }
+        validate_criterion_roles(&addresses, &proves)?;
+        self.addressed_criteria = addresses;
+        self.acceptance_criteria = proves;
         Ok(self)
     }
 
@@ -330,11 +414,36 @@ impl TaskStepDefinition {
         &self.verification_spec
     }
 
-    /// Returns Goal Contract criteria proven by this step, empty only for legacy definitions.
+    /// Returns progress-only criteria; their global proof obligations remain open.
+    #[must_use]
+    pub fn addressed_criteria(&self) -> &[AcceptanceCriterionId] {
+        &self.addressed_criteria
+    }
+
+    /// Returns criteria this step proves; empty for progress-only or legacy definitions.
     #[must_use]
     pub fn acceptance_criteria(&self) -> &[AcceptanceCriterionId] {
         &self.acceptance_criteria
     }
+}
+
+fn validate_criterion_roles(
+    addresses: &[AcceptanceCriterionId],
+    proves: &[AcceptanceCriterionId],
+) -> Result<(), TaskStepDefinitionError> {
+    let count = addresses.len().saturating_add(proves.len());
+    if count > MAX_STEP_ACCEPTANCE_CRITERIA {
+        return Err(TaskStepDefinitionError::InvalidCriterionCoverageCount(
+            count,
+        ));
+    }
+    if addresses
+        .iter()
+        .any(|criterion| proves.binary_search(criterion).is_ok())
+    {
+        return Err(TaskStepDefinitionError::OverlappingCriterionRoles);
+    }
+    Ok(())
 }
 
 /// Invalid local shape of one task-step definition.
@@ -356,6 +465,12 @@ pub enum TaskStepDefinitionError {
     InvalidAcceptanceCriterionCount(usize),
     /// One Goal Contract criterion appeared more than once in the mapping.
     DuplicateAcceptanceCriterion,
+    /// Explicit progress and proof coverage requires one through 64 total criteria.
+    InvalidCriterionCoverageCount(usize),
+    /// One step cannot both address and prove the same criterion as separate roles.
+    OverlappingCriterionRoles,
+    /// An Add target must match a singleton ExactPaths diff specification.
+    InvalidPlannedFileAdditionScope,
 }
 
 impl fmt::Display for TaskStepDefinitionError {
@@ -383,6 +498,16 @@ impl fmt::Display for TaskStepDefinitionError {
             ),
             Self::DuplicateAcceptanceCriterion => {
                 formatter.write_str("task step repeats an acceptance criterion")
+            }
+            Self::InvalidCriterionCoverageCount(count) => write!(
+                formatter,
+                "task step has {count} criterion roles; expected 1 through {MAX_STEP_ACCEPTANCE_CRITERIA}"
+            ),
+            Self::OverlappingCriterionRoles => {
+                formatter.write_str("task step criterion progress and proof roles overlap")
+            }
+            Self::InvalidPlannedFileAdditionScope => {
+                formatter.write_str("planned file addition does not match its exact diff scope")
             }
         }
     }

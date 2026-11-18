@@ -1,5 +1,141 @@
 # Memory System und Context Compiler
 
+Status: aktive Zielverträge nach angenommenem ADR-0119; eingefrorene Implementierungsbaseline bis P11
+
+Stand der Vertragsausrichtung: 2026-11-06
+
+## Aktiver Vertrag für den kleinen Agentenkern
+
+[ADR-0119](adrs/0119-kleinschrittiger-agentenkern-fuer-lokale-modelle.md) und der
+[Zielvertrag](SMALL_LOCAL_MODEL_AGENT_CORE.md) bestimmen die neuen Modell-/Memoryverträge.
+[Plan 22](plans/22-SMALL-LOCAL-MODEL-AGENT-CORE.md) setzt sie schrittweise um: P2 bis P10
+komponieren ausschließlich den Integrations-/Modellkandidaten; erst P11 ersetzt den alten
+Produktionspfad. Diese Dokumentausrichtung schaltet keine Laufzeit um und behauptet keine bereits
+implementierte Fähigkeit. Historische ADRs, gespeicherte Aufgaben und Vergleichsergebnisse bleiben
+unverändert. Die präzisen Teilablösungen stehen in ADR-0119, nicht in einer pauschalen Aufhebung
+aller älteren Detailregeln.
+
+### Vollständiger Ursprung, begrenzte aktive Arbeit
+
+Goal Contract und Acceptance Criteria bleiben die Anforderungsautorität, Task Ledger und Journal
+die Arbeits-/Ausführungsautorität. Der vollständige Originalauftrag bleibt unveränderlich und
+revisionsgebunden im bestehenden Goal-Store; initial höchstens 64 KiB UTF-8 in höchstens 33
+geordneten Teilen zu je 2048 Bytes, ohne getrennte Mehrbytezeichen. Übergröße wird vor Aufgabenstart
+erklärt abgewiesen. Weder die bisherige 16-KiB-Objectivegrenze noch eine Materializerkürzung darf den Ursprung
+ersetzen. Lange Aufträge werden in begrenzten Intakefenstern verarbeitet; Querverweise,
+Widersprüche, Constraints und offene Nutzerentscheidungen bleiben bis zur Zuordnung sichtbar.
+
+Jeder Agentturn erhält eine deterministische, ziel-/ledgerrevisionsgebundene Teilsicht: aktuelles
+Teilziel, zugeordnete Kriterien mit Originalbezug, alle globalen und relevanten Constraints sowie
+Nicht-Ziele, Phase, aktuelle Verifikationslage, relevanter offener Fehler und tatsächlich gelieferte
+Quellen. Ein Constraint darf nur bei typisiert feststehender Nichtanwendbarkeit fehlen. Unklare
+globale Regeln bleiben vollständig aktiv. Nicht gelieferte Anforderungen bleiben dauerhaft offen.
+Die globale Abdeckungsprojektion ist begrenzt: Zähler, Digest/Revisionsbindung und aktuell relevante
+Kriterienaliase; vollständige Zustände und Listen bleiben im Core und werden beim Planen paginiert.
+
+Compaction rekonstruiert diesen Stand aus Originalauftrag, Kriterien, Ledger, Journal und frischen
+Evidenceankern, nicht aus einer vorherigen Zusammenfassung. Sie löscht weder Anforderungen noch
+Versuche oder Audit-Ereignisse. Quellenbytes bleiben flüchtig; nach Neustart werden benötigte
+Originalbereiche erneut über den sicheren Reader gelesen und geprüft. Eine kompakte Darstellung,
+ein vorhandener Checkpoint oder ein grüner aktueller Schritt ist keine globale Aufgabenabnahme.
+
+### Phasen, Quellenfortschritt und Kontextbudget
+
+Ein Modellaufruf bearbeitet genau einen Core-bestimmten begrenzten Auftrag: Intake, nächsten Schritt,
+Quellenlücke, konkreten Edit oder quellengebundene Antwort. Bekannte IDs, Commands und deterministische
+Übergänge bleiben Core-Aufgaben. Es gibt keine obligatorische Arbeits-/Aktions-/Argumentwahl für
+dieselbe bereits feststehende Arbeit und keinen vollständigen globalen Aktionsvertrag im Modellpack.
+Versionierte Schemas und unabhängige Validierung bleiben erforderlich. NeedEvidence/TooLarge sind
+auch in Plan-/Editphasen reguläre fachliche Alternativen, kein Formatfehler und keine Mutation.
+
+Exact/Lexical/Graph/Test und Task Lens bleiben die gemeinsame Kandidatensuche. Der Quellenlieferant
+priorisiert den konkreten Zielbereich, Signatur/Rumpf und notwendige belegte Nachbarschaft vor
+optionalen Cards, Metadaten und Historie. Gelieferte Bereiche binden Dateirevision, Hash und genaue
+Grenzen. Nur tatsächlich ausgelieferte aktuelle Originalbytes zählen als Quellzugang; leere Reads,
+neue Labels und überlappende Wiederholungen allein sind kein Fortschritt. Bedarf und fehlende
+Fortsetzungsbereiche bleiben explizit. Ein Suchtreffer ersetzt kein Original; nicht untersuchte
+Quellen sind kein Gegenbeweis. Herkunftsprüfung beweist keine richtige semantische Interpretation.
+
+Die initiale Schrittpolicy begrenzt Erwerb auf acht tatsächliche Aktionen, zwei aufeinanderfolgende
+erfolglose Aktionen ohne neue aktuelle Bereiche und eine Core-Neulokalisierung derselben Lücke.
+Diese Grenzen werden versioniert und vor dem Vergleich eingefroren. Erschöpfung erzeugt einen
+typisierten Erkenntnis-/Kapazitätshalt mit fehlendem Beleg und Suchumfang oder eine echte kleinere
+Aufgabe; sie behauptet keine Evidenzsuffizienz und erzwingt keinen Patch. Äußere Runbudgets bleiben.
+
+Vor jedem Aufruf müssen aktive Pflichtdaten, tatsächlich gesendeter Phasenvertrag samt Schema,
+Systemtext, Protokoll-/Thinkingkosten und gegebenenfalls Schemawiederholung vollständig ins konfigurierte
+Fenster passen. Mindestens 22 Prozent beziehungsweise das höhere konfigurierte Outputlimit bleiben
+reserviert. Sicherheit und Secretprüfung bleiben erhalten. Notwendige Constraints verdrängen nur
+optionale Inhalte; Output- und Sicherheitsreserven werden nicht für Pflichtüberlauf verbraucht.
+Unbrauchbar kleine Quellenreste sind kein erfolgreicher Compile. Bei Übergröße
+wird die Arbeit enger zugeschnitten oder mit konkretem Kapazitätsgrund angehalten, ohne stille
+Kürzung oder Profilvergrößerung. Die 4k-/8k-/16k-Entwurfsbudgets stehen im Zielvertrag; konservative
+Bytekosten, tatsächliche Requests und gemeldete Providernutzung bleiben getrennte Messgrößen.
+
+### Bereichsedit, Verifikation und weiterer Planungshorizont
+
+Ein vorhandener Dateiinhalt wird modellseitig nur durch ein tatsächlich geliefertes kleines
+Editfenster mit turnlokalem Alias ersetzt. Der Core bindet Projekt, Run, Schritt, Snapshot,
+vollständigen Dateihash, exakte Ausgangsbytes und Grenzen; er erhält alle Bytes außerhalb des
+Fensters und erzeugt daraus denselben vollständigen `PatchUpdate`. BOM/Encoding bleiben
+Core-Metadaten außerhalb des editierbaren Textes, auch an Zeile eins. Kanonisches LF wird genau
+einmal auf die gebundene EOL-Konvention abgebildet; unerwartetes CR, mehrdeutige gemischte EOL,
+ungültige Unicodegrenzen und stale Bindungen werden abgewiesen. Keine unscharfe Suche oder stille
+Übernahme fremder Änderungen; fremde Aliase und überlappende Zweitedits bleiben gesperrt.
+Neue große Dateien wachsen aus einem kleinen sinnvollen Gerüst
+über dieselben gebundenen Fenster einschließlich EOF-Insert; die integrierte Anforderung bleibt
+offen. Preview, exakter Fingerprint, Policy/Approval, Lease, Live-Revalidierung, atomarer Publish
+und Recovery werden dadurch nicht ersetzt oder gelockert.
+
+Planung beginnt mit höchstens fünf groben Ergebnisgruppen und drei konkret vorbereiteten nächsten
+Schritten; nur der nächste Schritt erhält Code und ausführbare Ressourcen. Jeder Schritt ordnet
+Ergebnis, Originalkriterien und passende aktuelle Verifikation zu. Ein erster entdeckter Command,
+Lint-grün oder irgendein Diff belegt keine geforderte Laufzeitwirkung. Produktive gebundene
+Test-/Command-, CLI-/HTTP- oder ausdrücklich revisions-/snapshotgebundene manuelle Evidence muss
+die betreffende Aussage tragen; externe Eval-Orakel ersetzen diese Erzeuger nicht. Null ausgeführte
+Tests sind kein positiver Testnachweis. Fachfremde bestehende Fehler bleiben sichtbar. ADR-0117
+bestimmt weiterhin neue Tests in Nutzerprojekten; weder Testverzicht noch eine Policyfreigabe
+erfinden einen fachlichen Nachweis.
+
+Sind alle aktuell materialisierten Schritte abgeschlossen, prüft der Core die gesamte Abdeckung.
+Offene globale Kriterien führen im selben endlichen Controller von Verify nach Plan. Ledger-/Journal-
+CAS hält nächste Planung, offenen Rest, erreichten Horizont und Verbrauch dauerhaft; der nächste
+kleine Plan hängt echte Schritte an. Es entsteht kein neuer Run und kein Budgetreset. Erst alle
+verpflichtenden Kriterien mit aktueller Evidence und vollständigem Originalbezug erlauben Acceptance.
+
+Strukturfehler erhalten höchstens einen Repair desselben Dokuments; Trunkierung, neue Dokument-IDs
+oder Neustarts eröffnen keinen zweiten. Teiloutput ist nie ausführbar. Fachliche Korrektur verwendet
+echte Diagnose, aktuellen Code und Patchquittung; initial höchstens zwei Korrekturversuche pro
+Schritt und eine echte Zerlegung innerhalb desselben äußeren Budgets. Neue Ergebnisgrenzen oder
+Evidencepflichten müssen alle ursprünglichen Kriterien erhalten; bloß neue IDs sind kein Fortschritt.
+Index und abhängige Evidence werden vor weiterem Denken aktualisiert. Unknown, Cancellation und
+partielle Wirkungen behalten ihre bestehenden Dispositionen; nach Unknown bleibt Reconciliation
+vor weiterer Mutation erforderlich und abgeschlossene History wird nicht überschrieben.
+
+Chat hält getrennte lokale Gesprächsdaten ohne künstliche Projekt-/Task-/Snapshotanker. Ask bindet
+das geöffnete Projekt read-only und unterscheidet Beobachtung, Interpretation und unbelegte Wirkung.
+Keine Zusammenfassung oder Chatnachricht wird automatisch Project Truth. Kompilierte Requests,
+Systemprompts, Thinkingtraces und unbeschränkte Quellen-/Prozessinhalte werden nicht persistiert.
+
+### Präzise Ablösung und fortbestehende Mechanismen
+
+| Historische Form | Neuer Vertrag | Weiter verbindlich |
+| --- | --- | --- |
+| Volltext aller Goal-/Ledger-/Fehlermemory im aktiven Pack | Verlustfreier Ursprung und explizite aktive Teilsicht | Aufgabenautorität, vollständige aktive Constraints, Revisionen, Freshness und Digest |
+| SourceGuided-Auswahlstufen und Vier-Read-Zwang | Ein kleiner Phasenauftrag und belegter Quellenfortschritt | Ein Controller, strikte Schemas, Einzelrepair und endliche äußere Budgets |
+| Pauschale Zwei-Seiten-/Zeilenverteilung und obligatorischer Recherchehandoff | Auftragsgebundene Fenster und Recherche am konkreten Bedarf | Safe Reader, Root-/Secret-/Hashprüfung, aktuelle Originale vor optionaler Historie |
+| Markdownabschnitte und Bestand/Änderungs-/Testentwurf als Pflichtvorlauf | Strukturierte kleine Schritte mit Kriterienzuordnung | Append-only Ledger/Journal, unveränderte Versuche, ADR-0117 |
+| Generisches Zielkriterium, erster Prüfcommand oder Diff als Abschlussproxy | Ergebnisbezogene aktuelle Evidence und globale Restabdeckung | VerificationSpec, Acceptance, genaue Ausführungsfreigaben und ADR-0118 |
+| Kopierte Replanschritte mit neuen IDs | Echte geänderte Zerlegung mit vollständiger Zuordnung | History, kumulative Grenzen, Invalidierung, CAS und Unknown-Recovery |
+
+## Eingefrorene Implementierungsbeschreibung bis P11
+
+Die folgenden Abschnitte dokumentieren den bisherigen Produktionspfad, frühere Vertragsrevisionen
+und kontrollierte Vergleiche. Ihre modellnahen Prosaformen werden nur in den oben benannten Teilen
+für neue Verträge ersetzt; unveränderte Evidence-, Werkzeug-, Sicherheits- und Recoverymechanismen
+bleiben verbindlich. Die alte Laufzeit bleibt bis zur geprüften P11-Umstellung aktiv. Historische
+Messwerte und beschriebene Einzelbausteine beweisen weder die neue Verdrahtung noch Modellqualität.
+
 ## Produktstandard: quellengelenkte Aktionsarbeit
 
 [ADR-0115](adrs/0115-ausfuehrbarer-plananker-im-modellkontext.md) übernimmt den zuvor nur
@@ -117,7 +253,8 @@ Features oder Testkonventionen werden nicht als zusätzliche Pflichtvoraussetzun
 Der aktive Kontext nennt den Fragetyp ausdrücklich. Nicht belegte V5-Statusnotizen werden
 Hypothesen und bilden keine Abschlussbelege. Bestehende eingefrorene Verträge bleiben erhalten.
 
-Status: verbindliche Baseline  
+Status: eingefrorene Implementierungsbaseline; neue Verträge siehe aktiven Vertrag oben
+
 Stand: 2026-08-03
 
 ## Ziel

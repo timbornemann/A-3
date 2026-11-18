@@ -332,6 +332,179 @@ mod tests {
     };
 
     #[test]
+    fn loopback_probes_require_exact_single_use_approval_in_both_permission_modes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use a3_domain::{
+            AgentPermissionMode, AgentPermissionRevision, AgentPermissionSettings, LoopbackMethod,
+            PolicyResourceId, TaskStepId,
+        };
+        for mode in [
+            AgentPermissionMode::AskPermissions,
+            AgentPermissionMode::FullMachine,
+        ] {
+            let evaluator = EvaluateActionPolicy::new().with_permissions(
+                AgentPermissionSettings::new(mode, AgentPermissionRevision::new(2)?),
+            );
+            for method in [
+                LoopbackMethod::Get,
+                LoopbackMethod::Post,
+                LoopbackMethod::Put,
+                LoopbackMethod::Delete,
+                LoopbackMethod::Patch,
+            ] {
+                let mut run = run()?;
+                let action = PolicyAction::LoopbackHttpProbe {
+                    worktree_id: WorktreeId::from_bytes([8; 32]),
+                    step_id: TaskStepId::from_bytes([9; 32]),
+                    target_id: PolicyResourceId::from_bytes([11; 32]),
+                    method,
+                };
+                let pending = evaluator.execute(
+                    &mut run,
+                    &action,
+                    &WorkspacePolicy::unrestricted(),
+                    None,
+                    context(20, 1000)?,
+                )?;
+                assert_eq!(
+                    pending.decision().outcome(),
+                    PolicyDecisionOutcome::ApprovalRequired
+                );
+                assert!(
+                    pending
+                        .decision()
+                        .action_class()
+                        .permits_risk(pending.decision().risk_level())
+                );
+                let request = pending
+                    .approval_request()
+                    .ok_or("probe was not held for approval")?;
+                let mut grant = ApprovalGrant::grant(
+                    ApprovalId::from_bytes([32; 32]),
+                    request,
+                    timestamp(20)?,
+                )?;
+                let other_target = PolicyAction::LoopbackHttpProbe {
+                    worktree_id: WorktreeId::from_bytes([8; 32]),
+                    step_id: TaskStepId::from_bytes([9; 32]),
+                    target_id: PolicyResourceId::from_bytes([12; 32]),
+                    method,
+                };
+                let mismatch = evaluator.execute(
+                    &mut run,
+                    &other_target,
+                    &WorkspacePolicy::unrestricted(),
+                    Some(&mut grant),
+                    context(21, 1000)?,
+                )?;
+                assert_eq!(
+                    mismatch.decision().outcome(),
+                    PolicyDecisionOutcome::ApprovalRequired
+                );
+                assert_eq!(
+                    mismatch.decision().reason(),
+                    PolicyDecisionReason::ApprovalScopeMismatch
+                );
+                assert_eq!(grant.status_at(timestamp(21)?), ApprovalStatus::Active);
+                let allowed = evaluator.execute(
+                    &mut run,
+                    &action,
+                    &WorkspacePolicy::unrestricted(),
+                    Some(&mut grant),
+                    context(22, 1000)?,
+                )?;
+                assert_eq!(allowed.decision().outcome(), PolicyDecisionOutcome::Allowed);
+                assert_eq!(allowed.decision().approval_id(), Some(grant.id()));
+                assert_eq!(grant.status_at(timestamp(22)?), ApprovalStatus::Consumed);
+                let replay = evaluator.execute(
+                    &mut run,
+                    &action,
+                    &WorkspacePolicy::unrestricted(),
+                    Some(&mut grant),
+                    context(23, 1000)?,
+                )?;
+                assert_eq!(
+                    replay.decision().outcome(),
+                    PolicyDecisionOutcome::ApprovalRequired
+                );
+                assert_eq!(
+                    replay.decision().reason(),
+                    PolicyDecisionReason::ApprovalAlreadyConsumed
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn loopback_effect_denials_override_exact_grants_in_both_permission_modes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use a3_domain::{
+            AgentPermissionMode, AgentPermissionRevision, AgentPermissionSettings, LoopbackMethod,
+            PolicyResourceId, TaskStepId,
+        };
+
+        for mode in [
+            AgentPermissionMode::AskPermissions,
+            AgentPermissionMode::FullMachine,
+        ] {
+            let evaluator = EvaluateActionPolicy::new().with_permissions(
+                AgentPermissionSettings::new(mode, AgentPermissionRevision::new(2)?),
+            );
+            for (method, denied_class) in [
+                (LoopbackMethod::Get, ActionClass::Read),
+                (LoopbackMethod::Post, ActionClass::Write),
+                (LoopbackMethod::Put, ActionClass::Write),
+                (LoopbackMethod::Patch, ActionClass::Write),
+                (LoopbackMethod::Delete, ActionClass::Network),
+                (LoopbackMethod::Delete, ActionClass::Write),
+                (LoopbackMethod::Delete, ActionClass::Destructive),
+            ] {
+                let mut run = run()?;
+                let action = PolicyAction::LoopbackHttpProbe {
+                    worktree_id: WorktreeId::from_bytes([8; 32]),
+                    step_id: TaskStepId::from_bytes([9; 32]),
+                    target_id: PolicyResourceId::from_bytes([11; 32]),
+                    method,
+                };
+                let pending = evaluator.execute(
+                    &mut run,
+                    &action,
+                    &WorkspacePolicy::unrestricted(),
+                    None,
+                    context(20, 1000)?,
+                )?;
+                let request = pending
+                    .approval_request()
+                    .ok_or("probe was not held for approval")?;
+                let mut grant = ApprovalGrant::grant(
+                    ApprovalId::from_bytes([32; 32]),
+                    request,
+                    timestamp(20)?,
+                )?;
+                let workspace = WorkspacePolicy::new(vec![WorkspacePolicyRule::new(
+                    denied_class,
+                    WorkspacePolicyRestriction::Deny,
+                )])?;
+                let denied = evaluator.execute(
+                    &mut run,
+                    &action,
+                    &workspace,
+                    Some(&mut grant),
+                    context(21, 1000)?,
+                )?;
+                assert_eq!(denied.decision().outcome(), PolicyDecisionOutcome::Denied);
+                assert_eq!(
+                    denied.decision().reason(),
+                    PolicyDecisionReason::WorkspaceDenied
+                );
+                assert_eq!(grant.status_at(timestamp(21)?), ApprovalStatus::Active);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn each_evaluation_appends_exactly_one_content_free_policy_event()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut run = run()?;

@@ -1,28 +1,44 @@
 use crate::{
-    ContextToolResultDigest, IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexStore,
-    RunJournalStore, RunJournalStoreFailure, StoredTaskLedger, TaskLedgerStore,
-    TaskLedgerStoreFailure, TaskLedgerStoreVersion,
+    AgentControllerControl, ContextToolResultDigest, EvaluateStepVerification,
+    IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexStore, RunJournalStore,
+    RunJournalStoreFailure, StoredTaskLedger, TaskLedgerStore, TaskLedgerStoreFailure,
+    TaskLedgerStoreVersion,
 };
 use a3_domain::{
     AgentControllerState, AgentMutationAttempt, AgentMutationDisposition, AgentMutationKind,
     AgentRun, AgentRunError, AgentRunId, AgentRunTimestamp, AgentToolAttempt,
-    AgentToolAttemptNumber, AgentToolAttemptStatus, AgentToolEvidence, MutationActionFingerprint,
-    ProjectIdentity, RunEvent, RunEventCode, RunEventId, RunEventKind, RunEventOutcome,
-    RunEventPayload, RunEventSequence, SnapshotId, TaskEvidenceId, TaskLedger, TaskLedgerError,
-    TaskLedgerTimestamp, TaskStepCancellationReason, TaskStepId, TaskStepStatus, ToolRunId,
+    AgentToolAttemptNumber, AgentToolAttemptStatus, AgentToolEvidence, DiffEvidence,
+    MutationActionFingerprint, ProjectIdentity, RunEvent, RunEventCode, RunEventId, RunEventKind,
+    RunEventOutcome, RunEventPayload, RunEventSequence, SnapshotId, StepVerification,
+    TaskEvidenceId, TaskId, TaskLedger, TaskLedgerError, TaskLedgerTimestamp,
+    TaskStepCancellationReason, TaskStepDefinition, TaskStepId, TaskStepStatus, ToolRunId,
+    VerificationEvidence, VerificationMethod,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
+use std::time::Duration;
 
 const MAX_RECOVERY_EVIDENCE: usize = 16_384;
 const INVALIDATION_BATCH_SIZE: usize = 64;
+const LOOPBACK_RECOVERY_EVIDENCE_TIMEOUT: Duration = Duration::from_secs(10);
+const DIFF_RECOVERY_EVIDENCE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Owned future returned by the object-safe durable recovery capability.
 pub type AgentRecoveryStoreFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, AgentRecoveryStoreFailure>> + Send + 'a>>;
+
+/// Distinguishes the frozen baseline's locators from actual typed candidate Diff evidence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompletedDiffRecoveryEvidence {
+    /// Preserve the old baseline's read-tool lookup until the single P11 cutover.
+    LegacyToolLocators,
+    /// Typed artifacts for exactly the requested task; missing IDs remain absent.
+    /// An empty result never authorizes a fallback to read-tool evidence.
+    Typed(Vec<DiffEvidence>),
+}
 
 /// Content-free normalized mutation result retained with its definitive tool event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,6 +151,40 @@ impl MachineEffectScope {
 
 /// Storage operations that must be atomic at the crash/restart boundary.
 pub trait AgentRecoveryStore: fmt::Debug + Send + Sync {
+    /// Atomically retains a failed HTTP observation with Failed/Applied attempt and journal.
+    #[allow(clippy::too_many_arguments)]
+    fn complete_loopback_mismatch<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+        diagnostic: &'a a3_domain::LoopbackHttpMismatchDiagnostic,
+        timeout: Duration,
+        control: &'a dyn AgentControllerControl,
+    ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
+        let _ = (
+            project,
+            expected_last_sequence,
+            run,
+            event,
+            diagnostic,
+            timeout,
+            control,
+        );
+        Box::pin(async { Err(AgentRecoveryStoreFailure::UnsupportedSchema) })
+    }
+    /// Loads only a fully bound failed observation whose source is still current.
+    fn load_loopback_mismatch<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+    ) -> AgentRecoveryStoreFuture<'a, Option<a3_domain::LoopbackHttpMismatchDiagnostic>> {
+        let _ = (project, run_id, tool_run_id, attempt);
+        Box::pin(async { Err(AgentRecoveryStoreFailure::UnsupportedSchema) })
+    }
     /// Persists a new attempt before invoking the corresponding tool capability.
     fn begin_agent_tool_attempt<'a>(
         &'a self,
@@ -276,6 +326,54 @@ pub trait AgentRecoveryStore: fmt::Debug + Send + Sync {
         result: AgentMutationResultRecord,
     ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt>;
 
+    /// Atomically closes an owned HTTP lifecycle and retains its exact typed observations.
+    #[allow(clippy::too_many_arguments)]
+    fn complete_loopback_mutation<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+        attempt: AgentToolAttemptNumber,
+        receipt: &'a a3_domain::LoopbackHttpEvidence,
+        timeout: Duration,
+        control: &'a dyn AgentControllerControl,
+    ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
+        let _ = (
+            project,
+            expected_last_sequence,
+            run,
+            event,
+            attempt,
+            receipt,
+            timeout,
+            control,
+        );
+        Box::pin(async { Err(AgentRecoveryStoreFailure::UnsupportedSchema) })
+    }
+
+    /// Finds the typed HTTP receipt of an exact settled attempt at the current journal tail.
+    fn load_settled_loopback_evidence_id<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+    ) -> AgentRecoveryStoreFuture<'a, Option<TaskEvidenceId>> {
+        let _ = (project, run_id, tool_run_id, attempt);
+        Box::pin(async { Err(AgentRecoveryStoreFailure::UnsupportedSchema) })
+    }
+
+    /// Reports whether an active HTTP step still needs its dedicated settled-effect recovery.
+    fn has_pending_loopback_resume<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+    ) -> AgentRecoveryStoreFuture<'a, bool> {
+        let _ = (project, run_id);
+        Box::pin(async { Err(AgentRecoveryStoreFailure::UnsupportedSchema) })
+    }
+
     /// Marks every attempt left in flight by an application stop as interrupted.
     fn interrupt_agent_tool_attempts<'a>(
         &'a self,
@@ -310,6 +408,34 @@ pub trait AgentRecoveryStore: fmt::Debug + Send + Sync {
         run_id: AgentRunId,
         evidence_ids: &'a [TaskEvidenceId],
     ) -> AgentRecoveryStoreFuture<'a, Vec<AgentToolEvidence>>;
+
+    /// Loads typed completed Diff evidence, or explicitly identifies the frozen baseline.
+    /// Candidate adapters must return Typed even for absent IDs, and propagate all failures.
+    fn load_completed_diff_evidence<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        task_id: TaskId,
+        evidence_ids: &'a [TaskEvidenceId],
+        timeout: Duration,
+        control: &'a dyn AgentControllerControl,
+    ) -> AgentRecoveryStoreFuture<'a, CompletedDiffRecoveryEvidence> {
+        let _ = (project, task_id, evidence_ids, timeout, control);
+        // Existing adapters implement the baseline locator contract. P11 removes this branch.
+        Box::pin(async { Ok(CompletedDiffRecoveryEvidence::LegacyToolLocators) })
+    }
+
+    /// Loads requested, validated HTTP evidence for this task, omitting absent IDs.
+    fn load_completed_loopback_evidence<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        task_id: TaskId,
+        evidence_ids: &'a [TaskEvidenceId],
+        timeout: Duration,
+        control: &'a dyn AgentControllerControl,
+    ) -> AgentRecoveryStoreFuture<'a, Vec<VerificationEvidence>> {
+        let _ = (project, task_id, evidence_ids, timeout, control);
+        Box::pin(async { Err(AgentRecoveryStoreFailure::UnsupportedSchema) })
+    }
 
     /// Atomically checks the current published snapshot and compare-and-swaps Ledger plus Run.
     #[allow(clippy::too_many_arguments)]
@@ -391,6 +517,8 @@ pub enum AgentRecoveryChoice {
 /// Read-only, content-free recovery summary suitable for a later UI projection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRecoveryInspection {
+    pending_planning_live: bool,
+    loopback_resume_pending: bool,
     run_id: AgentRunId,
     state: AgentControllerState,
     run_snapshot_id: SnapshotId,
@@ -465,10 +593,18 @@ impl AgentRecoveryInspection {
             .any(|attempt| attempt.disposition().requires_replan())
     }
 
+    /// Returns whether the active HTTP step needs its dedicated recovery path.
+    #[must_use]
+    pub const fn loopback_resume_pending(&self) -> bool {
+        self.loopback_resume_pending
+    }
+
     /// Resume is safe only while every completed verification remains evidence-current.
     #[must_use]
     pub fn can_resume(&self) -> bool {
-        self.stale_evidence_ids.is_empty()
+        self.pending_planning_live
+            && !self.loopback_resume_pending
+            && self.stale_evidence_ids.is_empty()
             && self
                 .mutation_attempts
                 .iter()
@@ -534,6 +670,7 @@ struct RecoveryMaterial {
     run: AgentRun,
     stored_ledger: StoredTaskLedger,
     published_snapshot_id: SnapshotId,
+    loopback_resume_pending: bool,
     stale_evidence_ids: Vec<TaskEvidenceId>,
     mutation_attempts: Vec<AgentMutationAttempt>,
     interrupted_tool_attempts: u32,
@@ -584,7 +721,24 @@ impl<'a> InspectAgentRunRecovery<'a> {
             control,
         )
         .await?;
+        let pending_planning_live =
+            if let Some(pending) = material.stored_ledger.ledger().pending_planning() {
+                let (owner, _, disposition) = crate::load_pending_planning_pair(
+                    project,
+                    material.stored_ledger.ledger(),
+                    self.journal,
+                )
+                .await
+                .map_err(|_| AgentRecoveryError::AnchorMismatch)?;
+                owner == material.run
+                    && disposition == crate::PendingPlanningPairDisposition::Live
+                    && pending.snapshot_id() == material.published_snapshot_id
+            } else {
+                true
+            };
         Ok(AgentRecoveryInspection {
+            pending_planning_live,
+            loopback_resume_pending: material.loopback_resume_pending,
             run_id,
             state: material.run.state(),
             run_snapshot_id: material.run.current_snapshot_id(),
@@ -655,10 +809,40 @@ impl<'a> RecoverAgentRun<'a> {
         if choice != AgentRecoveryChoice::Cancel && reconciliation_required {
             return Err(AgentRecoveryError::MutationReconciliationRequired);
         }
+        if choice == AgentRecoveryChoice::Resume && material.loopback_resume_pending {
+            return Err(AgentRecoveryError::LoopbackResumePending);
+        }
         if choice == AgentRecoveryChoice::Resume
             && (!material.stale_evidence_ids.is_empty() || mutation_replan_required)
         {
             return Err(AgentRecoveryError::ResumeRequiresReplan);
+        }
+
+        if material.stored_ledger.ledger().pending_planning().is_some() {
+            // Generic Unknown interruption above remains available. This first
+            // horizon slice does not rebind a stale job or add Plan-to-Replan.
+            if choice == AgentRecoveryChoice::Replan {
+                return Err(AgentRecoveryError::ResumeRequiresReplan);
+            }
+            if choice == AgentRecoveryChoice::Resume {
+                let (owner, _, disposition) = crate::load_pending_planning_pair(
+                    project,
+                    material.stored_ledger.ledger(),
+                    self.journal,
+                )
+                .await
+                .map_err(|_| AgentRecoveryError::AnchorMismatch)?;
+                if owner != material.run
+                    || disposition != crate::PendingPlanningPairDisposition::Live
+                    || material
+                        .stored_ledger
+                        .ledger()
+                        .pending_planning()
+                        .is_none_or(|p| p.snapshot_id() != material.published_snapshot_id)
+                {
+                    return Err(AgentRecoveryError::ResumeRequiresReplan);
+                }
+            }
         }
 
         let expected_sequence = material.run.last_event_sequence();
@@ -781,11 +965,75 @@ async fn load_recovery_material(
     let mutation_attempts = recovery
         .load_agent_mutation_attempts(project, run_id)
         .await?;
+    let loopback_resume_pending = run.state() == AgentControllerState::Execute
+        && !mutation_attempts
+            .iter()
+            .any(|attempt| attempt.disposition().requires_reconciliation())
+        && stored_ledger.ledger().steps().any(|step| {
+            step.is_active_plan_step()
+                && step.status() == TaskStepStatus::InProgress
+                && step.definition().verification_spec().method()
+                    == VerificationMethod::LoopbackHttp
+        })
+        && recovery
+            .has_pending_loopback_resume(project, run_id)
+            .await?;
     let published = index
         .latest_published_index(project, control)
         .await?
         .ok_or(AgentRecoveryError::PublishedIndexUnavailable)?;
-    let evidence_ids = completed_verification_evidence(stored_ledger.ledger())?;
+    let mut completed = completed_verification_evidence(stored_ledger.ledger())?;
+    let mut stale_evidence_ids = BTreeSet::new();
+    if !completed.diff.is_empty() {
+        let ids = completed
+            .diff
+            .iter()
+            .flat_map(|(_, verification)| verification.evidence_ids().iter().copied())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        match recovery
+            .load_completed_diff_evidence(
+                project,
+                run.goal_contract().task_id(),
+                &ids,
+                DIFF_RECOVERY_EVIDENCE_TIMEOUT,
+                &RecoveryEvidenceControl(control),
+            )
+            .await?
+        {
+            CompletedDiffRecoveryEvidence::LegacyToolLocators => {
+                completed.tool_ids.extend(ids);
+            }
+            CompletedDiffRecoveryEvidence::Typed(diffs) => {
+                let resolved = diffs
+                    .into_iter()
+                    .map(|diff| (diff.id(), diff))
+                    .collect::<BTreeMap<_, _>>();
+                for (step, verification) in completed.diff {
+                    let fresh = match verification.evidence_ids() {
+                        [id] => resolved.get(id).is_some_and(|diff| {
+                            EvaluateStepVerification
+                                .execute_for_step(
+                                    verification.id(),
+                                    step,
+                                    verification.run_id(),
+                                    &VerificationEvidence::Diff(diff.clone()),
+                                    &published,
+                                    verification.verified_at(),
+                                )
+                                .is_ok_and(|evaluated| &evaluated == verification)
+                        }),
+                        _ => false,
+                    };
+                    if !fresh {
+                        stale_evidence_ids.extend(verification.evidence_ids().iter().copied());
+                    }
+                }
+            }
+        }
+    }
+    let evidence_ids = completed.tool_ids.into_iter().collect::<Vec<_>>();
     let resolved = if evidence_ids.is_empty() {
         Vec::new()
     } else {
@@ -798,29 +1046,95 @@ async fn load_recovery_material(
         .map(|evidence| (evidence.id(), evidence))
         .collect::<BTreeMap<_, _>>();
     let files = published.publication().graph().files();
-    let stale_evidence_ids = evidence_ids
-        .into_iter()
-        .filter(|evidence_id| {
-            resolved.get(evidence_id).is_none_or(|evidence| {
-                let revision = evidence.location().revision();
-                !files.iter().any(|current| current == revision)
-            })
+    stale_evidence_ids.extend(evidence_ids.into_iter().filter(|evidence_id| {
+        resolved.get(evidence_id).is_none_or(|evidence| {
+            let revision = evidence.location().revision();
+            !files.iter().any(|current| current == revision)
         })
-        .collect();
+    }));
+    if !completed.loopback.is_empty() {
+        let ids = completed
+            .loopback
+            .iter()
+            .filter_map(|(_, verification)| match verification.evidence_ids() {
+                [id] => Some(*id),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let resolved = if ids.is_empty() {
+            Vec::new()
+        } else {
+            recovery
+                .load_completed_loopback_evidence(
+                    project,
+                    run.goal_contract().task_id(),
+                    &ids,
+                    LOOPBACK_RECOVERY_EVIDENCE_TIMEOUT,
+                    &RecoveryEvidenceControl(control),
+                )
+                .await?
+        };
+        let resolved = resolved
+            .iter()
+            .map(|evidence| (evidence.id(), evidence))
+            .collect::<BTreeMap<_, _>>();
+        for (step, verification) in completed.loopback {
+            let fresh = match verification.evidence_ids() {
+                [id] => resolved.get(id).is_some_and(|evidence| {
+                    matches!(evidence, VerificationEvidence::LoopbackHttp(_))
+                        && EvaluateStepVerification
+                            .execute_for_step(
+                                verification.id(),
+                                step,
+                                verification.run_id(),
+                                evidence,
+                                &published,
+                                verification.verified_at(),
+                            )
+                            .is_ok_and(|evaluated| &evaluated == verification)
+                }),
+                _ => false,
+            };
+            if !fresh {
+                stale_evidence_ids.extend(verification.evidence_ids().iter().copied());
+            }
+        }
+    }
     Ok(RecoveryMaterial {
         run,
         stored_ledger,
         published_snapshot_id: published.run().snapshot_id(),
-        stale_evidence_ids,
+        loopback_resume_pending,
+        stale_evidence_ids: stale_evidence_ids.into_iter().collect(),
         mutation_attempts,
         interrupted_tool_attempts,
     })
 }
 
+#[derive(Default)]
+struct CompletedVerificationEvidence<'a> {
+    tool_ids: BTreeSet<TaskEvidenceId>,
+    diff: Vec<(&'a TaskStepDefinition, &'a StepVerification)>,
+    loopback: Vec<(&'a TaskStepDefinition, &'a StepVerification)>,
+}
+
+#[derive(Debug)]
+struct RecoveryEvidenceControl<'a>(&'a dyn IndexPersistenceControl);
+
+impl AgentControllerControl for RecoveryEvidenceControl<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.0.is_cancelled()
+    }
+}
+
 fn completed_verification_evidence(
     ledger: &TaskLedger,
-) -> Result<Vec<TaskEvidenceId>, AgentRecoveryError> {
-    let mut evidence = BTreeSet::new();
+) -> Result<CompletedVerificationEvidence<'_>, AgentRecoveryError> {
+    let mut evidence = CompletedVerificationEvidence::default();
+    let mut loopback_evidence_count = 0;
+    let mut non_http_ids = BTreeSet::new();
     for step in ledger
         .steps()
         .filter(|step| step.is_active_plan_step() && step.status() == TaskStepStatus::Completed)
@@ -832,13 +1146,26 @@ fn completed_verification_evidence(
             .filter_map(|attempt| attempt.verification())
             .find(|verification| verification.passed())
         {
-            evidence.extend(verification.evidence_ids().iter().copied());
+            if step.definition().verification_spec().method() == VerificationMethod::DiffInvariant {
+                evidence.diff.push((step.definition(), verification));
+                non_http_ids.extend(verification.evidence_ids().iter().copied());
+            } else if step.definition().verification_spec().method()
+                == VerificationMethod::LoopbackHttp
+            {
+                evidence.loopback.push((step.definition(), verification));
+                loopback_evidence_count += verification.evidence_ids().len();
+            } else {
+                evidence
+                    .tool_ids
+                    .extend(verification.evidence_ids().iter().copied());
+                non_http_ids.extend(verification.evidence_ids().iter().copied());
+            }
         }
-        if evidence.len() > MAX_RECOVERY_EVIDENCE {
+        if non_http_ids.len() + loopback_evidence_count > MAX_RECOVERY_EVIDENCE {
             return Err(AgentRecoveryError::ResourceLimit);
         }
     }
-    Ok(evidence.into_iter().collect())
+    Ok(evidence)
 }
 
 fn reopen_invalidated_steps(
@@ -904,6 +1231,8 @@ pub enum AgentRecoveryError {
     PublishedIndexUnavailable,
     /// Resume was selected despite stale completed-verification evidence.
     ResumeRequiresReplan,
+    /// The active HTTP effect must use its dedicated settled-effect recovery.
+    LoopbackResumePending,
     /// A non-cancel recovery choice was requested before Unknown reconciliation.
     MutationReconciliationRequired,
     /// A timestamp could not cross both Run and Ledger persistence boundaries.
@@ -939,6 +1268,9 @@ impl fmt::Display for AgentRecoveryError {
             Self::ResumeRequiresReplan => {
                 "agent recovery Resume requires fresh evidence and no pending mutation Replan"
             }
+            Self::LoopbackResumePending => {
+                "settled loopback verification requires dedicated recovery"
+            }
             Self::MutationReconciliationRequired => {
                 "agent recovery requires Unknown mutation reconciliation before continuing"
             }
@@ -970,6 +1302,7 @@ impl Error for AgentRecoveryError {
             | Self::AnchorMismatch
             | Self::PublishedIndexUnavailable
             | Self::ResumeRequiresReplan
+            | Self::LoopbackResumePending
             | Self::MutationReconciliationRequired
             | Self::InvalidTimestamp
             | Self::InvalidRecoveryReason

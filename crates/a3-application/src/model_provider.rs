@@ -1,4 +1,4 @@
-use crate::JobContext;
+use crate::{JobContext, ModelWireProjection};
 use a3_domain::{ModelId, ModelProfile, ModelProviderId};
 use futures::Stream;
 use serde_json::Value;
@@ -500,6 +500,25 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
         timeout: ModelRequestTimeout,
         control: &'a dyn ModelOperationControl,
     ) -> ModelProviderFuture<'a>;
+
+    /// Projects the actual transport request without network I/O.
+    fn project_wire_request(
+        &self,
+        _request: &ModelProviderRequest,
+    ) -> Result<ModelWireProjection, ModelProviderFailure> {
+        Err(ModelProviderFailure::Rejected)
+    }
+
+    /// Sends one request only if the encoded bytes match the admitted wire projection.
+    fn stream_projected<'a>(
+        &'a self,
+        _request: &'a ModelProviderRequest,
+        _projection: ModelWireProjection,
+        _timeout: ModelRequestTimeout,
+        _control: &'a dyn ModelOperationControl,
+    ) -> ModelProviderFuture<'a> {
+        Box::pin(std::future::ready(Err(ModelProviderFailure::Rejected)))
+    }
 }
 
 /// Stable provider failure without endpoint, payload, model output, or credential details.

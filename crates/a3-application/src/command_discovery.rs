@@ -1,10 +1,11 @@
 use a3_domain::{
     AgentRunId, AgentRunTimestamp, CommandCatalogError, CommandDiscoveryEvidence,
     CommandDiscoverySchemaVersion, DiscoveredCommand, DiscoveredCommandError, DiscoveredCommandId,
-    DiscoveredCommandKind, DiscoveredCommandProcessError, FileRevision, ProcessSpec,
-    ProjectCommandAllowlist, ProjectCommandAllowlistError, ProjectCommandCatalog, ProjectIdentity,
-    PublishedIndex, RepositoryPath, RepositoryPathError, SyntaxProvider, TaskStepId,
-    UnresolvedGraphTarget, WorkspaceDirectory, WorktreeId,
+    DiscoveredCommandKind, DiscoveredCommandProcessError, FileRevision, GraphEndpoint, LinkedGraph,
+    ProcessSpec, ProcessTimeout, ProjectCommandAllowlist, ProjectCommandAllowlistError,
+    ProjectCommandCatalog, ProjectIdentity, PublishedIndex, RepositoryPath, RepositoryPathError,
+    SymbolKind, SyntaxProvider, SyntaxRelationKind, TaskStepId, UnresolvedGraphTarget,
+    WorkspaceDirectory, WorktreeId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -13,6 +14,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 const MAX_ALLOWLIST_STORE_VERSION: u64 = i64::MAX as u64;
+const MAX_PLAN22_UNITTEST_EVIDENCE: usize = 16;
 
 /// Deterministically derives safe direct-argv templates from one published index.
 #[derive(Debug, Clone, Copy, Default)]
@@ -25,13 +27,38 @@ impl DiscoverProjectCommands {
         worktree_id: WorktreeId,
         index: &PublishedIndex,
     ) -> Result<ProjectCommandCatalog, CommandDiscoveryFailure> {
-        let mut commands = Vec::new();
-        discover_rust(index, &mut commands)?;
-        discover_node(index, &mut commands)?;
-        discover_python(index, &mut commands)?;
+        let commands = discover_standard_commands(index)?;
         ProjectCommandCatalog::new(CommandDiscoverySchemaVersion::V1, worktree_id, commands)
             .map_err(CommandDiscoveryFailure::Catalog)
     }
+
+    /// Adds the candidate's closed root unittest recipe when the current
+    /// published manifest and direct tests support it.
+    pub fn execute_plan22(
+        self,
+        worktree_id: WorktreeId,
+        index: &PublishedIndex,
+    ) -> Result<ProjectCommandCatalog, CommandDiscoveryFailure> {
+        let mut commands = discover_standard_commands(index)?;
+        let publication = index.publication();
+        discover_plan22_manifest_unittest(
+            publication.graph(),
+            publication.manifest_files(),
+            &mut commands,
+        )?;
+        ProjectCommandCatalog::new(CommandDiscoverySchemaVersion::V1, worktree_id, commands)
+            .map_err(CommandDiscoveryFailure::Catalog)
+    }
+}
+
+fn discover_standard_commands(
+    index: &PublishedIndex,
+) -> Result<Vec<DiscoveredCommand>, CommandDiscoveryFailure> {
+    let mut commands = Vec::new();
+    discover_rust(index, &mut commands)?;
+    discover_node(index, &mut commands)?;
+    discover_python(index, &mut commands)?;
+    Ok(commands)
 }
 
 /// Deterministic manifest projection failed a bounded domain invariant.
@@ -393,10 +420,7 @@ fn discover_python(
 ) -> Result<(), CommandDiscoveryFailure> {
     let mut roots = BTreeMap::<Vec<u8>, Vec<&FileRevision>>::new();
     for manifest in index.publication().manifest_files() {
-        if matches!(
-            file_name(manifest.path()),
-            b"pyproject.toml" | b"setup.cfg" | b"setup.py"
-        ) {
+        if is_python_package_manifest(manifest.path()) {
             roots
                 .entry(parent_path(manifest.path()).to_vec())
                 .or_default()
@@ -482,6 +506,114 @@ fn discover_python(
         discover_python_syntax(index, commands)?;
     }
     Ok(())
+}
+
+fn is_python_package_manifest(path: &RepositoryPath) -> bool {
+    matches!(
+        file_name(path),
+        b"pyproject.toml" | b"setup.cfg" | b"setup.py"
+    )
+}
+
+fn discover_plan22_manifest_unittest(
+    graph: &LinkedGraph,
+    manifests: &[FileRevision],
+    commands: &mut Vec<DiscoveredCommand>,
+) -> Result<(), CommandDiscoveryFailure> {
+    if commands.iter().any(|command| {
+        command.kind() == DiscoveredCommandKind::Test
+            && command.working_directory() == &WorkspaceDirectory::Root
+    }) {
+        return Ok(());
+    }
+    let mut packages = manifests
+        .iter()
+        .filter(|manifest| is_python_package_manifest(manifest.path()));
+    let Some(manifest) = packages.next() else {
+        return Ok(());
+    };
+    if manifest.path().as_bytes() != b"pyproject.toml"
+        || packages.next().is_some()
+        || !graph.edges().iter().any(|edge| {
+            edge.kind() == SyntaxRelationKind::Defines
+                && edge.provider() == SyntaxProvider::Manifest
+                && matches!(edge.source(), GraphEndpoint::File(path) if path == manifest.path())
+                && matches!(edge.target(), GraphEndpoint::Symbol(_))
+                && edge.evidence().revision() == manifest
+                && !edge.evidence().range().is_empty()
+        })
+    {
+        return Ok(());
+    }
+
+    let files = graph.files();
+    let tests = files
+        .iter()
+        .filter(|revision| is_python_test_path(revision.path()))
+        // One evidence slot belongs to the manifest. A sixteenth test cannot fit.
+        .take(MAX_PLAN22_UNITTEST_EVIDENCE)
+        .collect::<Vec<_>>();
+    let test_package = files
+        .iter()
+        .find(|revision| revision.path().as_bytes() == b"tests/__init__.py");
+    if tests.is_empty()
+        || tests.len() + 1 + usize::from(test_package.is_some()) > MAX_PLAN22_UNITTEST_EVIDENCE
+        || !files.iter().any(|revision| {
+            let path = revision.path();
+            parent_path(path).is_empty()
+                && file_name(path).ends_with(b".py")
+                && !is_python_test_path(path)
+        })
+        || tests.iter().any(|revision| {
+            parent_path(revision.path()) != b"tests"
+                || !has_indexed_unittest_method(graph, revision)
+        })
+    {
+        return Ok(());
+    }
+
+    let evidence = std::iter::once(manifest)
+        .chain(test_package)
+        .chain(tests)
+        .cloned()
+        .map(CommandDiscoveryEvidence::File)
+        .collect();
+    let timeout = ProcessTimeout::from_millis(30_000).map_err(DiscoveredCommandError::Timeout)?;
+    commands.push(DiscoveredCommand::try_new_with_timeout_cap(
+        DiscoveredCommandKind::Test,
+        WorkspaceDirectory::Root,
+        "python".to_owned(),
+        strings(&["-B", "-m", "unittest", "discover", "-s", "tests"]),
+        evidence,
+        timeout,
+    )?);
+    Ok(())
+}
+
+fn has_indexed_unittest_method(graph: &LinkedGraph, revision: &FileRevision) -> bool {
+    graph.unresolved().iter().any(|candidate| {
+        if candidate.kind() != SyntaxRelationKind::Tests
+            || candidate.provider() != SyntaxProvider::LanguageHeuristic
+            || candidate.evidence().revision() != revision
+            || candidate.evidence().range().is_empty()
+            || !matches!(
+                candidate.target(),
+                UnresolvedGraphTarget::Reference(reference) if reference.as_str() == "unittest"
+            )
+        {
+            return false;
+        }
+        let GraphEndpoint::Symbol(symbol) = candidate.source() else {
+            return false;
+        };
+        let symbols = graph.symbols();
+        symbols
+            .binary_search_by_key(symbol, a3_domain::GraphSymbol::id)
+            .is_ok_and(|index| {
+                let method = &symbols[index];
+                method.revision() == revision && method.parsed().kind() == SymbolKind::Method
+            })
+    })
 }
 
 fn discover_python_syntax(
@@ -712,6 +844,11 @@ fn strings(values: &[&str]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use a3_domain::{
+        Confidence, ContentHash, EvidenceRef, GraphEdge, GraphSymbol, LinkResolution,
+        LocalSymbolId, ParsedSymbol, SnapshotId, SourcePosition, SourceRange, SymbolId, SymbolName,
+        SymbolReference, UnresolvedEdgeCandidate, UnresolvedReason,
+    };
 
     #[test]
     fn command_kind_has_no_install_variant_and_rejects_unrelated_scripts() {
@@ -773,7 +910,203 @@ mod tests {
         );
         assert_eq!(command.evidence().len(), 1);
         assert_eq!(command.evidence()[0].revision(), &test);
+        assert_eq!(
+            catalog,
+            DiscoverProjectCommands.execute_plan22(WorktreeId::from_bytes([3; 32]), &index)?
+        );
         Ok(())
+    }
+
+    #[test]
+    fn plan22_manifest_unittest_pins_test_and_manifest_but_not_implementation()
+    -> Result<(), Box<dyn Error>> {
+        let initial = ManifestUnittestFixture::new(1, 2, 3)?;
+        let command = initial
+            .command()?
+            .ok_or("missing manifest-bound unittest")?;
+        assert_eq!(command.working_directory(), &WorkspaceDirectory::Root);
+        assert_eq!(command.executable().as_str(), "python");
+        assert_eq!(
+            command
+                .arguments()
+                .iter()
+                .map(|argument| argument.as_str())
+                .collect::<Vec<_>>(),
+            ["-B", "-m", "unittest", "discover", "-s", "tests"]
+        );
+        assert_eq!(
+            command
+                .evidence()
+                .iter()
+                .map(|item| item.revision().path().as_bytes())
+                .collect::<Vec<_>>(),
+            [
+                b"pyproject.toml".as_slice(),
+                b"tests/__init__.py",
+                b"tests/test_behavior.py"
+            ]
+        );
+        assert!(!command.is_core_owned_check());
+        assert_eq!(
+            Some(command.clone()),
+            ManifestUnittestFixture::new(1, 2, 8)?.command()?
+        );
+        assert_ne!(
+            Some(command.clone()),
+            ManifestUnittestFixture::new(8, 2, 3)?.command()?
+        );
+        assert_ne!(
+            Some(command),
+            ManifestUnittestFixture::new(1, 8, 3)?.command()?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn plan22_manifest_unittest_requires_unambiguous_parsed_manifest_and_method()
+    -> Result<(), Box<dyn Error>> {
+        let mut unparsed = ManifestUnittestFixture::new(1, 2, 3)?;
+        unparsed.edges.clear();
+        assert!(unparsed.command()?.is_none());
+
+        let mut filename_only = ManifestUnittestFixture::new(1, 2, 3)?;
+        filename_only.unresolved.clear();
+        assert!(filename_only.command()?.is_none());
+
+        let mut mixed = ManifestUnittestFixture::new(1, 2, 3)?;
+        mixed
+            .files
+            .push(indexed_revision(b"other/test_behavior.py", 8)?);
+        assert!(mixed.command()?.is_none());
+
+        let mut ambiguous = ManifestUnittestFixture::new(1, 2, 3)?;
+        let nested_manifest = indexed_revision(b"other/pyproject.toml", 8)?;
+        ambiguous.files.push(nested_manifest.clone());
+        ambiguous.manifests.push(nested_manifest);
+        assert!(ambiguous.command()?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn plan22_manifest_unittest_preserves_existing_root_test_recipe() -> Result<(), Box<dyn Error>>
+    {
+        let fixture = ManifestUnittestFixture::new(1, 2, 3)?;
+        let existing = DiscoveredCommand::try_new(
+            DiscoveredCommandKind::Test,
+            WorkspaceDirectory::Root,
+            "python".to_owned(),
+            strings(&["-m", "pytest"]),
+            fixture
+                .manifests
+                .iter()
+                .cloned()
+                .map(CommandDiscoveryEvidence::File)
+                .collect(),
+        )?;
+        let mut commands = vec![existing.clone()];
+        discover_plan22_manifest_unittest(&fixture.graph()?, &fixture.manifests, &mut commands)?;
+        assert_eq!(commands, vec![existing]);
+        Ok(())
+    }
+
+    struct ManifestUnittestFixture {
+        files: Vec<FileRevision>,
+        manifests: Vec<FileRevision>,
+        symbols: Vec<GraphSymbol>,
+        edges: Vec<GraphEdge>,
+        unresolved: Vec<UnresolvedEdgeCandidate>,
+    }
+
+    impl ManifestUnittestFixture {
+        const SNAPSHOT: SnapshotId = SnapshotId::from_bytes([4; 32]);
+
+        fn new(manifest_hash: u8, test_hash: u8, subject_hash: u8) -> Result<Self, Box<dyn Error>> {
+            let manifest = indexed_revision(b"pyproject.toml", manifest_hash)?;
+            let test = indexed_revision(b"tests/test_behavior.py", test_hash)?;
+            let range =
+                SourceRange::new(0, 10, SourcePosition::new(0, 0), SourcePosition::new(0, 10))?;
+            let package = SymbolId::from_bytes([5; 32]);
+            let test_method = SymbolId::from_bytes([6; 32]);
+            Ok(Self {
+                files: vec![
+                    manifest.clone(),
+                    test.clone(),
+                    indexed_revision(b"tests/__init__.py", 9)?,
+                    indexed_revision(b"subject.py", subject_hash)?,
+                ],
+                manifests: vec![manifest.clone()],
+                symbols: vec![
+                    GraphSymbol::new(
+                        package,
+                        manifest.clone(),
+                        ParsedSymbol::new(
+                            LocalSymbolId::new(1)?,
+                            SymbolKind::Module,
+                            SymbolName::try_from_string("example".to_owned())?,
+                            range,
+                            range,
+                        )?,
+                    ),
+                    GraphSymbol::new(
+                        test_method,
+                        test.clone(),
+                        ParsedSymbol::new(
+                            LocalSymbolId::new(1)?,
+                            SymbolKind::Method,
+                            SymbolName::try_from_string("test_example".to_owned())?,
+                            range,
+                            range,
+                        )?,
+                    ),
+                ],
+                edges: vec![GraphEdge::new(
+                    GraphEndpoint::File(manifest.path().clone()),
+                    GraphEndpoint::Symbol(package),
+                    SyntaxRelationKind::Defines,
+                    SyntaxProvider::Manifest,
+                    Confidence::certain(),
+                    LinkResolution::AdapterLocalSymbol,
+                    Self::SNAPSHOT,
+                    EvidenceRef::new(manifest, range),
+                )],
+                unresolved: vec![UnresolvedEdgeCandidate::new(
+                    GraphEndpoint::Symbol(test_method),
+                    UnresolvedGraphTarget::Reference(SymbolReference::try_from_string(
+                        "unittest".to_owned(),
+                    )?),
+                    SyntaxRelationKind::Tests,
+                    SyntaxProvider::LanguageHeuristic,
+                    Confidence::certain(),
+                    UnresolvedReason::NoDeterministicMatch,
+                    Self::SNAPSHOT,
+                    EvidenceRef::new(test, range),
+                )],
+            })
+        }
+
+        fn graph(&self) -> Result<LinkedGraph, Box<dyn Error>> {
+            Ok(LinkedGraph::new(
+                Self::SNAPSHOT,
+                self.files.clone(),
+                self.symbols.clone(),
+                self.edges.clone(),
+                self.unresolved.clone(),
+            )?)
+        }
+
+        fn command(&self) -> Result<Option<DiscoveredCommand>, Box<dyn Error>> {
+            let mut commands = Vec::new();
+            discover_plan22_manifest_unittest(&self.graph()?, &self.manifests, &mut commands)?;
+            assert!(commands.len() <= 1);
+            Ok(commands.pop())
+        }
+    }
+
+    fn indexed_revision(path: &[u8], hash: u8) -> Result<FileRevision, Box<dyn Error>> {
+        Ok(FileRevision::new(
+            RepositoryPath::try_from_bytes(path.to_vec())?,
+            ContentHash::from_bytes([hash; 32]),
+        ))
     }
 
     #[test]

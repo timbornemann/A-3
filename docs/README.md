@@ -27,6 +27,18 @@ Bei einem Konflikt gilt folgende Reihenfolge:
 
 Eine Änderung an einer akzeptierten Entscheidung benötigt ein neues ADR, das die alte Entscheidung ausdrücklich ersetzt.
 
+Für den kleineren Agentenkern ist
+[ADR-0119](adrs/0119-kleinschrittiger-agentenkern-fuer-lokale-modelle.md)
+angenommen. Die dort genau benannten Teilablösungen und der
+[Zielvertrag](SMALL_LOCAL_MODEL_AGENT_CORE.md) gelten für neue Verträge;
+fortbestehende Sicherheitsregeln bleiben verbindlich. Implementierte Schema-,
+IPC- und SourceGuided-Versionsbeschreibungen dokumentieren weiterhin die
+Altbaseline. Nach dem [verifizierten P0](plans/22-P0_BASELINE_STATUS.md) folgen
+Kandidaten-Testkompositionen mit isolierten Daten; erst P11 aus
+[Plan 22](plans/22-SMALL-LOCAL-MODEL-AGENT-CORE.md) schaltet die Produktion um
+und migriert aktive Nutzerdaten. Ein dokumentierter Zielvertrag ist keine
+Behauptung bereits implementierter Produktfähigkeit.
+
 ## Dokumentenkarte
 
 | Dokument | Zweck |
@@ -46,6 +58,7 @@ Eine Änderung an einer akzeptierten Entscheidung benötigt ein neues ADR, das d
 | [Continuous Integration](CI.md) | Lokale Gates, GitHub-Actions-Jobs, Plattformmatrix und Lizenzbericht |
 | [ADRs](adrs/README.md) | Einzelne, nachvollziehbare Architekturentscheidungen |
 | [Entwicklungspläne](plans/README.md) | Reihenfolge, Arbeitspakete und Abnahmekriterien |
+| [Kleiner Agentenkern](SMALL_LOCAL_MODEL_AGENT_CORE.md) | Angenommene Zielverträge für Chat, Projektfragen und kleinschrittige lokale Agentenarbeit; Umsetzung nach Plan 22 |
 
 ## Nicht-Ziele der ersten stabilen Version
 
